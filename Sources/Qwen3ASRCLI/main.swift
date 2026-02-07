@@ -1,6 +1,9 @@
 import Foundation
 import MLX
 import Qwen3ASR
+#if canImport(Metal)
+import Metal
+#endif
 
 private func runMain(audioPath: String) async throws {
     print("Loading model...")
@@ -24,8 +27,20 @@ private func runMain(audioPath: String) async throws {
     print("Result: \(result)")
 }
 
+private func requireMetalOrExit() {
+    #if canImport(Metal)
+    if MTLCreateSystemDefaultDevice() == nil {
+        fputs("Error: Metal device is unavailable. MLX on macOS requires Metal.\n", stderr)
+        fputs("If you are running inside a restricted sandbox/CI, run outside the sandbox or on a Mac with Metal enabled.\n", stderr)
+        exit(1)
+    }
+    #endif
+}
+
 // Entry point
 Task {
+    requireMetalOrExit()
+
     // Get the audio file from command line argument
     let args = CommandLine.arguments
 
