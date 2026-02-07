@@ -37,9 +37,34 @@ private func requireMetalOrExit() {
     #endif
 }
 
+private func requireMLXMetallibOrExit() {
+    guard let exeURL = Bundle.main.executableURL else { return }
+    let binDir = exeURL.deletingLastPathComponent()
+
+    let candidates: [URL] = [
+        binDir.appendingPathComponent("mlx.metallib"),
+        binDir.appendingPathComponent("default.metallib"),
+        binDir.appendingPathComponent("Resources/mlx.metallib"),
+        binDir.appendingPathComponent("Resources/default.metallib"),
+    ]
+
+    if candidates.contains(where: { FileManager.default.fileExists(atPath: $0.path) }) {
+        return
+    }
+
+    fputs("Error: MLX Metal library (mlx.metallib) not found next to the executable.\n", stderr)
+    fputs("Fix:\n", stderr)
+    fputs("  1) Install Metal toolchain (once): xcodebuild -downloadComponent MetalToolchain\n", stderr)
+    fputs("  2) From the repo root, run:\n", stderr)
+    fputs("     swift build -c release --disable-sandbox\n", stderr)
+    fputs("     ./scripts/build_mlx_metallib.sh release\n", stderr)
+    exit(1)
+}
+
 // Entry point
 Task {
     requireMetalOrExit()
+    requireMLXMetallibOrExit()
 
     // Get the audio file from command line argument
     let args = CommandLine.arguments

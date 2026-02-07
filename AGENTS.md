@@ -31,6 +31,20 @@ This repo is a Swift Package Manager (SwiftPM) library + CLI for running Qwen3-A
   - `swift build -c release`
   - `.build/release/qwen3-asr-cli /path/to/audio.wav`
 
+## MLX Metal Library (metallib) Troubleshooting
+
+If you see an error like:
+
+- `MLX error: Failed to load the default metallib ...`
+
+You likely need to generate `mlx.metallib` locally (some Xcode installs do not include the Metal toolchain by default):
+
+1. Install the Metal toolchain (once):
+   - `xcodebuild -downloadComponent MetalToolchain`
+2. Build the metallib next to the SwiftPM output:
+   - `swift build -c release --disable-sandbox`
+   - `./scripts/build_mlx_metallib.sh release`
+
 ## Model Download And Cache
 
 `Qwen3ASRModel.fromPretrained(modelId:)` downloads model artifacts from Hugging Face and caches them locally.
