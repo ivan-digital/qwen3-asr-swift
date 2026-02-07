@@ -46,7 +46,10 @@ if [[ ! -d "$KERNELS_DIR" ]]; then
   exit 1
 fi
 
-mapfile -t METAL_SRCS < <(find "$KERNELS_DIR" -type f -name '*.metal' | LC_ALL=C sort)
+METAL_SRCS=()
+while IFS= read -r line; do
+  METAL_SRCS+=("$line")
+done < <(find "$KERNELS_DIR" -type f -name '*.metal' | LC_ALL=C sort)
 if [[ "${#METAL_SRCS[@]}" -eq 0 ]]; then
   echo "error: no .metal sources found under $KERNELS_DIR" >&2
   exit 1
@@ -74,7 +77,7 @@ for SRC in "${METAL_SRCS[@]}"; do
   OUT_AIR="$TMP/$KEY.air"
 
   if ! xcrun -sdk macosx metal "${METAL_FLAGS[@]}" -c "$SRC" -I"$KERNELS_DIR" -o "$OUT_AIR" 2>"$TMP/metal.err"; then
-    if rg -q "missing Metal Toolchain" "$TMP/metal.err" 2>/dev/null; then
+    if grep -q "missing Metal Toolchain" "$TMP/metal.err" 2>/dev/null; then
       echo "error: Xcode Metal Toolchain is missing." >&2
       echo "run: xcodebuild -downloadComponent MetalToolchain" >&2
     fi
@@ -89,4 +92,3 @@ echo "Linking mlx.metallib -> $OUT_METALLIB"
 xcrun -sdk macosx metallib "${AIR_FILES[@]}" -o "$OUT_METALLIB"
 
 echo "OK: wrote $OUT_METALLIB"
-
