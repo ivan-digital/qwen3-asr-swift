@@ -79,17 +79,13 @@ public class AudioSelfAttention: Module {
         k = k.reshaped(batch, seqLen, numHeads, headDim).transposed(0, 2, 1, 3)
         v = v.reshaped(batch, seqLen, numHeads, headDim).transposed(0, 2, 1, 3)
 
-        // Scaled dot-product attention
-        var attnWeights = matmul(q, k.transposed(0, 1, 3, 2)) * scale
+        // Use MLXFast SDPA — optimized Metal kernel
+        let attnOutput = MLXFast.scaledDotProductAttention(
+            queries: q, keys: k, values: v,
+            scale: scale, mask: attentionMask)
 
-        if let mask = attentionMask {
-            attnWeights = attnWeights + mask
-        }
-
-        attnWeights = softmax(attnWeights, axis: -1)
-
-        var out = matmul(attnWeights, v)
-        out = out.transposed(0, 2, 1, 3).reshaped(batch, seqLen, numHeads * headDim)
+        // SDPA returns [B, N, T, D], transpose to [B, T, N, D] then reshape
+        let out = attnOutput.transposed(0, 2, 1, 3).reshaped(batch, seqLen, numHeads * headDim)
 
         return outProj(out)
     }
@@ -172,6 +168,9 @@ private func createSinusoidalPositionEmbeddings(seqLen: Int, dModel: Int) -> MLX
 /// Matches HuggingFace weight structure exactly
 public class Qwen3AudioEncoder: Module {
     public let config: Qwen3AudioEncoderConfig
+
+    // Cache for sinusoidal position embeddings keyed by sequence length
+    private var cachedPosEmbeddings: [Int: MLXArray] = [:]
 
     // Conv frontend - using 2D convolutions
     // Input: [batch, 1, mel=128, time] (single channel mel spectrogram image)
@@ -300,36 +299,35 @@ public class Qwen3AudioEncoder: Module {
 
     /// Create block attention mask for preventing cross-chunk attention
     /// Each block in cu_seqlens can only attend to itself
+    /// Uses MLXArray broadcast comparison instead of scalar O(n^2) loop
     private func createBlockAttentionMask(seqLen: Int, cuSeqlens: [Int]) -> MLXArray {
-        // Create a mask filled with -1e9 (masked)
-        var maskData = [Float](repeating: -1e9, count: seqLen * seqLen)
-
-        // Allow attention within each block
+        // Assign a block ID to each position
+        var blockIds = [Int32](repeating: 0, count: seqLen)
         for i in 0..<(cuSeqlens.count - 1) {
             let start = cuSeqlens[i]
             let end = cuSeqlens[i + 1]
-            for row in start..<end {
-                for col in start..<end {
-                    maskData[row * seqLen + col] = 0.0
-                }
+            for pos in start..<end {
+                blockIds[pos] = Int32(i)
             }
         }
 
-        // Return mask with shape [1, 1, seqLen, seqLen] for broadcasting
-        return MLXArray(maskData, [seqLen, seqLen]).expandedDimensions(axes: [0, 1])
+        // Use broadcast comparison: mask[i,j] = 0 if same block, -1e9 otherwise
+        let rowIds = MLXArray(blockIds).expandedDimensions(axis: 1)  // [seqLen, 1]
+        let colIds = MLXArray(blockIds).expandedDimensions(axis: 0)  // [1, seqLen]
+
+        // Where block IDs match: 0 (attend), otherwise -1e9 (block)
+        let mask = MLX.where(rowIds .== colIds, MLXArray(Float(0)), MLXArray(Float(-1e9)))
+
+        // Add batch and head dimensions: [seqLen, seqLen] -> [1, 1, seqLen, seqLen]
+        return mask.expandedDimensions(axes: [0, 1])
     }
 
     /// Process mel spectrogram with time chunking (matching Python mlx-audio exactly)
     /// Input: [batch, mel_bins, time]
     /// Output: [time', output_dim] (no batch dim, matching Python)
     public func callAsFunction(_ melFeatures: MLXArray) -> MLXArray {
-        let batch = melFeatures.dim(0)
-        let melBins = melFeatures.dim(1)
         let timeFrames = melFeatures.dim(2)
         let chunkSize = config.nWindow * 2  // 100
-
-        print("DEBUG AudioEncoder: Input shape [batch=\(batch), mel=\(melBins), time=\(timeFrames)]")
-        print("DEBUG AudioEncoder: Chunk size = \(chunkSize), expected output tokens = \(getOutputLength(timeFrames))")
 
         // Calculate number of chunks
         let numChunks = (timeFrames + chunkSize - 1) / chunkSize  // ceil division
@@ -368,12 +366,10 @@ public class Qwen3AudioEncoder: Module {
         }
 
         // Stack chunks as batch: [numChunks, mel, maxChunkLen]
-        var paddedFeature = stacked(paddedChunks, axis: 0)
+        let paddedFeature = stacked(paddedChunks, axis: 0)
 
         // Add channel dim: [numChunks, mel, time, 1] for Conv2d (NHWC)
         var x = paddedFeature.expandedDimensions(axis: -1)
-
-        print("DEBUG AudioEncoder: Padded feature shape [\(x.dim(0)), \(x.dim(1)), \(x.dim(2)), \(x.dim(3))]")
 
         // Process through conv layers
         x = conv2d1(x)
@@ -389,25 +385,24 @@ public class Qwen3AudioEncoder: Module {
         let timeAfterConv = x.dim(2)  // ~13 for 100 input frames
         let channels = x.dim(3)  // 480
 
-        print("DEBUG AudioEncoder: After conv - shape [\(numChunksBatch), \(freq), \(timeAfterConv), \(channels)]")
-
         // Transpose and reshape: [numChunks, freq, time, channels] -> [numChunks, time, channels*freq]
         x = x.transposed(0, 2, 3, 1)  // [numChunks, time, channels, freq]
         x = x.reshaped(numChunksBatch, timeAfterConv, channels * freq)  // [numChunks, time, 7680]
 
-        print("DEBUG AudioEncoder: After reshape - shape [\(x.dim(0)), \(x.dim(1)), \(x.dim(2))]")
-
         // Project through conv_out (7680 -> 896)
         x = convOut(x)
 
-        print("DEBUG AudioEncoder: After conv_out - shape [\(x.dim(0)), \(x.dim(1)), \(x.dim(2))]")
-
         // Add sinusoidal position embeddings - same for each chunk!
-        // This is the key difference from before: positions 0 to timeAfterConv-1 for EACH chunk
-        let posEmbed = createSinusoidalPositionEmbeddings(seqLen: timeAfterConv, dModel: config.dModel)
+        // Cache to avoid recomputing for the same sequence length
+        let posEmbed: MLXArray
+        if let cached = cachedPosEmbeddings[timeAfterConv] {
+            posEmbed = cached
+        } else {
+            let computed = createSinusoidalPositionEmbeddings(seqLen: timeAfterConv, dModel: config.dModel)
+            cachedPosEmbeddings[timeAfterConv] = computed
+            posEmbed = computed
+        }
         x = x + posEmbed  // Broadcasting: [numChunks, time, 896] + [1, time, 896]
-
-        print("DEBUG AudioEncoder: After pos embed - mean: \(mean(x.flattened()).item(Float.self)), std: \(sqrt(variance(x.flattened())).item(Float.self))")
 
         // Calculate valid lengths after CNN for each chunk
         var featureLensAfterCnn = [Int]()
@@ -418,8 +413,6 @@ public class Qwen3AudioEncoder: Module {
             featLen = (featLen - 1) / 2 + 1
             featureLensAfterCnn.append(featLen)
         }
-
-        print("DEBUG AudioEncoder: Feature lens after CNN: \(featureLensAfterCnn)")
 
         // Extract valid portions and concatenate
         var hiddenList: [MLXArray] = []
@@ -432,8 +425,6 @@ public class Qwen3AudioEncoder: Module {
         // Concatenate all valid hidden states: [totalTokens, 896]
         var hiddenStates = concatenated(hiddenList, axis: 0)
         let totalTokens = hiddenStates.dim(0)
-
-        print("DEBUG AudioEncoder: Hidden states (concatenated) - shape [\(totalTokens), \(hiddenStates.dim(1))]")
 
         // Build cumulative sequence lengths for block attention mask
         let maxLenAfterCnn = featureLensAfterCnn.max() ?? 13
@@ -460,8 +451,6 @@ public class Qwen3AudioEncoder: Module {
             cuSeqlens.append(cumsum)
         }
 
-        print("DEBUG AudioEncoder: cu_seqlens: \(cuSeqlens)")
-
         // Create block attention mask
         let attentionMask = createBlockAttentionMask(seqLen: totalTokens, cuSeqlens: cuSeqlens)
 
@@ -479,16 +468,10 @@ public class Qwen3AudioEncoder: Module {
         // Post processing
         hiddenStates = lnPost(hiddenStates)
 
-        let postLnFlat = hiddenStates.flattened()
-        print("DEBUG AudioEncoder: After ln_post - mean: \(mean(postLnFlat).item(Float.self)), std: \(sqrt(variance(postLnFlat)).item(Float.self))")
-
         // Project to text model dimension (GELU activation)
         hiddenStates = proj1(hiddenStates)
         hiddenStates = gelu(hiddenStates)
         hiddenStates = proj2(hiddenStates)
-
-        let finalFlat = hiddenStates.flattened()
-        print("DEBUG AudioEncoder: Final output - mean: \(mean(finalFlat).item(Float.self)), std: \(sqrt(variance(finalFlat)).item(Float.self)), shape [\(hiddenStates.dim(0)), \(hiddenStates.dim(1))]")
 
         return hiddenStates
     }

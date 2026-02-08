@@ -52,12 +52,13 @@ final class Qwen3ASRIntegrationTests: XCTestCase {
             audio[i] = sin(2 * .pi * 440.0 * t) * 0.3
         }
 
-        // Transcribe (will return placeholder for now)
+        // Transcribe (sine wave is not speech — model may return empty or gibberish)
         let result = model.transcribe(audio: audio, sampleRate: sampleRate)
         print("Transcription result: \(result)")
 
-        // Verify we get some result
-        XCTAssertFalse(result.isEmpty, "Should return some result")
+        // Sine wave is not speech, so we just verify the pipeline completes without crashing
+        // The result may be empty (model outputs only language tag) or contain gibberish
+        XCTAssertNotNil(result, "Pipeline should complete without crashing")
     }
 
     // MARK: - Feature Extraction from Real Audio
@@ -127,8 +128,13 @@ final class Qwen3ASRIntegrationTests: XCTestCase {
         print("Transcription: \(result)")
         print("Elapsed time: \(elapsed)s")
 
-        // Verify we get some result
+        // Verify correct transcription
+        // Test audio contains: "Can you guarantee that the replacement part will be shipped tomorrow?"
         XCTAssertFalse(result.isEmpty, "Transcription should not be empty")
+        XCTAssertTrue(result.contains("guarantee"), "Should transcribe 'guarantee'")
+        XCTAssertTrue(result.contains("replacement"), "Should transcribe 'replacement'")
+        XCTAssertTrue(result.contains("shipped"), "Should transcribe 'shipped'")
+        XCTAssertTrue(result.contains("tomorrow"), "Should transcribe 'tomorrow'")
     }
 
     // MARK: - Performance Test

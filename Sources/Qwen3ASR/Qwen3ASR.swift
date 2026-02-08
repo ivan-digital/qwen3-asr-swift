@@ -62,11 +62,6 @@ public class Qwen3ASRModel {
         // Extract mel features
         let melFeatures = featureExtractor.process(audio, sampleRate: sampleRate)
 
-        // Debug mel features
-        let melFlat = melFeatures.flattened()
-        print("DEBUG: Mel features shape: \(melFeatures.shape)")
-        print("DEBUG: Mel features - mean: \(mean(melFlat).item(Float.self)), std: \(sqrt(variance(melFlat)).item(Float.self))")
-
         // Add batch dimension: [mel, time] -> [1, mel, time]
         let batchedFeatures = melFeatures.expandedDimensions(axis: 0)
 
@@ -75,12 +70,6 @@ public class Qwen3ASRModel {
 
         // Add batch dimension for consistency: [time, features] -> [1, time, features]
         audioEmbeds = audioEmbeds.expandedDimensions(axis: 0)
-
-        // Debug audio embeddings
-        let embedsFlat = audioEmbeds.flattened()
-        print("DEBUG: Audio embeds shape: \(audioEmbeds.shape)")
-        print("DEBUG: Audio embeds - mean: \(mean(embedsFlat).item(Float.self)), std: \(sqrt(variance(embedsFlat)).item(Float.self))")
-        print("DEBUG: Audio embeds - min: \(min(embedsFlat).item(Float.self)), max: \(max(embedsFlat).item(Float.self))")
 
         // Check if text decoder is loaded
         guard let textDecoder = textDecoder else {
@@ -166,48 +155,19 @@ public class Qwen3ASRModel {
             let langTokens = tokenizer.encode(langPrefix)
             inputIds.append(contentsOf: langTokens.map { Int32($0) })
             inputIds.append(Int32(asrTextId))
-            print("DEBUG: Forcing language: \(lang)")
-        } else {
-            // Auto-detect: don't add anything after "assistant\n"
-            // Model will generate: "language Russian<asr_text>Привет" (for example)
-            print("DEBUG: Auto-detect mode - model generates full language tag + text")
         }
-
-        print("DEBUG: Input IDs length: \(inputIds.count), audio tokens: \(numAudioTokens) at positions \(audioStartIndex)..<\(audioEndIndex)")
 
         // Get text embeddings for all tokens
         let inputIdsTensor = MLXArray(inputIds).expandedDimensions(axis: 0)  // [1, seq_len]
         var inputEmbeds = textDecoder.embedTokens(inputIdsTensor)  // [1, seq_len, hidden]
 
-        // Debug: compare embedding scales
-        let textEmbedsFlat = inputEmbeds.flattened()
-        let textStd = sqrt(variance(textEmbedsFlat)).item(Float.self)
-        print("DEBUG: Text embeds - mean: \(mean(textEmbedsFlat).item(Float.self)), std: \(textStd)")
-
-        let audioEmbedsFlat = audioEmbeds.flattened()
-        let audioStd = sqrt(variance(audioEmbedsFlat)).item(Float.self)
-        print("DEBUG: Audio embeds (before scaling) - mean: \(mean(audioEmbedsFlat).item(Float.self)), std: \(audioStd)")
-
-        // Scale audio embeddings to match text embedding variance
-        var scaledAudioEmbeds = audioEmbeds
-        if audioStd > 0 {
-            let scaleFactor = textStd / audioStd
-            scaledAudioEmbeds = audioEmbeds * scaleFactor
-            print("DEBUG: Scaling audio embeds by \(scaleFactor) to match text std")
-        }
-
         // Replace audio_pad token positions with actual audio embeddings
-        // audioEmbeds shape: [1, numAudioTokens, hidden]
-        // We need to replace inputEmbeds[0, audioStartIndex:audioEndIndex, :] with audioEmbeds[0, :, :]
-        let hiddenSize = inputEmbeds.dim(2)
-
-        // Build the final embeddings by concatenating parts
+        // No scaling — inject directly, matching Python mlx-audio / vLLM / qwen3-asr.cpp
+        let audioEmbedsTyped = audioEmbeds.asType(inputEmbeds.dtype)
         let beforeAudio = inputEmbeds[0..., 0..<audioStartIndex, 0...]  // [1, audioStartIndex, hidden]
         let afterAudio = inputEmbeds[0..., audioEndIndex..., 0...]  // [1, remaining, hidden]
 
-        inputEmbeds = concatenated([beforeAudio, scaledAudioEmbeds, afterAudio], axis: 1)
-
-        print("DEBUG: Prompt structure - before_audio:\(audioStartIndex), audio:\(numAudioTokens), after_audio:\(inputIds.count - audioEndIndex)")
+        inputEmbeds = concatenated([beforeAudio, audioEmbedsTyped, afterAudio], axis: 1)
 
         // Initialize KV cache
         var cache: [(MLXArray, MLXArray)]? = nil
@@ -227,19 +187,10 @@ public class Qwen3ASRModel {
         var nextToken = argMax(logits, axis: -1).squeezed().item(Int32.self)
         generatedTokens.append(nextToken)
 
-        // Debug: check logits stats (using MLX ops instead of slow loop)
-        let logitsFlat = logits.squeezed()
-        print("DEBUG: Logits shape: \(logitsFlat.shape)")
-        print("DEBUG: Logits stats - mean: \(mean(logitsFlat).item(Float.self)), max: \(max(logitsFlat).item(Float.self)), min: \(min(logitsFlat).item(Float.self))")
-
-        print("DEBUG: First token generated: \(nextToken) (EOS=\(Qwen3ASRTokens.eosTokenId))")
-        print("DEBUG: Input embeds shape: \(inputEmbeds.shape), hidden states shape: \(hiddenStates.shape)")
-
         // Continue generating
-        for iteration in 1..<maxTokens {
+        for _ in 1..<maxTokens {
             // Check for EOS
             if nextToken == Int32(Qwen3ASRTokens.eosTokenId) {
-                print("DEBUG: EOS token reached at iteration \(iteration)")
                 break
             }
 
@@ -257,12 +208,14 @@ public class Qwen3ASRModel {
             generatedTokens.append(nextToken)
         }
 
-        // Debug: print first few generated tokens
-        print("DEBUG: Generated \(generatedTokens.count) tokens: \(Array(generatedTokens.prefix(20)))")
-
         // Decode tokens to text
         if let tokenizer = tokenizer {
-            return tokenizer.decode(tokens: generatedTokens.map { Int($0) })
+            let rawText = tokenizer.decode(tokens: generatedTokens.map { Int($0) })
+            // Strip "language XX<asr_text>" prefix if present (auto-detection output)
+            if let range = rawText.range(of: "<asr_text>") {
+                return String(rawText[range.upperBound...]).trimmingCharacters(in: .whitespaces)
+            }
+            return rawText
         } else {
             // Fallback: return token IDs
             return generatedTokens.map { String($0) }.joined(separator: " ")
@@ -281,7 +234,7 @@ public extension Qwen3ASRModel {
         progressHandler?(0.1, "Downloading model...")
 
         // Get cache directory
-        let cacheDir = getCacheDirectory(for: modelId)
+        let cacheDir = try getCacheDirectory(for: modelId)
 
         // Download weights if needed
         if !weightsExist(in: cacheDir) {
@@ -300,7 +253,6 @@ public extension Qwen3ASRModel {
         if FileManager.default.fileExists(atPath: vocabPath.path) {
             let tokenizer = Qwen3Tokenizer()
             try tokenizer.load(from: vocabPath)
-            tokenizer.debugTokenMappings()  // Debug: verify token IDs
             model.setTokenizer(tokenizer)
         }
 
@@ -322,13 +274,45 @@ public extension Qwen3ASRModel {
         return model
     }
 
-    private static func getCacheDirectory(for modelId: String) -> URL {
-        let cacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("qwen3-asr")
-            .appendingPathComponent(modelId.replacingOccurrences(of: "/", with: "_"))
+    private static func getCacheDirectory(for modelId: String) throws -> URL {
+        let cacheKey = sanitizedCacheKey(for: modelId)
+        let fm = FileManager.default
 
-        try? FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
+        let baseCacheDir: URL
+        if let override = ProcessInfo.processInfo.environment["QWEN3_ASR_CACHE_DIR"],
+           !override.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            baseCacheDir = URL(fileURLWithPath: override, isDirectory: true)
+        } else {
+            baseCacheDir = fm.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        }
+
+        let cacheDir = baseCacheDir
+            .appendingPathComponent("qwen3-asr", isDirectory: true)
+            .appendingPathComponent(cacheKey, isDirectory: true)
+
+        try fm.createDirectory(at: cacheDir, withIntermediateDirectories: true)
         return cacheDir
+    }
+
+    /// Convert an arbitrary modelId into a single, safe path component for on-disk caching.
+    static func sanitizedCacheKey(for modelId: String) -> String {
+        let replaced = modelId.replacingOccurrences(of: "/", with: "_")
+
+        let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
+        var scalars: [UnicodeScalar] = []
+        scalars.reserveCapacity(replaced.unicodeScalars.count)
+        for s in replaced.unicodeScalars {
+            scalars.append(allowed.contains(s) ? s : "_")
+        }
+
+        var cleaned = String(String.UnicodeScalarView(scalars))
+        cleaned = cleaned.trimmingCharacters(in: CharacterSet(charactersIn: "._"))
+
+        if cleaned.isEmpty || cleaned == "." || cleaned == ".." {
+            cleaned = "model"
+        }
+
+        return cleaned
     }
 
     private static func weightsExist(in directory: URL) -> Bool {
@@ -337,12 +321,38 @@ public extension Qwen3ASRModel {
         return contents.contains { $0.pathExtension == "safetensors" }
     }
 
+    static func validatedRemoteFileName(_ file: String) throws -> String {
+        let base = URL(fileURLWithPath: file).lastPathComponent
+        guard base == file else {
+            throw DownloadError.invalidRemoteFileName(file)
+        }
+        guard !base.isEmpty, !base.hasPrefix("."), !base.contains("..") else {
+            throw DownloadError.invalidRemoteFileName(file)
+        }
+        guard base.range(of: #"^[A-Za-z0-9._-]+$"#, options: .regularExpression) != nil else {
+            throw DownloadError.invalidRemoteFileName(file)
+        }
+        return base
+    }
+
+    static func validatedLocalPath(directory: URL, fileName: String) throws -> URL {
+        let local = directory.appendingPathComponent(fileName, isDirectory: false)
+        let dirPath = directory.standardizedFileURL.path
+        let localPath = local.standardizedFileURL.path
+        let prefix = dirPath.hasSuffix("/") ? dirPath : (dirPath + "/")
+        guard localPath.hasPrefix(prefix) else {
+            throw DownloadError.invalidRemoteFileName(fileName)
+        }
+        return local
+    }
+
     private static func downloadWeights(
         modelId: String,
         to directory: URL,
         progressHandler: ((Double) -> Void)?
     ) async throws {
         let baseURL = "https://huggingface.co/\(modelId)/resolve/main"
+        let session = URLSession(configuration: .ephemeral)
 
         // Files to download (config and tokenizer)
         var filesToDownload = [
@@ -356,7 +366,7 @@ public extension Qwen3ASRModel {
 
         if !FileManager.default.fileExists(atPath: indexPath.path) {
             let indexURL = URL(string: "\(baseURL)/model.safetensors.index.json")!
-            if let (indexData, indexResponse) = try? await URLSession.shared.data(from: indexURL),
+            if let (indexData, indexResponse) = try? await session.data(from: indexURL),
                let httpResponse = indexResponse as? HTTPURLResponse,
                httpResponse.statusCode == 200 {
                 try indexData.write(to: indexPath)
@@ -368,28 +378,30 @@ public extension Qwen3ASRModel {
         if FileManager.default.fileExists(atPath: indexPath.path),
            let indexData = try? Data(contentsOf: indexPath),
            let index = try? JSONSerialization.jsonObject(with: indexData) as? [String: Any],
-           let weightMap = index["weight_map"] as? [String: String] {
+           let weightMap = index["weight_map"] as? [String: String],
+           !weightMap.isEmpty {
             let uniqueFiles = Set(weightMap.values)
             modelFiles = Array(uniqueFiles).sorted()
-            print("Found \(modelFiles.count) model file(s) from index: \(modelFiles)")
         } else {
+            // Remove corrupt/empty index so it gets re-downloaded next time
+            try? FileManager.default.removeItem(at: indexPath)
             modelFiles = ["model.safetensors"]
         }
 
         filesToDownload.append(contentsOf: modelFiles)
 
         for (index, file) in filesToDownload.enumerated() {
-            let localPath = directory.appendingPathComponent(file)
+            let safeFile = try validatedRemoteFileName(file)
+            let localPath = try validatedLocalPath(directory: directory, fileName: safeFile)
 
             if FileManager.default.fileExists(atPath: localPath.path) {
                 progressHandler?(Double(index + 1) / Double(filesToDownload.count))
                 continue
             }
 
-            print("Downloading: \(file)")
 
-            let url = URL(string: "\(baseURL)/\(file)")!
-            let (data, response) = try await URLSession.shared.data(from: url)
+            let url = URL(string: "\(baseURL)/\(safeFile)")!
+            let (data, response) = try await session.data(from: url)
 
             guard let httpResponse = response as? HTTPURLResponse,
                   httpResponse.statusCode == 200 else {
@@ -407,11 +419,14 @@ public extension Qwen3ASRModel {
 
 public enum DownloadError: Error, LocalizedError {
     case failedToDownload(String)
+    case invalidRemoteFileName(String)
 
     public var errorDescription: String? {
         switch self {
         case .failedToDownload(let file):
             return "Failed to download: \(file)"
+        case .invalidRemoteFileName(let file):
+            return "Refusing to write unsafe remote file name: \(file)"
         }
     }
 }

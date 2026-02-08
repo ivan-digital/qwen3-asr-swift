@@ -14,8 +14,31 @@ public class WhisperFeatureExtractor {
 
     private var melFilterbank: [Float]?
 
+    // Cached Hann window and FFT setup for Accelerate
+    private var hannWindow: [Float]
+    // Power-of-2 FFT: zero-pad nFFT=400 to paddedFFT=512 for vDSP compatibility
+    private let paddedFFT: Int = 512
+    private let log2PaddedFFT: vDSP_Length = 9  // log2(512) = 9
+    private var fftSetup: FFTSetup
+
     public init() {
+        // Precompute periodic Hann window
+        hannWindow = [Float](repeating: 0, count: 400) // nFFT
+        for i in 0..<400 {
+            hannWindow[i] = 0.5 * (1.0 - cos(2.0 * Float.pi * Float(i) / Float(400)))
+        }
+
+        // Create power-of-2 FFT setup (512-point)
+        guard let setup = vDSP_create_fftsetup(9, FFTRadix(kFFTRadix2)) else {
+            fatalError("Failed to create vDSP FFT setup for paddedFFT=512")
+        }
+        fftSetup = setup
+
         setupMelFilterbank()
+    }
+
+    deinit {
+        vDSP_destroy_fftsetup(fftSetup)
     }
 
     /// Setup mel filterbank matrix with slaney normalization
@@ -47,13 +70,13 @@ public class WhisperFeatureExtractor {
             }
         }
 
-        let nBins = nFFT / 2 + 1  // 201 for nFFT=400
+        // Use paddedFFT for bin count since we zero-pad to 512 for FFT
+        let nBins = paddedFFT / 2 + 1  // 257 for paddedFFT=512
 
-        // Create linearly spaced FFT bin frequencies (0 to Nyquist)
-        // This matches: np.linspace(0, sampling_rate // 2, num_frequency_bins)
+        // FFT bin frequencies: k * fs / paddedFFT (not nFFT, since we zero-pad)
         var fftFreqs = [Float](repeating: 0, count: nBins)
         for i in 0..<nBins {
-            fftFreqs[i] = Float(i) * fMax / Float(nBins - 1)
+            fftFreqs[i] = Float(i) * Float(sampleRate) / Float(paddedFFT)
         }
 
         // Create mel filter center frequencies
@@ -129,14 +152,14 @@ public class WhisperFeatureExtractor {
     /// - Parameter audio: Raw audio samples (Float array, mono, at sampleRate)
     /// - Returns: Mel spectrogram [mel_bins, time_frames]
     public func extractFeatures(_ audio: [Float]) -> MLXArray {
-        let nBins = nFFT / 2 + 1
+        let nBins = paddedFFT / 2 + 1  // 257 bins for 512-point FFT
+        let halfPadded = paddedFFT / 2  // 256
 
         // Pad audio with reflect padding (like Whisper/librosa)
         let padLength = nFFT / 2
         var paddedAudio = [Float](repeating: 0, count: padLength + audio.count + padLength)
 
-        // Reflect pad left side: audio[padLength], audio[padLength-1], ..., audio[1]
-        // torch.nn.functional.pad reflect mode mirrors around the edge element
+        // Reflect pad left side
         for i in 0..<padLength {
             let srcIdx = min(padLength - i, audio.count - 1)
             paddedAudio[i] = audio[max(0, srcIdx)]
@@ -147,7 +170,7 @@ public class WhisperFeatureExtractor {
             paddedAudio[padLength + i] = audio[i]
         }
 
-        // Reflect pad right side: audio[n-2], audio[n-3], ..., audio[n-padLength-1]
+        // Reflect pad right side
         for i in 0..<padLength {
             let srcIdx = audio.count - 2 - i
             paddedAudio[padLength + audio.count + i] = audio[max(0, srcIdx)]
@@ -156,160 +179,118 @@ public class WhisperFeatureExtractor {
         // Calculate number of frames
         let nFrames = (paddedAudio.count - nFFT) / hopLength + 1
 
-        // Create PERIODIC Hann window (like PyTorch/librosa, not symmetric)
-        // Formula: 0.5 * (1 - cos(2πn/N)) for n=0 to N-1
-        var window = [Float](repeating: 0, count: nFFT)
-        for i in 0..<nFFT {
-            window[i] = 0.5 * (1.0 - cos(2.0 * Float.pi * Float(i) / Float(nFFT)))
-        }
+        // --- Accelerate FFT-based STFT using vDSP_fft_zrip ---
+        // Zero-pad nFFT=400 samples to paddedFFT=512 for power-of-2 FFT
+        // vDSP_fft_zrip uses split-complex in-place: even-indexed in realp, odd-indexed in imagp
+        // Output packing: DC in realp[0], Nyquist in imagp[0], bins 1..N/2-1 in realp[k]+j*imagp[k]
 
-        // Precompute twiddle factors for DFT (only need first nBins frequencies for real input)
-        var twiddleReal = [Float](repeating: 0, count: nBins * nFFT)
-        var twiddleImag = [Float](repeating: 0, count: nBins * nFFT)
+        // Preallocate buffers outside the frame loop
+        var splitReal = [Float](repeating: 0, count: halfPadded)
+        var splitImag = [Float](repeating: 0, count: halfPadded)
+        var paddedFrame = [Float](repeating: 0, count: paddedFFT)
 
-        for k in 0..<nBins {
-            for n in 0..<nFFT {
-                let angle = -2.0 * Float.pi * Float(k) * Float(n) / Float(nFFT)
-                twiddleReal[k * nFFT + n] = cos(angle)
-                twiddleImag[k * nFFT + n] = sin(angle)
-            }
-        }
-
-        // Compute STFT
         var magnitude = [Float](repeating: 0, count: nFrames * nBins)
-
-        // Temporary buffer for windowed frame
-        var windowedFrame = [Float](repeating: 0, count: nFFT)
 
         for frame in 0..<nFrames {
             let start = frame * hopLength
 
-            // Extract and window the frame
-            for i in 0..<nFFT {
-                if start + i < paddedAudio.count {
-                    windowedFrame[i] = paddedAudio[start + i] * window[i]
-                } else {
-                    windowedFrame[i] = 0
+            // Apply window and write into paddedFrame (first nFFT elements)
+            paddedAudio.withUnsafeBufferPointer { buf in
+                vDSP_vmul(buf.baseAddress! + start, 1, hannWindow, 1, &paddedFrame, 1, vDSP_Length(nFFT))
+            }
+            // Zero-pad the rest (nFFT..<paddedFFT)
+            for i in nFFT..<paddedFFT {
+                paddedFrame[i] = 0
+            }
+
+            // Pack into split-complex: realp[i] = frame[2*i], imagp[i] = frame[2*i+1]
+            for i in 0..<halfPadded {
+                splitReal[i] = paddedFrame[2 * i]
+                splitImag[i] = paddedFrame[2 * i + 1]
+            }
+
+            // Execute in-place real FFT
+            splitReal.withUnsafeMutableBufferPointer { realBuf in
+                splitImag.withUnsafeMutableBufferPointer { imagBuf in
+                    var splitComplex = DSPSplitComplex(
+                        realp: realBuf.baseAddress!,
+                        imagp: imagBuf.baseAddress!)
+                    vDSP_fft_zrip(fftSetup, &splitComplex, 1, log2PaddedFFT, FFTDirection(kFFTDirection_Forward))
                 }
             }
 
-            // Compute DFT for each frequency bin (only positive frequencies up to Nyquist)
-            for k in 0..<nBins {
-                var sumReal: Float = 0
-                var sumImag: Float = 0
+            // Extract power spectrum
+            let baseIdx = frame * nBins
 
-                // Use vDSP for vectorized dot product
-                let twiddleRealStart = k * nFFT
-                vDSP_dotpr(windowedFrame, 1, Array(twiddleReal[twiddleRealStart..<twiddleRealStart + nFFT]), 1, &sumReal, vDSP_Length(nFFT))
-                vDSP_dotpr(windowedFrame, 1, Array(twiddleImag[twiddleRealStart..<twiddleRealStart + nFFT]), 1, &sumImag, vDSP_Length(nFFT))
+            // DC component: realp[0]^2 (DC is purely real, stored in realp[0])
+            magnitude[baseIdx] = splitReal[0] * splitReal[0]
 
-                // Power spectrum: |X[k]|^2 = real^2 + imag^2
-                magnitude[frame * nBins + k] = sumReal * sumReal + sumImag * sumImag
+            // Nyquist component: imagp[0]^2 (Nyquist is purely real, packed in imagp[0])
+            magnitude[baseIdx + halfPadded] = splitImag[0] * splitImag[0]
+
+            // Bins 1 to N/2-1: realp[k]^2 + imagp[k]^2
+            for k in 1..<halfPadded {
+                magnitude[baseIdx + k] = splitReal[k] * splitReal[k] + splitImag[k] * splitImag[k]
             }
         }
 
-        // Apply mel filterbank
+        // --- BLAS sgemm for mel filterbank ---
         guard let filterbank = melFilterbank else {
             fatalError("Mel filterbank not initialized")
         }
 
-        // Debug: check magnitude (power spectrum) stats
-        var magMean: Float = 0
-        var magMax: Float = -Float.infinity
-        vDSP_meanv(magnitude, 1, &magMean, vDSP_Length(magnitude.count))
-        vDSP_maxv(magnitude, 1, &magMax, vDSP_Length(magnitude.count))
-        print("DEBUG FeatureExtractor: Power spectrum - mean: \(magMean), max: \(magMax)")
-
-        // Debug: check filterbank stats
-        var fbMax: Float = -Float.infinity
-        vDSP_maxv(filterbank, 1, &fbMax, vDSP_Length(filterbank.count))
-        print("DEBUG FeatureExtractor: Filterbank max: \(fbMax)")
-
         var melSpec = [Float](repeating: 0, count: nFrames * nMels)
 
-        // Matrix multiply: melSpec = magnitude * filterbank^T
-        for frame in 0..<nFrames {
-            for mel in 0..<nMels {
-                var sum: Float = 0
-                for bin in 0..<nBins {
-                    sum += magnitude[frame * nBins + bin] * filterbank[mel * nBins + bin]
-                }
-                melSpec[frame * nMels + mel] = sum
-            }
-        }
+        // melSpec[nFrames, nMels] = magnitude[nFrames, nBins] * filterbankT[nBins, nMels]
+        // filterbank is [nMels, nBins]. We need A * B^T.
+        // vDSP_mmul computes C = A * B, so we need to pre-transpose filterbank.
+        // Transpose filterbank [nMels, nBins] -> filterbankT [nBins, nMels]
+        var filterbankT = [Float](repeating: 0, count: nBins * nMels)
+        vDSP_mtrans(filterbank, 1, &filterbankT, 1, vDSP_Length(nBins), vDSP_Length(nMels))
 
-        // Debug: check mel spec before log
-        var melMean: Float = 0
-        var melMax: Float = -Float.infinity
-        vDSP_meanv(melSpec, 1, &melMean, vDSP_Length(melSpec.count))
-        vDSP_maxv(melSpec, 1, &melMax, vDSP_Length(melSpec.count))
-        print("DEBUG FeatureExtractor: Mel spec (before log) - mean: \(melMean), max: \(melMax)")
+        // C[nFrames, nMels] = A[nFrames, nBins] * B[nBins, nMels]
+        vDSP_mmul(magnitude, 1, filterbankT, 1, &melSpec, 1,
+                  vDSP_Length(nFrames), vDSP_Length(nMels), vDSP_Length(nBins))
 
-        // Apply log10-mel transformation with small epsilon (Whisper-style)
-        let epsilon: Float = 1e-10
-        for i in 0..<melSpec.count {
-            melSpec[i] = log10(max(melSpec[i], epsilon))
-        }
+        // --- Vectorized log10, clamp, normalize ---
+        let count = melSpec.count
+        var countN = Int32(count)
 
-        // Debug: check log10 mel values before normalization
-        var logMax: Float = -Float.infinity
-        var logMin: Float = Float.infinity
-        vDSP_maxv(melSpec, 1, &logMax, vDSP_Length(melSpec.count))
-        vDSP_minv(melSpec, 1, &logMin, vDSP_Length(melSpec.count))
-        print("DEBUG FeatureExtractor: log10 mel - min: \(logMin), max: \(logMax)")
+        // Clamp minimum to epsilon before log
+        var epsilon: Float = 1e-10
+        vDSP_vclip(melSpec, 1, &epsilon, [Float.greatestFiniteMagnitude], &melSpec, 1, vDSP_Length(count))
 
-        // Whisper-style normalization:
-        // 1. Clamp to max - 8.0 (dynamic range compression)
-        // 2. Normalize: (log_spec + 4.0) / 4.0
+        // log10 using vForce
+        vvlog10f(&melSpec, melSpec, &countN)
+
+        // Find max value for dynamic range compression
         var maxVal: Float = -Float.infinity
-        vDSP_maxv(melSpec, 1, &maxVal, vDSP_Length(melSpec.count))
+        vDSP_maxv(melSpec, 1, &maxVal, vDSP_Length(count))
 
         // Clamp minimum to max - 8.0
-        let minClamp = maxVal - 8.0
-        for i in 0..<melSpec.count {
-            melSpec[i] = max(melSpec[i], minClamp)
-        }
+        var minClamp = maxVal - 8.0
+        var maxClamp = Float.greatestFiniteMagnitude
+        vDSP_vclip(melSpec, 1, &minClamp, &maxClamp, &melSpec, 1, vDSP_Length(count))
 
-        // Debug: check after clipping
-        var clippedMin: Float = Float.infinity
-        vDSP_minv(melSpec, 1, &clippedMin, vDSP_Length(melSpec.count))
-        print("DEBUG FeatureExtractor: After clipping - min: \(clippedMin), max: \(maxVal)")
-
-        // Normalize: (x + 4.0) / 4.0
-        for i in 0..<melSpec.count {
-            melSpec[i] = (melSpec[i] + 4.0) / 4.0
-        }
-
-        // Debug: check final values
-        var finalMax: Float = -Float.infinity
-        var finalMin: Float = Float.infinity
-        vDSP_maxv(melSpec, 1, &finalMax, vDSP_Length(melSpec.count))
-        vDSP_minv(melSpec, 1, &finalMin, vDSP_Length(melSpec.count))
-        print("DEBUG FeatureExtractor: Final normalized - min: \(finalMin), max: \(finalMax)")
+        // Normalize: (x + 4.0) / 4.0 = x * 0.25 + 1.0
+        var scale: Float = 0.25
+        var offset: Float = 1.0
+        vDSP_vsmsa(melSpec, 1, &scale, &offset, &melSpec, 1, vDSP_Length(count))
 
         // CRITICAL: HuggingFace WhisperFeatureExtractor removes the last frame: log_spec[:, :-1]
-        // This is needed to match the exact frame count that the model expects
-        var trimmedFrames = nFrames - 1  // Remove last frame
-        var trimmedMelSpec = Array(melSpec.prefix(trimmedFrames * nMels))
-        print("DEBUG FeatureExtractor: Trimmed last frame: \(nFrames) -> \(trimmedFrames)")
+        let trimmedFrames = nFrames - 1
+        let trimmedMelSpec = Array(melSpec.prefix(trimmedFrames * nMels))
 
         // DON'T pad to 3000 frames - let the audio encoder handle the actual length
-        // The Python reference only pads minimally for chunk alignment, not to a fixed length
         let maxFrames = chunkLength * sampleRate / hopLength  // 30 * 16000 / 160 = 3000
         var finalMelSpec = trimmedMelSpec
 
         if trimmedFrames > maxFrames {
-            // Truncate to 3000 frames if longer than 30 seconds
             finalMelSpec = Array(trimmedMelSpec.prefix(maxFrames * nMels))
-            print("DEBUG FeatureExtractor: Truncated from \(trimmedFrames) to \(maxFrames) frames")
-        } else {
-            print("DEBUG FeatureExtractor: Using actual \(trimmedFrames) frames (no padding)")
         }
 
         let finalFrames = finalMelSpec.count / nMels
 
-        // Reshape to [mel_bins, time_frames] and convert to MLXArray
-        // First create [time_frames, mel_bins] then transpose
         let array = MLXArray(finalMelSpec, [finalFrames, nMels])
         return array.transposed(1, 0)  // [mel_bins, time_frames]
     }

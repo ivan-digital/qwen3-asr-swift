@@ -1,5 +1,8 @@
 import XCTest
 import MLX
+#if canImport(Metal)
+import Metal
+#endif
 @testable import Qwen3ASR
 
 final class Qwen3ASRTests: XCTestCase {
@@ -30,14 +33,14 @@ final class Qwen3ASRTests: XCTestCase {
         XCTAssertEqual(config.padTokenId, 151643)
     }
 
-    func testFeatureExtractor() {
+    func testFeatureExtractor() throws {
         let extractor = WhisperFeatureExtractor()
-        XCTAssertEqual(extractor.sampleRate, 24000)
+        XCTAssertEqual(extractor.sampleRate, 16000)
         XCTAssertEqual(extractor.nMels, 128)
-        XCTAssertEqual(extractor.hopLength, 192)
+        XCTAssertEqual(extractor.hopLength, 160)
 
-        // Test with silent audio
-        let silentAudio = [Float](repeating: 0, count: 24000) // 1 second
+        // Test with silent audio (1 second at 16kHz)
+        let silentAudio = [Float](repeating: 0, count: 16000)
         let features = extractor.extractFeatures(silentAudio)
 
         // Check output shape
@@ -45,11 +48,11 @@ final class Qwen3ASRTests: XCTestCase {
         XCTAssertGreaterThan(features.dim(1), 0) // time frames
     }
 
-    func testFeatureExtractorWithSineWave() {
+    func testFeatureExtractorWithSineWave() throws {
         let extractor = WhisperFeatureExtractor()
 
-        // Generate 1 second of 440Hz sine wave
-        let sampleRate = 24000
+        // Generate 1 second of 440Hz sine wave at 16kHz
+        let sampleRate = 16000
         let frequency: Float = 440.0
         let duration = 1.0
         let numSamples = Int(Double(sampleRate) * duration)
@@ -64,23 +67,31 @@ final class Qwen3ASRTests: XCTestCase {
 
         // Verify features are computed
         XCTAssertEqual(features.dim(0), 128)
-        XCTAssertGreaterThan(features.dim(1), 100) // Should have ~125 frames for 1s
+        XCTAssertGreaterThan(features.dim(1), 90) // Should have ~99 frames for 1s at 16kHz/160 hop
 
         // Features should not be all zeros
         let maxVal = features.max().item(Float.self)
         XCTAssertGreaterThan(maxVal, -100.0) // Log mel, so can be negative
     }
 
-    func testAudioEncoderCreation() {
-        // Test that encoder can be created without crashing
+    func testAudioEncoderCreation() throws {
+        #if canImport(Metal)
+        guard MTLCreateSystemDefaultDevice() != nil else {
+            throw XCTSkip("Metal device unavailable")
+        }
+        #endif
         let config = Qwen3AudioEncoderConfig.default
         let encoder = Qwen3AudioEncoder(config: config)
 
         XCTAssertEqual(encoder.layers.count, 18)
     }
 
-    func testModelCreation() {
-        // Test that model can be created without crashing
+    func testModelCreation() throws {
+        #if canImport(Metal)
+        guard MTLCreateSystemDefaultDevice() != nil else {
+            throw XCTSkip("Metal device unavailable")
+        }
+        #endif
         let model = Qwen3ASRModel()
 
         XCTAssertNotNil(model.audioEncoder)

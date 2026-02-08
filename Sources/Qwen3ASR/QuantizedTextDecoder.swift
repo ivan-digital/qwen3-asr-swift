@@ -52,7 +52,6 @@ public class PreQuantizedEmbedding: Module {
 
 /// Multi-head attention for Qwen3 text decoder with GQA and RoPE (quantized version)
 public class QuantizedTextAttention: Module {
-    let config: TextDecoderConfig
     let numHeads: Int
     let numKVHeads: Int
     let headDim: Int
@@ -65,8 +64,9 @@ public class QuantizedTextAttention: Module {
     @ModuleInfo var qNorm: RMSNorm
     @ModuleInfo var kNorm: RMSNorm
 
+    let rope: MLXNN.RoPE
+
     public init(config: TextDecoderConfig) {
-        self.config = config
         self.numHeads = config.numHeads
         self.numKVHeads = config.numKVHeads
         self.headDim = config.headDim
@@ -91,6 +91,9 @@ public class QuantizedTextAttention: Module {
         // Q/K normalization (Qwen3 specific)
         self._qNorm.wrappedValue = RMSNorm(dimensions: headDim, eps: config.rmsNormEps)
         self._kNorm.wrappedValue = RMSNorm(dimensions: headDim, eps: config.rmsNormEps)
+
+        // MLXFast RoPE: split-half rotation (traditional=false), base from config
+        self.rope = MLXNN.RoPE(dimensions: headDim, traditional: false, base: config.ropeTheta)
 
         super.init()
     }
@@ -124,94 +127,28 @@ public class QuantizedTextAttention: Module {
         // Calculate offset for RoPE based on cache
         let offset = cache?.0.dim(2) ?? 0
 
-        // Apply RoPE
-        let (qRotated, kRotated) = applyRoPE(queries, keys, offset: offset)
+        // Apply MLXFast RoPE (handles split-half rotation via optimized Metal kernel)
+        queries = rope(queries, offset: offset)
+        keys = rope(keys, offset: offset)
 
         // Update cache
-        var cachedKeys = kRotated
+        var cachedKeys = keys
         var cachedValues = values
 
         if let (prevKeys, prevValues) = cache {
-            cachedKeys = concatenated([prevKeys, kRotated], axis: 2)
+            cachedKeys = concatenated([prevKeys, keys], axis: 2)
             cachedValues = concatenated([prevValues, values], axis: 2)
         }
 
-        // Expand KV heads for GQA (repeat KV heads to match Q heads)
-        let repeatFactor = numHeads / numKVHeads
-        var expandedKeys = cachedKeys
-        var expandedValues = cachedValues
+        // SDPA handles GQA natively (N_q != N_kv), no need to tile KV heads
+        let attnOutput = MLXFast.scaledDotProductAttention(
+            queries: queries, keys: cachedKeys, values: cachedValues,
+            scale: scale, mask: attentionMask)
 
-        if repeatFactor > 1 {
-            // Repeat KV heads
-            expandedKeys = expandedKeys.expandedDimensions(axis: 2)
-            expandedKeys = tiled(expandedKeys, repetitions: [1, 1, repeatFactor, 1, 1])
-            expandedKeys = expandedKeys.reshaped(batch, numHeads, -1, headDim)
-
-            expandedValues = expandedValues.expandedDimensions(axis: 2)
-            expandedValues = tiled(expandedValues, repetitions: [1, 1, repeatFactor, 1, 1])
-            expandedValues = expandedValues.reshaped(batch, numHeads, -1, headDim)
-        }
-
-        // Scaled dot-product attention
-        var attnWeights = matmul(qRotated, expandedKeys.transposed(0, 1, 3, 2)) * scale
-
-        if let mask = attentionMask {
-            attnWeights = attnWeights + mask
-        }
-
-        attnWeights = softmax(attnWeights, axis: -1)
-
-        // Apply attention to values
-        var attnOutput = matmul(attnWeights, expandedValues)
-
-        // Reshape back to [batch, seq, hidden]
-        attnOutput = attnOutput.transposed(0, 2, 1, 3).reshaped(batch, seqLen, numHeads * headDim)
-
-        let output = oProj(attnOutput)
+        // SDPA returns [B, N_q, T_q, D], transpose to [B, T_q, N_q, D] then reshape
+        let output = oProj(attnOutput.transposed(0, 2, 1, 3).reshaped(batch, seqLen, numHeads * headDim))
 
         return (output, (cachedKeys, cachedValues))
-    }
-
-    private func applyRoPE(_ q: MLXArray, _ k: MLXArray, offset: Int) -> (MLXArray, MLXArray) {
-        let seqLen = q.dim(2)
-        let halfDim = headDim / 2
-
-        // Compute inverse frequencies: inv_freq[i] = 1.0 / (base ** (2*i / dim))
-        // This is equivalent to: exp(-i * log(base) / half_dim) for i in [0, half_dim)
-        let freqSeq = MLXArray(0..<halfDim).asType(.float32)
-        let invFreq = exp(-freqSeq * (log(MLXArray(config.ropeTheta)) / Float(halfDim)))
-
-        // Create position sequence
-        let positions = MLXArray((offset)..<(offset + seqLen)).asType(.float32)
-
-        // Compute angles: [seq_len, half_dim]
-        let angles = positions.expandedDimensions(axis: 1) * invFreq.expandedDimensions(axis: 0)
-
-        // Create rotation matrix components
-        let cosAngles = cos(angles)
-        let sinAngles = sin(angles)
-
-        // Apply split-half rotation (NOT interleaved - this is what mlx-audio/Qwen uses)
-        // First half and second half of the head_dim are rotated together
-        func rotateSplitHalf(_ x: MLXArray) -> MLXArray {
-            // x shape: [batch, heads, seq, head_dim]
-            // Split into first half [0:half_dim] and second half [half_dim:dim]
-            let x1 = x[0..., 0..., 0..., 0..<halfDim]  // [batch, heads, seq, half_dim]
-            let x2 = x[0..., 0..., 0..., halfDim...]   // [batch, heads, seq, half_dim]
-
-            // Expand cos/sin for broadcasting: [seq, half_dim] -> [1, 1, seq, half_dim]
-            let cosR = cosAngles.expandedDimensions(axes: [0, 1])
-            let sinR = sinAngles.expandedDimensions(axes: [0, 1])
-
-            // Apply rotation: (x1 * cos - x2 * sin, x1 * sin + x2 * cos)
-            let rotated1 = x1 * cosR - x2 * sinR
-            let rotated2 = x1 * sinR + x2 * cosR
-
-            // Concatenate back: [rotated1, rotated2] along last axis
-            return concatenated([rotated1, rotated2], axis: -1)
-        }
-
-        return (rotateSplitHalf(q), rotateSplitHalf(k))
     }
 }
 
@@ -307,28 +244,6 @@ public class QuantizedTextModel: Module {
         super.init()
     }
 
-    /// Create causal attention mask for autoregressive generation
-    private func createCausalMask(seqLen: Int, cacheLen: Int) -> MLXArray {
-        // Create mask for attention where each position can only attend to previous positions
-        // Shape: [1, 1, seqLen, seqLen + cacheLen]
-        let totalLen = seqLen + cacheLen
-
-        // Create the causal mask - positions can attend to positions <= their own
-        // Mask is 0 for allowed positions, -inf for masked positions
-        var mask = MLXArray.zeros([seqLen, totalLen])
-
-        // Fill upper triangle with -inf (positions that shouldn't be attended)
-        for i in 0..<seqLen {
-            let queryPos = i + cacheLen
-            for j in (queryPos + 1)..<totalLen {
-                mask[i, j] = MLXArray(Float(-1e9))
-            }
-        }
-
-        // Add batch and head dimensions: [seqLen, totalLen] -> [1, 1, seqLen, totalLen]
-        return mask.expandedDimensions(axes: [0, 1])
-    }
-
     /// Forward pass through text decoder
     public func callAsFunction(
         inputIds: MLXArray? = nil,
@@ -347,14 +262,31 @@ public class QuantizedTextModel: Module {
         }
 
         let seqLen = hiddenStates.dim(1)
-        let cacheLen = cache?.first?.0.dim(2) ?? 0
 
-        // Create causal attention mask
-        let mask = attentionMask ?? createCausalMask(seqLen: seqLen, cacheLen: cacheLen)
-
-        // Debug input
-        let inputFlat = hiddenStates.flattened()
-        print("DEBUG TextDecoder: Input embeds - mean: \(mean(inputFlat).item(Float.self)), std: \(sqrt(variance(inputFlat)).item(Float.self))")
+        // Determine attention mask:
+        // - If caller provides a mask, use it
+        // - seqLen == 1 (autoregressive step): nil mask — single query attends to all cached positions
+        // - seqLen > 1 with no cache (prefill): use SDPA causal mode (handled inside attention via nil mask + SDPA causal)
+        // For prefill with seqLen > 1, we create a causal mask using MLX operations
+        let mask: MLXArray?
+        if let providedMask = attentionMask {
+            mask = providedMask
+        } else if seqLen == 1 {
+            // Autoregressive: single query can attend to all cached positions, no mask needed
+            mask = nil
+        } else {
+            // Prefill: create causal mask using MLX broadcast operations
+            let cacheLen = cache?.first?.0.dim(2) ?? 0
+            let totalLen = seqLen + cacheLen
+            // Row indices [0..seqLen) + cacheLen, column indices [0..totalLen)
+            let rows = (MLXArray(0..<Int32(seqLen)) + Int32(cacheLen)).expandedDimensions(axis: 1)
+            let cols = MLXArray(0..<Int32(totalLen)).expandedDimensions(axis: 0)
+            // mask[i,j] = 0 where col <= row (attend), -1e9 where col > row (block)
+            // Cast to match hidden states dtype (bfloat16 from quantized embeddings)
+            mask = MLX.where(cols .> rows, MLXArray(Float(-1e9)), MLXArray(Float(0)))
+                .expandedDimensions(axes: [0, 1])
+                .asType(hiddenStates.dtype)
+        }
 
         // Apply decoder layers
         var newCache: [(MLXArray, MLXArray)] = []
@@ -363,18 +295,10 @@ public class QuantizedTextModel: Module {
             let (output, updatedCache) = layer(hiddenStates, attentionMask: mask, cache: layerCache)
             hiddenStates = output
             newCache.append(updatedCache)
-
-            // Debug first and last layers
-            if i == 0 || i == 27 {
-                let layerFlat = hiddenStates.flattened()
-                print("DEBUG TextDecoder: After layer \(i) - mean: \(mean(layerFlat).item(Float.self)), std: \(sqrt(variance(layerFlat)).item(Float.self))")
-            }
         }
 
         // Final norm
         hiddenStates = norm(hiddenStates)
-        let normFlat = hiddenStates.flattened()
-        print("DEBUG TextDecoder: After final norm - mean: \(mean(normFlat).item(Float.self)), std: \(sqrt(variance(normFlat)).item(Float.self))")
 
         return (hiddenStates, newCache)
     }

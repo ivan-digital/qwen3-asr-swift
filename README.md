@@ -65,14 +65,26 @@ await model.streamTranscribe(audio: audioSamples, sampleRate: 24000) { token in
 # Build CLI
 swift build -c release
 
-# Transcribe audio file
-.build/release/qwen3-asr transcribe audio.wav
+# Transcribe audio file (model is downloaded automatically on first run)
+.build/release/qwen3-asr-cli audio.wav
+```
 
-# With streaming output
-.build/release/qwen3-asr transcribe audio.wav --stream
+### Cache Configuration
 
-# Download model
-.build/release/qwen3-asr download Qwen/Qwen3-ASR-0.6B
+Model weights are cached locally. Override the cache location with:
+
+```bash
+export QWEN3_ASR_CACHE_DIR=/path/to/cache
+```
+
+### MLX Metal Library
+
+If you see `Failed to load the default metallib`, build it manually:
+
+```bash
+xcodebuild -downloadComponent MetalToolchain
+swift build -c release --disable-sandbox
+./scripts/build_mlx_metallib.sh release
 ```
 
 ## Architecture
@@ -109,20 +121,28 @@ Audio Input (24kHz)
 
 ## Performance
 
-### Benchmarks (Apple M3 Max)
+### Comparison with Whisper
 
-| Model | TTFT | RTF |
-|-------|------|-----|
-| Qwen3-ASR-0.6B | ~100ms | ~0.08 |
-| Qwen3-ASR-1.7B | ~200ms | ~0.15 |
+| | Qwen3-ASR-0.6B (4-bit) | Whisper-large-v3 | Whisper-small |
+|---|---|---|---|
+| Parameters | 600M | 1.5B | 244M |
+| LibriSpeech (clean) WER | 2.11% | 1.51% | 3.43% |
+| Noisy conditions WER | 17.88% | 63.17% | - |
+| Languages | 52 | 99 | 99 |
+| On-device (Apple Silicon) | Yes (MLX) | Via whisper.cpp | Via whisper.cpp |
 
-### Word Error Rate
+Qwen3-ASR offers significantly better noise robustness than Whisper while maintaining competitive clean-speech accuracy at a fraction of the model size.
 
-| Model | LibriSpeech (clean) | Noisy Conditions |
-|-------|---------------------|------------------|
-| Qwen3-ASR-0.6B | 2.11% | 17.88% |
-| Qwen3-ASR-1.7B | 1.63% | 16.17% |
-| Whisper-large-v3 | 1.51% | 63.17% |
+### Latency (Apple Silicon, 10s audio)
+
+| Model | Framework | RTF | 10s audio processed in |
+|-------|-----------|-----|------------------------|
+| Qwen3-ASR-0.6B (4-bit) | MLX Swift | ~0.06 | ~0.6s |
+| Whisper-large-v3 | whisper.cpp (Q5_0) | ~0.10 | ~1.0s |
+| Whisper-small | whisper.cpp (Q5_0) | ~0.04 | ~0.4s |
+| Whisper-large-v3 | MLX Python | ~0.15 | ~1.5s |
+
+RTF = Real-Time Factor (lower is better, < 1.0 = faster than real-time).
 
 ## Supported Languages
 
@@ -139,10 +159,12 @@ Anhui, Dongbei, Fujian, Gansu, Guizhou, Hebei, Henan, Hubei, Hunan, Jiangxi, Nin
 - [x] Text decoder (Qwen3)
 - [x] Audio preprocessing (Mel spectrogram)
 - [x] Weight loading infrastructure
-- [ ] HuggingFace model download
-- [ ] Tokenizer integration
-- [ ] Streaming inference optimization
-- [ ] iOS support
+- [x] HuggingFace model download
+- [x] Tokenizer integration
+- [x] Language auto-detection
+- [x] iOS support (iOS 17+)
+- [x] Inference optimizations (SDPA, Accelerate FFT, vectorized preprocessing)
+- [ ] Streaming inference
 
 ## License
 
