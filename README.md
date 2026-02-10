@@ -3,7 +3,9 @@
 A Swift implementation of Qwen3 speech models using [MLX Swift](https://github.com/ml-explore/mlx-swift) for Apple Silicon.
 
 - **Qwen3-ASR** — Speech-to-text (automatic speech recognition)
-- **[Qwen3-TTS](https://arxiv.org/abs/2601.15621)** — Text-to-speech synthesis (codec: [Mimi](https://arxiv.org/abs/2410.00037))
+- **Qwen3-TTS** — Text-to-speech synthesis
+
+Papers: [Qwen3-ASR](https://arxiv.org/abs/2601.21337), [Qwen3-TTS](https://arxiv.org/abs/2601.15621), [Mimi codec](https://arxiv.org/abs/2410.00037) (Kyutai)
 
 ## Models
 
