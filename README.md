@@ -104,7 +104,7 @@ let audio = model.synthesize(text: "Hello", language: "english", sampling: confi
 
 | Model | Framework | Short (1s) | Medium (3s) | Long (6s) |
 |-------|-----------|-----------|-------------|------------|
-| Qwen3-TTS-0.6B (4-bit) | MLX Swift | 1.6s (RTF 1.2) | 2.3s (RTF 0.7) | 3.9s (RTF 0.7) |
+| Qwen3-TTS-0.6B (4-bit) | MLX Swift (release) | 1.6s (RTF 1.2) | 2.3s (RTF 0.7) | 3.9s (RTF 0.7) |
 | Apple `AVSpeechSynthesizer` | AVFoundation | 0.08s | 0.08s | 0.17s (RTF 0.02) |
 
 > Qwen3-TTS generates natural, expressive speech with prosody and emotion, running **faster than real-time** (RTF < 1.0). Apple's built-in TTS is ~35x faster but produces robotic, monotone speech.
