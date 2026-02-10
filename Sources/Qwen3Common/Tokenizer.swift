@@ -13,10 +13,13 @@ public enum TokenizerError: Error, LocalizedError {
     }
 }
 
-/// Simple tokenizer for Qwen3-ASR that loads from vocab.json
+/// Simple tokenizer for Qwen3 that loads from vocab.json
+/// Supports decoding (id->text) and basic BPE encoding (text->ids) via merges.txt
 public class Qwen3Tokenizer {
     private var idToToken: [Int: String] = [:]
     private var tokenToId: [String: Int] = [:]
+    private var bpeMerges: [(String, String)] = []
+    private var bpeMergeRanks: [String: Int] = [:]
 
     public var eosTokenId: Int = 151643
     public var padTokenId: Int = 151643
@@ -44,7 +47,13 @@ public class Qwen3Tokenizer {
             try loadAddedTokens(from: configUrl)
         }
 
-        print("Loaded tokenizer with \(idToToken.count) tokens")
+        // Load BPE merges if available
+        let mergesUrl = url.deletingLastPathComponent().appendingPathComponent("merges.txt")
+        if FileManager.default.fileExists(atPath: mergesUrl.path) {
+            try loadMerges(from: mergesUrl)
+        }
+
+        print("Loaded tokenizer with \(idToToken.count) tokens, \(bpeMerges.count) merges")
     }
 
     /// Load added tokens from tokenizer_config.json
@@ -70,6 +79,23 @@ public class Qwen3Tokenizer {
                 addedCount += 1
             }
             print("Loaded \(addedCount) added tokens from tokenizer_config.json")
+        }
+    }
+
+    /// Load BPE merge rules from merges.txt
+    private func loadMerges(from url: URL) throws {
+        let content = try String(contentsOf: url, encoding: .utf8)
+        let lines = content.components(separatedBy: .newlines)
+
+        for (index, line) in lines.enumerated() {
+            // Skip header line and empty lines
+            if line.hasPrefix("#") || line.isEmpty { continue }
+
+            let parts = line.components(separatedBy: " ")
+            guard parts.count == 2 else { continue }
+
+            bpeMerges.append((parts[0], parts[1]))
+            bpeMergeRanks["\(parts[0]) \(parts[1])"] = index
         }
     }
 
@@ -169,18 +195,111 @@ public class Qwen3Tokenizer {
         }
     }
 
-    /// Encode text to token IDs (for completeness)
-    public func encode(_ text: String) -> [Int] {
-        // Simple character-level encoding for now
-        // Full BPE encoding would be more complex
-        var tokens: [Int] = []
+    /// Encode a byte-level BPE token string from raw text bytes
+    private func encodeByteLevelToken(_ text: String) -> String {
+        var result = ""
+        for byte in text.utf8 {
+            if let char = Self.byteToUnicode[byte] {
+                result.append(char)
+            }
+        }
+        return result
+    }
 
+    /// BPE encode text to token IDs
+    public func encode(_ text: String) -> [Int] {
+        guard !bpeMerges.isEmpty else {
+            // Fallback: character-level encoding
+            return characterEncode(text)
+        }
+
+        // Split text into words (whitespace-aware, GPT-2 style pre-tokenization)
+        // Simple approach: split on word boundaries, preserving leading spaces as Ġ
+        let words = preTokenize(text)
+
+        var tokens: [Int] = []
+        for word in words {
+            // Convert word to byte-level BPE representation
+            let bpeTokens = bpe(word)
+            for bpeToken in bpeTokens {
+                if let id = tokenToId[bpeToken] {
+                    tokens.append(id)
+                }
+            }
+        }
+
+        return tokens
+    }
+
+    /// Pre-tokenize text into words (GPT-2 style)
+    private func preTokenize(_ text: String) -> [String] {
+        // Split on whitespace boundaries while preserving leading spaces as part of the next word
+        var words: [String] = []
+        var current = ""
+
+        for char in text {
+            if char == " " || char == "\n" || char == "\t" {
+                if !current.isEmpty {
+                    words.append(encodeByteLevelToken(current))
+                    current = ""
+                }
+                current = String(char)
+            } else {
+                current.append(char)
+            }
+        }
+        if !current.isEmpty {
+            words.append(encodeByteLevelToken(current))
+        }
+
+        return words
+    }
+
+    /// Apply BPE merges to a word
+    private func bpe(_ word: String) -> [String] {
+        var pieces = word.map { String($0) }
+
+        while pieces.count > 1 {
+            // Find the pair with lowest merge rank
+            var bestPair: (String, String)?
+            var bestRank = Int.max
+
+            for i in 0..<(pieces.count - 1) {
+                let pair = "\(pieces[i]) \(pieces[i + 1])"
+                if let rank = bpeMergeRanks[pair], rank < bestRank {
+                    bestRank = rank
+                    bestPair = (pieces[i], pieces[i + 1])
+                }
+            }
+
+            guard let (first, second) = bestPair else { break }
+
+            // Merge the pair
+            var newPieces: [String] = []
+            var i = 0
+            while i < pieces.count {
+                if i < pieces.count - 1 && pieces[i] == first && pieces[i + 1] == second {
+                    newPieces.append(first + second)
+                    i += 2
+                } else {
+                    newPieces.append(pieces[i])
+                    i += 1
+                }
+            }
+            pieces = newPieces
+        }
+
+        return pieces
+    }
+
+    /// Simple character-level encoding fallback
+    private func characterEncode(_ text: String) -> [Int] {
+        var tokens: [Int] = []
         for char in text {
             if let id = tokenToId[String(char)] {
                 tokens.append(id)
             }
         }
-
         return tokens
     }
 

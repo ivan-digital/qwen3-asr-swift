@@ -2,6 +2,7 @@ import Foundation
 import MLX
 import MLXNN
 import MLXFast
+import Qwen3Common
 
 /// Audio encoder configuration matching Qwen3-ASR HuggingFace model
 public struct Qwen3AudioEncoderConfig {

@@ -4,8 +4,8 @@ import MLXNN
 import MLXFast
 import Qwen3Common
 
-/// Multi-head attention for Qwen3 text decoder with GQA and RoPE (quantized version)
-public class QuantizedTextAttention: Module {
+/// Attention for Code Predictor — standard 1D RoPE (same pattern as ASR)
+public class CodePredictorAttention: Module {
     let numHeads: Int
     let numKVHeads: Int
     let headDim: Int
@@ -20,7 +20,7 @@ public class QuantizedTextAttention: Module {
 
     let rope: MLXNN.RoPE
 
-    public init(config: TextDecoderConfig) {
+    public init(config: CodePredictorConfig) {
         self.numHeads = config.numHeads
         self.numKVHeads = config.numKVHeads
         self.headDim = config.headDim
@@ -28,7 +28,6 @@ public class QuantizedTextAttention: Module {
 
         let hiddenSize = config.hiddenSize
 
-        // Create quantized linear layers
         self._qProj.wrappedValue = QuantizedLinear(
             hiddenSize, numHeads * headDim, bias: false,
             groupSize: config.groupSize, bits: config.bits)
@@ -42,11 +41,9 @@ public class QuantizedTextAttention: Module {
             numHeads * headDim, hiddenSize, bias: false,
             groupSize: config.groupSize, bits: config.bits)
 
-        // Q/K normalization (Qwen3 specific)
         self._qNorm.wrappedValue = RMSNorm(dimensions: headDim, eps: config.rmsNormEps)
         self._kNorm.wrappedValue = RMSNorm(dimensions: headDim, eps: config.rmsNormEps)
 
-        // MLXFast RoPE: split-half rotation (traditional=false), base from config
         self.rope = MLXNN.RoPE(dimensions: headDim, traditional: false, base: config.ropeTheta)
 
         super.init()
@@ -59,33 +56,25 @@ public class QuantizedTextAttention: Module {
     ) -> (MLXArray, (MLXArray, MLXArray)) {
         let (batch, seqLen, _) = (hiddenStates.dim(0), hiddenStates.dim(1), hiddenStates.dim(2))
 
-        // Project Q, K, V
         var queries = qProj(hiddenStates)
         var keys = kProj(hiddenStates)
         var values = vProj(hiddenStates)
 
-        // Reshape for multi-head attention
         queries = queries.reshaped(batch, seqLen, numHeads, headDim)
         keys = keys.reshaped(batch, seqLen, numKVHeads, headDim)
         values = values.reshaped(batch, seqLen, numKVHeads, headDim)
 
-        // Apply Q/K normalization
         queries = qNorm(queries)
         keys = kNorm(keys)
 
-        // Transpose to [batch, heads, seq, head_dim]
         queries = queries.transposed(0, 2, 1, 3)
         keys = keys.transposed(0, 2, 1, 3)
         values = values.transposed(0, 2, 1, 3)
 
-        // Calculate offset for RoPE based on cache
         let offset = cache?.0.dim(2) ?? 0
-
-        // Apply MLXFast RoPE (handles split-half rotation via optimized Metal kernel)
         queries = rope(queries, offset: offset)
         keys = rope(keys, offset: offset)
 
-        // Update cache
         var cachedKeys = keys
         var cachedValues = values
 
@@ -94,60 +83,30 @@ public class QuantizedTextAttention: Module {
             cachedValues = concatenated([prevValues, values], axis: 2)
         }
 
-        // SDPA handles GQA natively (N_q != N_kv), no need to tile KV heads
         let attnOutput = MLXFast.scaledDotProductAttention(
             queries: queries, keys: cachedKeys, values: cachedValues,
             scale: scale, mask: attentionMask)
 
-        // SDPA returns [B, N_q, T_q, D], transpose to [B, T_q, N_q, D] then reshape
         let output = oProj(attnOutput.transposed(0, 2, 1, 3).reshaped(batch, seqLen, numHeads * headDim))
 
         return (output, (cachedKeys, cachedValues))
     }
 }
 
-/// MLP for Qwen3 text decoder (SwiGLU activation, quantized)
-/// Wraps the shared QuantizedMLP for backward compatibility
-public class QuantizedTextMLP: Module {
-    @ModuleInfo var gateProj: QuantizedLinear
-    @ModuleInfo var upProj: QuantizedLinear
-    @ModuleInfo var downProj: QuantizedLinear
-
-    public init(config: TextDecoderConfig) {
-        let hiddenSize = config.hiddenSize
-        let intermediateSize = config.intermediateSize
-
-        self._gateProj.wrappedValue = QuantizedLinear(
-            hiddenSize, intermediateSize, bias: false,
-            groupSize: config.groupSize, bits: config.bits)
-        self._upProj.wrappedValue = QuantizedLinear(
-            hiddenSize, intermediateSize, bias: false,
-            groupSize: config.groupSize, bits: config.bits)
-        self._downProj.wrappedValue = QuantizedLinear(
-            intermediateSize, hiddenSize, bias: false,
-            groupSize: config.groupSize, bits: config.bits)
-
-        super.init()
-    }
-
-    public func callAsFunction(_ x: MLXArray) -> MLXArray {
-        // SwiGLU: down(silu(gate(x)) * up(x))
-        let gate = silu(gateProj(x))
-        let up = upProj(x)
-        return downProj(gate * up)
-    }
-}
-
-/// Decoder layer for Qwen3 text model (quantized)
-public class QuantizedTextDecoderLayer: Module {
-    @ModuleInfo var selfAttn: QuantizedTextAttention
-    @ModuleInfo var mlp: QuantizedTextMLP
+/// Code Predictor decoder layer
+public class CodePredictorDecoderLayer: Module {
+    @ModuleInfo var selfAttn: CodePredictorAttention
+    @ModuleInfo var mlp: QuantizedMLP
     @ModuleInfo var inputLayerNorm: RMSNorm
     @ModuleInfo var postAttentionLayerNorm: RMSNorm
 
-    public init(config: TextDecoderConfig) {
-        self._selfAttn.wrappedValue = QuantizedTextAttention(config: config)
-        self._mlp.wrappedValue = QuantizedTextMLP(config: config)
+    public init(config: CodePredictorConfig) {
+        self._selfAttn.wrappedValue = CodePredictorAttention(config: config)
+        self._mlp.wrappedValue = QuantizedMLP(
+            hiddenSize: config.hiddenSize,
+            intermediateSize: config.intermediateSize,
+            groupSize: config.groupSize,
+            bits: config.bits)
         self._inputLayerNorm.wrappedValue = RMSNorm(dimensions: config.hiddenSize, eps: config.rmsNormEps)
         self._postAttentionLayerNorm.wrappedValue = RMSNorm(dimensions: config.hiddenSize, eps: config.rmsNormEps)
 
@@ -159,13 +118,11 @@ public class QuantizedTextDecoderLayer: Module {
         attentionMask: MLXArray? = nil,
         cache: (MLXArray, MLXArray)? = nil
     ) -> (MLXArray, (MLXArray, MLXArray)) {
-        // Self attention with pre-norm
         let residual = hiddenStates
         var hidden = inputLayerNorm(hiddenStates)
         let (attnOutput, newCache) = selfAttn(hidden, attentionMask: attentionMask, cache: cache)
         hidden = residual + attnOutput
 
-        // MLP with pre-norm
         let residual2 = hidden
         hidden = postAttentionLayerNorm(hidden)
         hidden = mlp(hidden)
@@ -175,58 +132,58 @@ public class QuantizedTextDecoderLayer: Module {
     }
 }
 
-/// Full Qwen3 text decoder model (quantized)
-public class QuantizedTextModel: Module {
-    public let config: TextDecoderConfig
+/// Code Predictor model — predicts remaining 15 codebooks from first codebook hidden states
+public class CodePredictorModel: Module {
+    public let config: CodePredictorConfig
 
-    @ModuleInfo public var embedTokens: PreQuantizedEmbedding
-    @ModuleInfo var layers: [QuantizedTextDecoderLayer]
+    // 15 codec embedding tables (one per remaining codebook group, index 1-15)
+    @ModuleInfo var codecEmbeddings: [Embedding]
+    @ModuleInfo var layers: [CodePredictorDecoderLayer]
     @ModuleInfo var norm: RMSNorm
+    // 15 lm_head projections (one per remaining codebook group, quantized)
+    @ModuleInfo var lmHeads: [QuantizedLinear]
 
-    public init(config: TextDecoderConfig) {
+    public init(config: CodePredictorConfig) {
         self.config = config
 
-        self._embedTokens.wrappedValue = PreQuantizedEmbedding(
-            embeddingCount: config.vocabSize,
-            dimensions: config.hiddenSize,
-            groupSize: config.groupSize,
-            bits: config.bits)
-        self._layers.wrappedValue = (0..<config.numLayers).map { _ in
-            QuantizedTextDecoderLayer(config: config)
+        // 15 embedding tables for codebook groups 2-16 (index 0-14)
+        self._codecEmbeddings.wrappedValue = (0..<(config.numCodeGroups - 1)).map { _ in
+            Embedding(embeddingCount: config.vocabSize, dimensions: config.hiddenSize)
         }
+
+        self._layers.wrappedValue = (0..<config.numLayers).map { _ in
+            CodePredictorDecoderLayer(config: config)
+        }
+
         self._norm.wrappedValue = RMSNorm(dimensions: config.hiddenSize, eps: config.rmsNormEps)
+
+        // 15 lm_heads for codebook groups 2-16 (quantized)
+        self._lmHeads.wrappedValue = (0..<(config.numCodeGroups - 1)).map { _ in
+            QuantizedLinear(config.hiddenSize, config.vocabSize, bias: false,
+                           groupSize: config.groupSize, bits: config.bits)
+        }
 
         super.init()
     }
 
-    /// Forward pass through text decoder
+    /// Predict a specific codebook group
+    /// - Parameters:
+    ///   - inputsEmbeds: Hidden states from previous step [B, T, D]
+    ///   - groupIndex: Which codebook group to predict (0 = codebook 2, 14 = codebook 16)
+    ///   - cache: KV cache from previous group steps
+    /// - Returns: (logits, newCache)
     public func callAsFunction(
-        inputIds: MLXArray? = nil,
-        inputsEmbeds: MLXArray? = nil,
-        attentionMask: MLXArray? = nil,
+        inputsEmbeds: MLXArray,
+        groupIndex: Int,
         cache: [(MLXArray, MLXArray)]? = nil
     ) -> (MLXArray, [(MLXArray, MLXArray)]) {
-        // Get embeddings
-        var hiddenStates: MLXArray
-        if let embeds = inputsEmbeds {
-            hiddenStates = embeds
-        } else if let ids = inputIds {
-            hiddenStates = embedTokens(ids)
-        } else {
-            fatalError("Either inputIds or inputsEmbeds must be provided")
-        }
+        var hiddenStates = inputsEmbeds
 
         let seqLen = hiddenStates.dim(1)
-
-        // Determine attention mask
         let mask: MLXArray?
-        if let providedMask = attentionMask {
-            mask = providedMask
-        } else if seqLen == 1 {
-            // Autoregressive: single query can attend to all cached positions, no mask needed
+        if seqLen == 1 {
             mask = nil
         } else {
-            // Prefill: create causal mask using MLX broadcast operations
             let cacheLen = cache?.first?.0.dim(2) ?? 0
             let totalLen = seqLen + cacheLen
             let rows = (MLXArray(0..<Int32(seqLen)) + Int32(cacheLen)).expandedDimensions(axis: 1)
@@ -236,7 +193,6 @@ public class QuantizedTextModel: Module {
                 .asType(hiddenStates.dtype)
         }
 
-        // Apply decoder layers
         var newCache: [(MLXArray, MLXArray)] = []
         for (i, layer) in layers.enumerated() {
             let layerCache = cache?[i]
@@ -245,9 +201,26 @@ public class QuantizedTextModel: Module {
             newCache.append(updatedCache)
         }
 
-        // Final norm
         hiddenStates = norm(hiddenStates)
+        let logits = lmHeads[groupIndex](hiddenStates)
 
-        return (hiddenStates, newCache)
+        return (logits, newCache)
+    }
+
+    /// Embed a token for a specific codebook group
+    public func embedCodecGroup(_ tokenIds: MLXArray, groupIndex: Int) -> MLXArray {
+        codecEmbeddings[groupIndex](tokenIds)
+    }
+
+    /// Sum embeddings for all 15 codebook groups in one call.
+    /// - Parameter tokens: 15 Int32 tokens (one per group)
+    /// - Returns: [1, 1, D] summed embedding
+    public func batchEmbedAllGroups(_ tokens: [Int32]) -> MLXArray {
+        precondition(tokens.count == config.numCodeGroups - 1)
+        var sum = codecEmbeddings[0](MLXArray([tokens[0]]).expandedDimensions(axis: 0))
+        for i in 1..<tokens.count {
+            sum = sum + codecEmbeddings[i](MLXArray([tokens[i]]).expandedDimensions(axis: 0))
+        }
+        return sum  // [1, 1, D]
     }
 }

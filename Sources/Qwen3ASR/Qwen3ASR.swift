@@ -2,6 +2,7 @@ import Foundation
 import MLX
 import MLXNN
 import MLXFast
+import Qwen3Common
 
 /// Special token IDs for Qwen3-ASR
 public struct Qwen3ASRTokens {
@@ -48,11 +49,6 @@ public class Qwen3ASRModel {
     }
 
     /// Transcribe audio to text
-    /// - Parameters:
-    ///   - audio: Float audio samples
-    ///   - sampleRate: Sample rate of input audio (default 16000)
-    ///   - language: Target output language (nil = auto-detect and transcribe in source language)
-    ///   - maxTokens: Maximum tokens to generate
     public func transcribe(
         audio: [Float],
         sampleRate: Int = 16000,
@@ -87,39 +83,25 @@ public class Qwen3ASRModel {
     }
 
     /// Generate text from audio embeddings
-    /// - Parameters:
-    ///   - audioEmbeds: Audio embeddings from encoder
-    ///   - textDecoder: Text decoder model
-    ///   - language: Target language (nil = let model auto-detect and transcribe in source language)
-    ///   - maxTokens: Maximum tokens to generate
     private func generateText(
         audioEmbeds: MLXArray,
         textDecoder: QuantizedTextModel,
         language: String?,
         maxTokens: Int
     ) -> String {
-        // Qwen3-ASR prompt format (from mlx-audio implementation):
-        // <|im_start|>system\n<|im_end|>\n
-        // <|im_start|>user\n<|audio_start|><|audio_pad|>...<|audio_end|><|im_end|>\n
-        // <|im_start|>assistant\n[language X<asr_text>] <- model generates this if not specified
-        //
-        // If language is specified: <|im_start|>assistant\nlanguage {lang}<asr_text>
-        // If language is nil: <|im_start|>assistant\n (let model output "language X<asr_text>...")
-
         // Special token IDs
-        let imStartId = 151644      // <|im_start|>
-        let imEndId = 151645        // <|im_end|>
-        let audioStartId = 151669   // <|audio_start|>
-        let audioEndId = 151670     // <|audio_end|>
-        let audioPadId = 151676     // <|audio_pad|> - placeholder for audio embeddings
-        let asrTextId = 151704      // <asr_text>
-        let newlineId = 198         // \n
+        let imStartId = 151644
+        let imEndId = 151645
+        let audioStartId = 151669
+        let audioEndId = 151670
+        let audioPadId = 151676
+        let asrTextId = 151704
+        let newlineId = 198
 
         // Token IDs for "system", "user", "assistant"
-        // Verified from vocab.json via tokenizer.debugTokenMappings()
-        let systemId = 8948        // "system"
-        let userId = 872           // "user"
-        let assistantId = 77091    // "assistant"
+        let systemId = 8948
+        let userId = 872
+        let assistantId = 77091
 
         // Number of audio tokens (from audio encoder output)
         let numAudioTokens = audioEmbeds.dim(1)
@@ -146,11 +128,7 @@ public class Qwen3ASRModel {
         // <|im_start|>assistant\n
         inputIds.append(contentsOf: [imStartId, assistantId, newlineId].map { Int32($0) })
 
-        // Language handling:
-        // - If language specified: add "language {lang}<asr_text>" - model outputs in that language
-        // - If language is nil: don't add anything - model will generate "language X<asr_text>..."
         if let lang = language, let tokenizer = tokenizer {
-            // Tokenize "language {lang}" and add <asr_text>
             let langPrefix = "language \(lang)"
             let langTokens = tokenizer.encode(langPrefix)
             inputIds.append(contentsOf: langTokens.map { Int32($0) })
@@ -158,14 +136,13 @@ public class Qwen3ASRModel {
         }
 
         // Get text embeddings for all tokens
-        let inputIdsTensor = MLXArray(inputIds).expandedDimensions(axis: 0)  // [1, seq_len]
-        var inputEmbeds = textDecoder.embedTokens(inputIdsTensor)  // [1, seq_len, hidden]
+        let inputIdsTensor = MLXArray(inputIds).expandedDimensions(axis: 0)
+        var inputEmbeds = textDecoder.embedTokens(inputIdsTensor)
 
         // Replace audio_pad token positions with actual audio embeddings
-        // No scaling — inject directly, matching Python mlx-audio / vLLM / qwen3-asr.cpp
         let audioEmbedsTyped = audioEmbeds.asType(inputEmbeds.dtype)
-        let beforeAudio = inputEmbeds[0..., 0..<audioStartIndex, 0...]  // [1, audioStartIndex, hidden]
-        let afterAudio = inputEmbeds[0..., audioEndIndex..., 0...]  // [1, remaining, hidden]
+        let beforeAudio = inputEmbeds[0..., 0..<audioStartIndex, 0...]
+        let afterAudio = inputEmbeds[0..., audioEndIndex..., 0...]
 
         inputEmbeds = concatenated([beforeAudio, audioEmbedsTyped, afterAudio], axis: 1)
 
@@ -180,9 +157,8 @@ public class Qwen3ASRModel {
         cache = newCache
 
         // Get logits from the last position using embedding as LM head (tied weights)
-        // hiddenStates shape: [1, seq_len, hidden]
         let seqLen = hiddenStates.dim(1)
-        let lastHidden = hiddenStates[0..., (seqLen-1)..<seqLen, 0...]  // [1, 1, hidden]
+        let lastHidden = hiddenStates[0..., (seqLen-1)..<seqLen, 0...]
         var logits = textDecoder.embedTokens.asLinear(lastHidden)
         var nextToken = argMax(logits, axis: -1).squeezed().item(Int32.self)
         generatedTokens.append(nextToken)
@@ -223,6 +199,22 @@ public class Qwen3ASRModel {
     }
 }
 
+// MARK: - Backward Compatibility (delegates to HuggingFaceDownloader)
+
+public extension Qwen3ASRModel {
+    static func sanitizedCacheKey(for modelId: String) -> String {
+        HuggingFaceDownloader.sanitizedCacheKey(for: modelId)
+    }
+
+    static func validatedRemoteFileName(_ file: String) throws -> String {
+        try HuggingFaceDownloader.validatedRemoteFileName(file)
+    }
+
+    static func validatedLocalPath(directory: URL, fileName: String) throws -> URL {
+        try HuggingFaceDownloader.validatedLocalPath(directory: directory, fileName: fileName)
+    }
+}
+
 // MARK: - Model Loading
 
 public extension Qwen3ASRModel {
@@ -234,13 +226,18 @@ public extension Qwen3ASRModel {
         progressHandler?(0.1, "Downloading model...")
 
         // Get cache directory
-        let cacheDir = try getCacheDirectory(for: modelId)
+        let cacheDir = try HuggingFaceDownloader.getCacheDirectory(for: modelId)
 
         // Download weights if needed
-        if !weightsExist(in: cacheDir) {
-            try await downloadWeights(modelId: modelId, to: cacheDir, progressHandler: { progress in
-                progressHandler?(0.1 + progress * 0.4, "Downloading weights...")
-            })
+        if !HuggingFaceDownloader.weightsExist(in: cacheDir) {
+            try await HuggingFaceDownloader.downloadWeights(
+                modelId: modelId,
+                to: cacheDir,
+                additionalFiles: ["vocab.json", "tokenizer_config.json"],
+                progressHandler: { progress in
+                    progressHandler?(0.1 + progress * 0.4, "Downloading weights...")
+                }
+            )
         }
 
         progressHandler?(0.5, "Loading tokenizer...")
@@ -272,161 +269,5 @@ public extension Qwen3ASRModel {
         progressHandler?(1.0, "Ready")
 
         return model
-    }
-
-    private static func getCacheDirectory(for modelId: String) throws -> URL {
-        let cacheKey = sanitizedCacheKey(for: modelId)
-        let fm = FileManager.default
-
-        let baseCacheDir: URL
-        if let override = ProcessInfo.processInfo.environment["QWEN3_ASR_CACHE_DIR"],
-           !override.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            baseCacheDir = URL(fileURLWithPath: override, isDirectory: true)
-        } else {
-            baseCacheDir = fm.urls(for: .cachesDirectory, in: .userDomainMask).first!
-        }
-
-        let cacheDir = baseCacheDir
-            .appendingPathComponent("qwen3-asr", isDirectory: true)
-            .appendingPathComponent(cacheKey, isDirectory: true)
-
-        try fm.createDirectory(at: cacheDir, withIntermediateDirectories: true)
-        return cacheDir
-    }
-
-    /// Convert an arbitrary modelId into a single, safe path component for on-disk caching.
-    static func sanitizedCacheKey(for modelId: String) -> String {
-        let replaced = modelId.replacingOccurrences(of: "/", with: "_")
-
-        let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
-        var scalars: [UnicodeScalar] = []
-        scalars.reserveCapacity(replaced.unicodeScalars.count)
-        for s in replaced.unicodeScalars {
-            scalars.append(allowed.contains(s) ? s : "_")
-        }
-
-        var cleaned = String(String.UnicodeScalarView(scalars))
-        cleaned = cleaned.trimmingCharacters(in: CharacterSet(charactersIn: "._"))
-
-        if cleaned.isEmpty || cleaned == "." || cleaned == ".." {
-            cleaned = "model"
-        }
-
-        return cleaned
-    }
-
-    private static func weightsExist(in directory: URL) -> Bool {
-        let fm = FileManager.default
-        let contents = (try? fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
-        return contents.contains { $0.pathExtension == "safetensors" }
-    }
-
-    static func validatedRemoteFileName(_ file: String) throws -> String {
-        let base = URL(fileURLWithPath: file).lastPathComponent
-        guard base == file else {
-            throw DownloadError.invalidRemoteFileName(file)
-        }
-        guard !base.isEmpty, !base.hasPrefix("."), !base.contains("..") else {
-            throw DownloadError.invalidRemoteFileName(file)
-        }
-        guard base.range(of: #"^[A-Za-z0-9._-]+$"#, options: .regularExpression) != nil else {
-            throw DownloadError.invalidRemoteFileName(file)
-        }
-        return base
-    }
-
-    static func validatedLocalPath(directory: URL, fileName: String) throws -> URL {
-        let local = directory.appendingPathComponent(fileName, isDirectory: false)
-        let dirPath = directory.standardizedFileURL.path
-        let localPath = local.standardizedFileURL.path
-        let prefix = dirPath.hasSuffix("/") ? dirPath : (dirPath + "/")
-        guard localPath.hasPrefix(prefix) else {
-            throw DownloadError.invalidRemoteFileName(fileName)
-        }
-        return local
-    }
-
-    private static func downloadWeights(
-        modelId: String,
-        to directory: URL,
-        progressHandler: ((Double) -> Void)?
-    ) async throws {
-        let baseURL = "https://huggingface.co/\(modelId)/resolve/main"
-        let session = URLSession(configuration: .ephemeral)
-
-        // Files to download (config and tokenizer)
-        var filesToDownload = [
-            "config.json",
-            "vocab.json",
-            "tokenizer_config.json"
-        ]
-
-        // Determine model file(s) to download
-        let indexPath = directory.appendingPathComponent("model.safetensors.index.json")
-
-        if !FileManager.default.fileExists(atPath: indexPath.path) {
-            let indexURL = URL(string: "\(baseURL)/model.safetensors.index.json")!
-            if let (indexData, indexResponse) = try? await session.data(from: indexURL),
-               let httpResponse = indexResponse as? HTTPURLResponse,
-               httpResponse.statusCode == 200 {
-                try indexData.write(to: indexPath)
-            }
-        }
-
-        // Check if we have an index file and get model files from it
-        var modelFiles: [String] = []
-        if FileManager.default.fileExists(atPath: indexPath.path),
-           let indexData = try? Data(contentsOf: indexPath),
-           let index = try? JSONSerialization.jsonObject(with: indexData) as? [String: Any],
-           let weightMap = index["weight_map"] as? [String: String],
-           !weightMap.isEmpty {
-            let uniqueFiles = Set(weightMap.values)
-            modelFiles = Array(uniqueFiles).sorted()
-        } else {
-            // Remove corrupt/empty index so it gets re-downloaded next time
-            try? FileManager.default.removeItem(at: indexPath)
-            modelFiles = ["model.safetensors"]
-        }
-
-        filesToDownload.append(contentsOf: modelFiles)
-
-        for (index, file) in filesToDownload.enumerated() {
-            let safeFile = try validatedRemoteFileName(file)
-            let localPath = try validatedLocalPath(directory: directory, fileName: safeFile)
-
-            if FileManager.default.fileExists(atPath: localPath.path) {
-                progressHandler?(Double(index + 1) / Double(filesToDownload.count))
-                continue
-            }
-
-
-            let url = URL(string: "\(baseURL)/\(safeFile)")!
-            let (data, response) = try await session.data(from: url)
-
-            guard let httpResponse = response as? HTTPURLResponse,
-                  httpResponse.statusCode == 200 else {
-                throw DownloadError.failedToDownload(file)
-            }
-
-            try data.write(to: localPath)
-
-            progressHandler?(Double(index + 1) / Double(filesToDownload.count))
-        }
-    }
-}
-
-// MARK: - Errors
-
-public enum DownloadError: Error, LocalizedError {
-    case failedToDownload(String)
-    case invalidRemoteFileName(String)
-
-    public var errorDescription: String? {
-        switch self {
-        case .failedToDownload(let file):
-            return "Failed to download: \(file)"
-        case .invalidRemoteFileName(let file):
-            return "Refusing to write unsafe remote file name: \(file)"
-        }
     }
 }

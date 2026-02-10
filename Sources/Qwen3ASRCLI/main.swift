@@ -1,5 +1,6 @@
 import Foundation
 import Qwen3ASR
+import Qwen3Common
 
 // Entry point
 Task {

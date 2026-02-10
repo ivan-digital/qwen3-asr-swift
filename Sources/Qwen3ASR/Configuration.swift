@@ -1,4 +1,5 @@
 import Foundation
+import Qwen3Common
 
 /// Configuration for Qwen3-ASR audio encoder
 public struct AudioEncoderConfig: Codable, Sendable {

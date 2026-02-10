@@ -4,8 +4,8 @@ import MLXNN
 import MLXFast
 import Qwen3Common
 
-/// Multi-head attention for Qwen3 text decoder with GQA and RoPE (quantized version)
-public class QuantizedTextAttention: Module {
+/// GQA attention for TTS Talker with MRoPE (instead of standard RoPE)
+public class TalkerAttention: Module {
     let numHeads: Int
     let numKVHeads: Int
     let headDim: Int
@@ -18,9 +18,7 @@ public class QuantizedTextAttention: Module {
     @ModuleInfo var qNorm: RMSNorm
     @ModuleInfo var kNorm: RMSNorm
 
-    let rope: MLXNN.RoPE
-
-    public init(config: TextDecoderConfig) {
+    public init(config: TalkerConfig) {
         self.numHeads = config.numHeads
         self.numKVHeads = config.numKVHeads
         self.headDim = config.headDim
@@ -28,7 +26,6 @@ public class QuantizedTextAttention: Module {
 
         let hiddenSize = config.hiddenSize
 
-        // Create quantized linear layers
         self._qProj.wrappedValue = QuantizedLinear(
             hiddenSize, numHeads * headDim, bias: false,
             groupSize: config.groupSize, bits: config.bits)
@@ -42,50 +39,42 @@ public class QuantizedTextAttention: Module {
             numHeads * headDim, hiddenSize, bias: false,
             groupSize: config.groupSize, bits: config.bits)
 
-        // Q/K normalization (Qwen3 specific)
         self._qNorm.wrappedValue = RMSNorm(dimensions: headDim, eps: config.rmsNormEps)
         self._kNorm.wrappedValue = RMSNorm(dimensions: headDim, eps: config.rmsNormEps)
-
-        // MLXFast RoPE: split-half rotation (traditional=false), base from config
-        self.rope = MLXNN.RoPE(dimensions: headDim, traditional: false, base: config.ropeTheta)
 
         super.init()
     }
 
+    /// Forward pass with external position embeddings (MRoPE cos/sin)
     public func callAsFunction(
         _ hiddenStates: MLXArray,
+        positionEmbeddings: (cos: MLXArray, sin: MLXArray),
         attentionMask: MLXArray? = nil,
         cache: (MLXArray, MLXArray)? = nil
     ) -> (MLXArray, (MLXArray, MLXArray)) {
         let (batch, seqLen, _) = (hiddenStates.dim(0), hiddenStates.dim(1), hiddenStates.dim(2))
 
-        // Project Q, K, V
         var queries = qProj(hiddenStates)
         var keys = kProj(hiddenStates)
         var values = vProj(hiddenStates)
 
-        // Reshape for multi-head attention
         queries = queries.reshaped(batch, seqLen, numHeads, headDim)
         keys = keys.reshaped(batch, seqLen, numKVHeads, headDim)
         values = values.reshaped(batch, seqLen, numKVHeads, headDim)
 
-        // Apply Q/K normalization
         queries = qNorm(queries)
         keys = kNorm(keys)
 
-        // Transpose to [batch, heads, seq, head_dim]
+        // Transpose to [B, N, S, D] for SDPA
         queries = queries.transposed(0, 2, 1, 3)
         keys = keys.transposed(0, 2, 1, 3)
         values = values.transposed(0, 2, 1, 3)
 
-        // Calculate offset for RoPE based on cache
-        let offset = cache?.0.dim(2) ?? 0
+        // Apply MRoPE
+        queries = applyRotaryPosEmb(queries, cos: positionEmbeddings.cos, sin: positionEmbeddings.sin)
+        keys = applyRotaryPosEmb(keys, cos: positionEmbeddings.cos, sin: positionEmbeddings.sin)
 
-        // Apply MLXFast RoPE (handles split-half rotation via optimized Metal kernel)
-        queries = rope(queries, offset: offset)
-        keys = rope(keys, offset: offset)
-
-        // Update cache
+        // Update KV cache
         var cachedKeys = keys
         var cachedValues = values
 
@@ -94,60 +83,31 @@ public class QuantizedTextAttention: Module {
             cachedValues = concatenated([prevValues, values], axis: 2)
         }
 
-        // SDPA handles GQA natively (N_q != N_kv), no need to tile KV heads
         let attnOutput = MLXFast.scaledDotProductAttention(
             queries: queries, keys: cachedKeys, values: cachedValues,
             scale: scale, mask: attentionMask)
 
-        // SDPA returns [B, N_q, T_q, D], transpose to [B, T_q, N_q, D] then reshape
+        // [B, N, S, D] -> [B, S, N, D] -> [B, S, N*D]
         let output = oProj(attnOutput.transposed(0, 2, 1, 3).reshaped(batch, seqLen, numHeads * headDim))
 
         return (output, (cachedKeys, cachedValues))
     }
 }
 
-/// MLP for Qwen3 text decoder (SwiGLU activation, quantized)
-/// Wraps the shared QuantizedMLP for backward compatibility
-public class QuantizedTextMLP: Module {
-    @ModuleInfo var gateProj: QuantizedLinear
-    @ModuleInfo var upProj: QuantizedLinear
-    @ModuleInfo var downProj: QuantizedLinear
-
-    public init(config: TextDecoderConfig) {
-        let hiddenSize = config.hiddenSize
-        let intermediateSize = config.intermediateSize
-
-        self._gateProj.wrappedValue = QuantizedLinear(
-            hiddenSize, intermediateSize, bias: false,
-            groupSize: config.groupSize, bits: config.bits)
-        self._upProj.wrappedValue = QuantizedLinear(
-            hiddenSize, intermediateSize, bias: false,
-            groupSize: config.groupSize, bits: config.bits)
-        self._downProj.wrappedValue = QuantizedLinear(
-            intermediateSize, hiddenSize, bias: false,
-            groupSize: config.groupSize, bits: config.bits)
-
-        super.init()
-    }
-
-    public func callAsFunction(_ x: MLXArray) -> MLXArray {
-        // SwiGLU: down(silu(gate(x)) * up(x))
-        let gate = silu(gateProj(x))
-        let up = upProj(x)
-        return downProj(gate * up)
-    }
-}
-
-/// Decoder layer for Qwen3 text model (quantized)
-public class QuantizedTextDecoderLayer: Module {
-    @ModuleInfo var selfAttn: QuantizedTextAttention
-    @ModuleInfo var mlp: QuantizedTextMLP
+/// Talker decoder layer (pre-norm transformer block)
+public class TalkerDecoderLayer: Module {
+    @ModuleInfo var selfAttn: TalkerAttention
+    @ModuleInfo var mlp: QuantizedMLP
     @ModuleInfo var inputLayerNorm: RMSNorm
     @ModuleInfo var postAttentionLayerNorm: RMSNorm
 
-    public init(config: TextDecoderConfig) {
-        self._selfAttn.wrappedValue = QuantizedTextAttention(config: config)
-        self._mlp.wrappedValue = QuantizedTextMLP(config: config)
+    public init(config: TalkerConfig) {
+        self._selfAttn.wrappedValue = TalkerAttention(config: config)
+        self._mlp.wrappedValue = QuantizedMLP(
+            hiddenSize: config.hiddenSize,
+            intermediateSize: config.intermediateSize,
+            groupSize: config.groupSize,
+            bits: config.bits)
         self._inputLayerNorm.wrappedValue = RMSNorm(dimensions: config.hiddenSize, eps: config.rmsNormEps)
         self._postAttentionLayerNorm.wrappedValue = RMSNorm(dimensions: config.hiddenSize, eps: config.rmsNormEps)
 
@@ -156,16 +116,17 @@ public class QuantizedTextDecoderLayer: Module {
 
     public func callAsFunction(
         _ hiddenStates: MLXArray,
+        positionEmbeddings: (cos: MLXArray, sin: MLXArray),
         attentionMask: MLXArray? = nil,
         cache: (MLXArray, MLXArray)? = nil
     ) -> (MLXArray, (MLXArray, MLXArray)) {
-        // Self attention with pre-norm
         let residual = hiddenStates
         var hidden = inputLayerNorm(hiddenStates)
-        let (attnOutput, newCache) = selfAttn(hidden, attentionMask: attentionMask, cache: cache)
+        let (attnOutput, newCache) = selfAttn(
+            hidden, positionEmbeddings: positionEmbeddings,
+            attentionMask: attentionMask, cache: cache)
         hidden = residual + attnOutput
 
-        // MLP with pre-norm
         let residual2 = hidden
         hidden = postAttentionLayerNorm(hidden)
         hidden = mlp(hidden)
@@ -175,58 +136,118 @@ public class QuantizedTextDecoderLayer: Module {
     }
 }
 
-/// Full Qwen3 text decoder model (quantized)
-public class QuantizedTextModel: Module {
-    public let config: TextDecoderConfig
+/// Text projection MLP: Linear(textHidden, textHidden) -> SiLU -> Linear(textHidden, hidden)
+public class TextProjectionMLP: Module {
+    @ModuleInfo var fc1: QuantizedLinear
+    @ModuleInfo var fc2: QuantizedLinear
 
-    @ModuleInfo public var embedTokens: PreQuantizedEmbedding
-    @ModuleInfo var layers: [QuantizedTextDecoderLayer]
-    @ModuleInfo var norm: RMSNorm
-
-    public init(config: TextDecoderConfig) {
-        self.config = config
-
-        self._embedTokens.wrappedValue = PreQuantizedEmbedding(
-            embeddingCount: config.vocabSize,
-            dimensions: config.hiddenSize,
-            groupSize: config.groupSize,
-            bits: config.bits)
-        self._layers.wrappedValue = (0..<config.numLayers).map { _ in
-            QuantizedTextDecoderLayer(config: config)
-        }
-        self._norm.wrappedValue = RMSNorm(dimensions: config.hiddenSize, eps: config.rmsNormEps)
+    public init(textHiddenSize: Int, hiddenSize: Int, groupSize: Int = 64, bits: Int = 4) {
+        self._fc1.wrappedValue = QuantizedLinear(
+            textHiddenSize, textHiddenSize, bias: true,
+            groupSize: groupSize, bits: bits)
+        self._fc2.wrappedValue = QuantizedLinear(
+            textHiddenSize, hiddenSize, bias: true,
+            groupSize: groupSize, bits: bits)
 
         super.init()
     }
 
-    /// Forward pass through text decoder
-    public func callAsFunction(
-        inputIds: MLXArray? = nil,
-        inputsEmbeds: MLXArray? = nil,
-        attentionMask: MLXArray? = nil,
-        cache: [(MLXArray, MLXArray)]? = nil
-    ) -> (MLXArray, [(MLXArray, MLXArray)]) {
-        // Get embeddings
-        var hiddenStates: MLXArray
-        if let embeds = inputsEmbeds {
-            hiddenStates = embeds
-        } else if let ids = inputIds {
-            hiddenStates = embedTokens(ids)
-        } else {
-            fatalError("Either inputIds or inputsEmbeds must be provided")
+    public func callAsFunction(_ x: MLXArray) -> MLXArray {
+        var h = fc1(x)
+        h = silu(h)
+        h = fc2(h)
+        return h
+    }
+}
+
+/// Full TTS Talker model
+public class TalkerModel: Module {
+    public let config: TalkerConfig
+    let rotaryEmb: TalkerRotaryEmbedding
+
+    @ModuleInfo var codecEmbedding: Embedding
+    @ModuleInfo var textEmbedding: Embedding
+    @ModuleInfo var textProjection: TextProjectionMLP
+    @ModuleInfo var layers: [TalkerDecoderLayer]
+    @ModuleInfo var norm: RMSNorm
+    @ModuleInfo var codecHead: QuantizedLinear
+
+    public init(config: TalkerConfig) {
+        self.config = config
+        self.rotaryEmb = TalkerRotaryEmbedding(
+            headDim: config.headDim,
+            sections: config.mropeSections,
+            base: config.ropeTheta)
+
+        // Codec embedding: not quantized (float)
+        self._codecEmbedding.wrappedValue = Embedding(
+            embeddingCount: config.codecVocabSize,
+            dimensions: config.hiddenSize)
+
+        // Text embedding: not quantized (float), dim=textHiddenSize (2048)
+        self._textEmbedding.wrappedValue = Embedding(
+            embeddingCount: config.textVocabSize,
+            dimensions: config.textHiddenSize)
+
+        // Text projection: textHiddenSize -> hiddenSize
+        self._textProjection.wrappedValue = TextProjectionMLP(
+            textHiddenSize: config.textHiddenSize,
+            hiddenSize: config.hiddenSize,
+            groupSize: config.groupSize,
+            bits: config.bits)
+
+        // Transformer layers
+        self._layers.wrappedValue = (0..<config.numLayers).map { _ in
+            TalkerDecoderLayer(config: config)
         }
 
-        let seqLen = hiddenStates.dim(1)
+        self._norm.wrappedValue = RMSNorm(dimensions: config.hiddenSize, eps: config.rmsNormEps)
+
+        // Codec head (logits over codec vocabulary)
+        self._codecHead.wrappedValue = QuantizedLinear(
+            config.hiddenSize, config.codecVocabSize, bias: false,
+            groupSize: config.groupSize, bits: config.bits)
+
+        super.init()
+    }
+
+    /// Embed text tokens and project to hidden dim
+    public func embedText(_ tokenIds: MLXArray) -> MLXArray {
+        let embeds = textEmbedding(tokenIds)  // [B, S, textHiddenSize]
+        return textProjection(embeds)  // [B, S, hiddenSize]
+    }
+
+    /// Embed codec tokens
+    public func embedCodec(_ tokenIds: MLXArray) -> MLXArray {
+        codecEmbedding(tokenIds)  // [B, S, hiddenSize]
+    }
+
+    /// Access the codec embedding layer directly (for use in generation loop)
+    public func getInputEmbeddings() -> Embedding {
+        codecEmbedding
+    }
+
+    /// Forward pass through Talker
+    /// - Returns: (logits, hiddenStates, newCache)
+    public func callAsFunction(
+        inputsEmbeds: MLXArray,
+        positionIds: MLXArray,
+        attentionMask: MLXArray? = nil,
+        cache: [(MLXArray, MLXArray)]? = nil
+    ) -> (MLXArray, MLXArray, [(MLXArray, MLXArray)]) {
+        var hiddenStates = inputsEmbeds
+
+        // Compute MRoPE embeddings
+        let (cosEmbed, sinEmbed) = rotaryEmb.forward(positionIds: positionIds)
 
         // Determine attention mask
+        let seqLen = hiddenStates.dim(1)
         let mask: MLXArray?
         if let providedMask = attentionMask {
             mask = providedMask
         } else if seqLen == 1 {
-            // Autoregressive: single query can attend to all cached positions, no mask needed
             mask = nil
         } else {
-            // Prefill: create causal mask using MLX broadcast operations
             let cacheLen = cache?.first?.0.dim(2) ?? 0
             let totalLen = seqLen + cacheLen
             let rows = (MLXArray(0..<Int32(seqLen)) + Int32(cacheLen)).expandedDimensions(axis: 1)
@@ -240,14 +261,20 @@ public class QuantizedTextModel: Module {
         var newCache: [(MLXArray, MLXArray)] = []
         for (i, layer) in layers.enumerated() {
             let layerCache = cache?[i]
-            let (output, updatedCache) = layer(hiddenStates, attentionMask: mask, cache: layerCache)
+            let (output, updatedCache) = layer(
+                hiddenStates,
+                positionEmbeddings: (cos: cosEmbed, sin: sinEmbed),
+                attentionMask: mask,
+                cache: layerCache)
             hiddenStates = output
             newCache.append(updatedCache)
         }
 
-        // Final norm
         hiddenStates = norm(hiddenStates)
 
-        return (hiddenStates, newCache)
+        // Compute logits
+        let logits = codecHead(hiddenStates)
+
+        return (logits, hiddenStates, newCache)
     }
 }

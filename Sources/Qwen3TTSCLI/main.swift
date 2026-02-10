@@ -1,0 +1,78 @@
+import Foundation
+import Qwen3TTS
+import Qwen3Common
+import ArgumentParser
+
+struct Qwen3TTSCLI: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "qwen3-tts-cli",
+        abstract: "Qwen3-TTS text-to-speech synthesis"
+    )
+
+    @Argument(help: "Text to synthesize")
+    var text: String
+
+    @Option(name: .long, help: "Output WAV file path")
+    var output: String = "output.wav"
+
+    @Option(name: .long, help: "Language (english, chinese, german, japanese)")
+    var language: String = "english"
+
+    @Option(name: .long, help: "Sampling temperature")
+    var temperature: Float = 0.9
+
+    @Option(name: .long, help: "Top-k sampling")
+    var topK: Int = 50
+
+    @Option(name: .long, help: "Maximum tokens to generate (500 = ~40s audio)")
+    var maxTokens: Int = 500
+
+    func run() throws {
+        let semaphore = DispatchSemaphore(value: 0)
+        var exitCode: Int32 = 0
+
+        Task {
+            do {
+                print("Loading model...")
+                let model = try await Qwen3TTSModel.fromPretrained { progress, status in
+                    print("  [\(Int(progress * 100))%] \(status)")
+                }
+
+                print("Synthesizing: \"\(text)\"")
+                let config = SamplingConfig(
+                    temperature: temperature,
+                    topK: topK,
+                    maxTokens: maxTokens)
+
+                let audio = model.synthesize(
+                    text: text,
+                    language: language,
+                    sampling: config)
+
+                guard !audio.isEmpty else {
+                    print("Error: No audio generated")
+                    exitCode = 1
+                    semaphore.signal()
+                    return
+                }
+
+                let outputURL = URL(fileURLWithPath: output)
+                try WAVWriter.write(samples: audio, sampleRate: 24000, to: outputURL)
+                print("Saved \(audio.count) samples (\(String(format: "%.2f", Double(audio.count) / 24000.0))s) to \(output)")
+
+                exitCode = 0
+            } catch {
+                print("Error: \(error)")
+                exitCode = 1
+            }
+            semaphore.signal()
+        }
+
+        semaphore.wait()
+        if exitCode != 0 {
+            throw ExitCode(exitCode)
+        }
+    }
+}
+
+Qwen3TTSCLI.main()

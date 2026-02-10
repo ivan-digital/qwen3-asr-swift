@@ -1,6 +1,7 @@
 import Foundation
 import Accelerate
 import MLX
+import Qwen3Common
 
 /// Whisper-style feature extractor for Qwen3-ASR
 /// Converts raw audio to mel spectrograms

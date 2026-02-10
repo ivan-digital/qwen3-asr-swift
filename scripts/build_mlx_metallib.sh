@@ -95,8 +95,10 @@ echo "OK: wrote $OUT_METALLIB"
 
 # Also copy to test binary location so swift test can find it
 ARCH="$(uname -m)-apple-macosx"
-TEST_BUNDLE_DIR="$BUILD_DIR/$ARCH/$CONFIG/Qwen3ASRPackageTests.xctest/Contents/MacOS"
-if [[ -d "$TEST_BUNDLE_DIR" ]]; then
-  cp "$OUT_METALLIB" "$TEST_BUNDLE_DIR/mlx.metallib"
-  echo "OK: copied to test bundle at $TEST_BUNDLE_DIR/mlx.metallib"
-fi
+for BUNDLE_NAME in Qwen3SpeechPackageTests Qwen3ASRPackageTests; do
+  TEST_BUNDLE_DIR="$BUILD_DIR/$ARCH/$CONFIG/$BUNDLE_NAME.xctest/Contents/MacOS"
+  if [[ -d "$TEST_BUNDLE_DIR" ]]; then
+    cp "$OUT_METALLIB" "$TEST_BUNDLE_DIR/mlx.metallib"
+    echo "OK: copied to test bundle at $TEST_BUNDLE_DIR/mlx.metallib"
+  fi
+done
