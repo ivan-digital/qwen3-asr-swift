@@ -247,4 +247,17 @@ public class CodePredictorModel: Module {
         }
         return sum  // [1, 1, D]
     }
+
+    /// Sum embeddings for all 15 codebook groups for B items.
+    /// - Parameter tokens: [B, 15] Int32 tokens
+    /// - Returns: [B, 1, D] summed embedding
+    public func batchEmbedAllGroupsBatch(_ tokens: MLXArray) -> MLXArray {
+        let numGroups = config.numCodeGroups - 1
+        // tokens[:, 0:1] → [B, 1], embed → [B, 1, D]
+        var sum = codecEmbeddings[0](tokens[0..., 0..<1])  // [B, 1, D]
+        for i in 1..<numGroups {
+            sum = sum + codecEmbeddings[i](tokens[0..., i..<(i + 1)])  // [B, 1, D]
+        }
+        return sum
+    }
 }

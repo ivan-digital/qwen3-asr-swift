@@ -643,4 +643,12 @@ public class SpeechTokenizerDecoder: Module {
         eval(flat)
         return flat.asArray(Float.self)
     }
+
+    /// Decode multiple items sequentially via existing `decode()`.
+    /// Each item has its own length, so batching the decoder itself is deferred.
+    /// - Parameter codesList: Array of `[1, 16, Ti]` codebook arrays
+    /// - Returns: Array of float audio samples per item
+    public func decodeBatch(codesList: [MLXArray]) -> [[Float]] {
+        codesList.map { decode(codes: $0) }
+    }
 }
