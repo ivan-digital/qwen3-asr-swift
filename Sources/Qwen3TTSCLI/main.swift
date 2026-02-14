@@ -9,14 +9,23 @@ struct Qwen3TTSCLI: ParsableCommand {
         abstract: "Qwen3-TTS text-to-speech synthesis"
     )
 
-    @Argument(help: "Text to synthesize (ignored if --batch-file is provided)")
+    @Argument(help: "Text to synthesize (omit when using --list-speakers or --batch-file)")
     var text: String?
 
     @Option(name: .long, help: "Output WAV file path")
     var output: String = "output.wav"
 
-    @Option(name: .long, help: "Language (english, chinese, german, japanese)")
+    @Option(name: .long, help: "Language (english, chinese, german, japanese, spanish, french, korean, russian, italian, portuguese)")
     var language: String = "english"
+
+    @Option(name: .long, help: "Speaker voice (requires CustomVoice model, e.g., vivian, ryan, serena)")
+    var speaker: String?
+
+    @Option(name: .long, help: "Model variant: base (default) or customVoice, or a full HuggingFace model ID")
+    var model: String = "base"
+
+    @Flag(name: .long, help: "List available speakers for the loaded model")
+    var listSpeakers: Bool = false
 
     @Option(name: .long, help: "Sampling temperature")
     var temperature: Float = 0.9
@@ -37,8 +46,8 @@ struct Qwen3TTSCLI: ParsableCommand {
     var stream: Bool = false
 
     func validate() throws {
-        if text == nil && batchFile == nil {
-            throw ValidationError("Either a text argument or --batch-file must be provided")
+        if text == nil && batchFile == nil && !listSpeakers {
+            throw ValidationError("Either a text argument, --batch-file, or --list-speakers must be provided")
         }
     }
 
@@ -48,9 +57,40 @@ struct Qwen3TTSCLI: ParsableCommand {
 
         Task {
             do {
-                print("Loading model...")
-                let model = try await Qwen3TTSModel.fromPretrained { progress, status in
+                // Resolve model ID from variant name or full ID
+                let modelId: String
+                switch model.lowercased() {
+                case "base":
+                    modelId = TTSModelVariant.base.rawValue
+                case "customvoice", "custom_voice", "custom-voice":
+                    modelId = TTSModelVariant.customVoice.rawValue
+                default:
+                    modelId = model  // Treat as full HuggingFace model ID
+                }
+
+                print("Loading model (\(modelId))...")
+                let ttsModel = try await Qwen3TTSModel.fromPretrained(
+                    modelId: modelId
+                ) { progress, status in
                     print("  [\(Int(progress * 100))%] \(status)")
+                }
+
+                // Handle --list-speakers
+                if listSpeakers {
+                    let speakers = ttsModel.availableSpeakers
+                    if speakers.isEmpty {
+                        print("No speakers available for this model.")
+                        print("Use --model customVoice to load a model with speaker support.")
+                    } else {
+                        print("Available speakers:")
+                        for name in speakers {
+                            let dialect = ttsModel.speakerConfig?.speakerDialects[name]
+                            let suffix = dialect != nil ? " (\(dialect!))" : ""
+                            print("  - \(name)\(suffix)")
+                        }
+                    }
+                    semaphore.signal()
+                    return
                 }
 
                 let config = SamplingConfig(
@@ -73,7 +113,7 @@ struct Qwen3TTSCLI: ParsableCommand {
                     }
 
                     print("Batch synthesizing \(texts.count) texts...")
-                    let audioList = model.synthesizeBatch(
+                    let audioList = ttsModel.synthesizeBatch(
                         texts: texts,
                         language: language,
                         sampling: config,
@@ -93,11 +133,11 @@ struct Qwen3TTSCLI: ParsableCommand {
                         try WAVWriter.write(samples: audio, sampleRate: 24000, to: url)
                         print("Saved item \(i): \(audio.count) samples (\(String(format: "%.2f", Double(audio.count) / 24000.0))s) to \(path)")
                     }
-                } else if let text = text {
+                } else if let inputText = text {
                     if stream {
-                        try await runStreaming(model: model, text: text, config: config)
+                        try await runStreaming(model: ttsModel, text: inputText, config: config)
                     } else {
-                        try runStandard(model: model, text: text, config: config)
+                        try runStandard(model: ttsModel, text: inputText, config: config)
                     }
                 }
 
@@ -116,10 +156,15 @@ struct Qwen3TTSCLI: ParsableCommand {
     }
 
     private func runStandard(model: Qwen3TTSModel, text: String, config: SamplingConfig) throws {
-        print("Synthesizing: \"\(text)\"")
+        if let spk = speaker {
+            print("Synthesizing: \"\(text)\" [speaker: \(spk)]")
+        } else {
+            print("Synthesizing: \"\(text)\"")
+        }
         let audio = model.synthesize(
             text: text,
             language: language,
+            speaker: speaker,
             sampling: config)
 
         guard !audio.isEmpty else {
@@ -133,7 +178,11 @@ struct Qwen3TTSCLI: ParsableCommand {
     }
 
     private func runStreaming(model: Qwen3TTSModel, text: String, config: SamplingConfig) async throws {
-        print("Streaming synthesis: \"\(text)\"")
+        if let spk = speaker {
+            print("Streaming synthesis: \"\(text)\" [speaker: \(spk)]")
+        } else {
+            print("Streaming synthesis: \"\(text)\"")
+        }
         let t0 = CFAbsoluteTimeGetCurrent()
 
         let outputURL = URL(fileURLWithPath: output)
@@ -145,6 +194,7 @@ struct Qwen3TTSCLI: ParsableCommand {
         let stream = model.synthesizeStream(
             text: text,
             language: language,
+            speaker: speaker,
             sampling: config)
 
         for try await chunk in stream {

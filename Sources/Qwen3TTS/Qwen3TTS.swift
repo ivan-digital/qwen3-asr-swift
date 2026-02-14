@@ -11,6 +11,12 @@ public class Qwen3TTSModel {
     public let codePredictor: CodePredictorModel
     public let codecDecoder: SpeechTokenizerDecoder
 
+    /// Speaker configuration parsed from config.json (nil for Base model, populated for CustomVoice)
+    public private(set) var speakerConfig: SpeakerConfig?
+
+    /// Available speaker names (empty for Base model)
+    public var availableSpeakers: [String] { speakerConfig?.availableSpeakers ?? [] }
+
     private var tokenizer: Qwen3Tokenizer?
 
     public init(config: Qwen3TTSConfig = .base06B) {
@@ -28,27 +34,32 @@ public class Qwen3TTSModel {
     /// - Parameters:
     ///   - text: Input text to synthesize
     ///   - language: Language tag (e.g., "english", "chinese")
+    ///   - speaker: Speaker voice name (requires CustomVoice model, e.g., "vivian", "ryan")
     ///   - sampling: Sampling configuration
     /// - Returns: Audio samples at 24kHz
     public func synthesize(
         text: String,
         language: String = "english",
+        speaker: String? = nil,
         sampling: SamplingConfig = .default
     ) -> [Float] {
         guard let tokenizer = tokenizer else {
             fatalError("Tokenizer not loaded. Call setTokenizer() first.")
         }
 
-        guard let langId = CodecTokens.languageId(for: language) else {
-            print("Warning: Unknown language '\(language)', defaulting to English")
-            return synthesize(text: text, language: "english", sampling: sampling)
+        // Resolve speaker → token ID and optional language override
+        let (speakerTokenId, effectiveLanguage) = resolveSpeaker(speaker, language: language)
+
+        guard let langId = CodecTokens.languageId(for: effectiveLanguage) else {
+            print("Warning: Unknown language '\(effectiveLanguage)', defaulting to English")
+            return synthesize(text: text, language: "english", speaker: speaker, sampling: sampling)
         }
 
         let t0 = CFAbsoluteTimeGetCurrent()
 
         // Stage 1: Prepare text tokens and codec prefix
         let textTokens = prepareTextTokens(text: text, tokenizer: tokenizer)
-        let codecPrefixTokens = buildCodecPrefix(languageId: langId)
+        let codecPrefixTokens = buildCodecPrefix(languageId: langId, speakerTokenId: speakerTokenId)
 
         // Stage 2: Build input embeddings with element-wise text+codec overlay
         let (prefillEmbeds, trailingTextHidden, ttsPadEmbed) = buildPrefillEmbeddings(
@@ -503,12 +514,14 @@ public class Qwen3TTSModel {
     /// - Parameters:
     ///   - text: Input text to synthesize
     ///   - language: Language tag (e.g., "english", "chinese")
+    ///   - speaker: Speaker voice name (requires CustomVoice model, e.g., "vivian", "ryan")
     ///   - sampling: Sampling configuration
     ///   - chunkSize: Codec frames per streaming yield from talker (default 12)
     /// - Returns: AsyncThrowingStream of AudioChunk at 24kHz
     public func synthesizeStream(
         text: String,
         language: String = "english",
+        speaker: String? = nil,
         sampling: SamplingConfig = .default,
         chunkSize: Int = 12
     ) -> AsyncThrowingStream<AudioChunk, Error> {
@@ -518,13 +531,16 @@ public class Qwen3TTSModel {
                     guard let tokenizer = self.tokenizer else {
                         throw StreamingError.tokenizerNotLoaded
                     }
-                    guard let langId = CodecTokens.languageId(for: language) else {
-                        throw StreamingError.unknownLanguage(language)
+
+                    let (speakerTokenId, effectiveLanguage) = self.resolveSpeaker(speaker, language: language)
+
+                    guard let langId = CodecTokens.languageId(for: effectiveLanguage) else {
+                        throw StreamingError.unknownLanguage(effectiveLanguage)
                     }
 
                     let codeStream = self.generateCodeStream(
-                        text: text, langId: langId, tokenizer: tokenizer,
-                        sampling: sampling, chunkSize: chunkSize)
+                        text: text, langId: langId, speakerTokenId: speakerTokenId,
+                        tokenizer: tokenizer, sampling: sampling, chunkSize: chunkSize)
 
                     let decodeChunkSize = 18
                     let leftContextSize = 8
@@ -617,6 +633,7 @@ public class Qwen3TTSModel {
     private func generateCodeStream(
         text: String,
         langId: Int,
+        speakerTokenId: Int? = nil,
         tokenizer: Qwen3Tokenizer,
         sampling: SamplingConfig,
         chunkSize: Int
@@ -627,7 +644,7 @@ public class Qwen3TTSModel {
                 let cpSamplingConfig = SamplingConfig(temperature: sampling.temperature, topK: sampling.topK)
 
                 let textTokens = self.prepareTextTokens(text: text, tokenizer: tokenizer)
-                let codecPrefixTokens = self.buildCodecPrefix(languageId: langId)
+                let codecPrefixTokens = self.buildCodecPrefix(languageId: langId, speakerTokenId: speakerTokenId)
                 let (prefillEmbeds, trailingTextHidden, ttsPadEmbed) = self.buildPrefillEmbeddings(
                     textTokens: textTokens, codecPrefixTokens: codecPrefixTokens)
                 eval(prefillEmbeds, trailingTextHidden, ttsPadEmbed)
@@ -815,6 +832,37 @@ public class Qwen3TTSModel {
         eval(allLogits)
     }
 
+    // MARK: - Speaker Resolution
+
+    /// Resolve speaker name to token ID and effective language.
+    /// - Returns: (speakerTokenId, effectiveLanguage) — speakerTokenId is nil if no speaker
+    private func resolveSpeaker(_ speaker: String?, language: String) -> (Int?, String) {
+        guard let speakerName = speaker else {
+            return (nil, language)
+        }
+
+        guard let config = speakerConfig else {
+            print("Warning: Speaker '\(speakerName)' requested but model has no speaker support. " +
+                  "Use the CustomVoice model variant for speaker selection.")
+            return (nil, language)
+        }
+
+        let normalizedName = speakerName.lowercased()
+        guard let tokenId = config.speakerIds[normalizedName] else {
+            let available = config.availableSpeakers.joined(separator: ", ")
+            print("Warning: Unknown speaker '\(speakerName)'. Available speakers: \(available)")
+            return (nil, language)
+        }
+
+        // Check if this speaker has a dialect override
+        var effectiveLanguage = language
+        if let dialect = config.speakerDialects[normalizedName] {
+            effectiveLanguage = dialect
+        }
+
+        return (tokenId, effectiveLanguage)
+    }
+
     // MARK: - Text Preparation
 
     /// Prepare text tokens using chat template.
@@ -842,9 +890,10 @@ public class Qwen3TTSModel {
 
     // MARK: - Codec Prefix
 
-    /// Build codec prefix: [think, think_bos, lang_id, think_eos, pad, bos]
-    private func buildCodecPrefix(languageId: Int) -> [Int32] {
-        [
+    /// Build codec prefix: [think, think_bos, lang_id, think_eos, pad, bos] (6 tokens)
+    /// With speaker: [think, think_bos, lang_id, think_eos, pad, bos, spk_token] (7 tokens)
+    func buildCodecPrefix(languageId: Int, speakerTokenId: Int? = nil) -> [Int32] {
+        var prefix: [Int32] = [
             Int32(CodecTokens.codecThink),
             Int32(CodecTokens.codecThinkBos),
             Int32(languageId),
@@ -852,6 +901,10 @@ public class Qwen3TTSModel {
             Int32(CodecTokens.codecPad),
             Int32(CodecTokens.codecBos),
         ]
+        if let spkId = speakerTokenId {
+            prefix.append(Int32(spkId))
+        }
+        return prefix
     }
 
     // MARK: - Embedding Construction
@@ -1178,6 +1231,12 @@ public extension Qwen3TTSModel {
                 })
         }
 
+        // Parse config.json for speaker config
+        let configPath = mainCacheDir.appendingPathComponent("config.json")
+        if FileManager.default.fileExists(atPath: configPath.path) {
+            model.speakerConfig = try? parseSpeakerConfig(from: configPath)
+        }
+
         // Load tokenizer
         progressHandler?(0.6, "Loading tokenizer...")
         let vocabPath = mainCacheDir.appendingPathComponent("vocab.json")
@@ -1202,5 +1261,47 @@ public extension Qwen3TTSModel {
 
         progressHandler?(1.0, "Ready")
         return model
+    }
+
+    /// Parse speaker configuration from model config.json
+    private static func parseSpeakerConfig(from path: URL) throws -> SpeakerConfig? {
+        let data = try Data(contentsOf: path)
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let talkerConfig = json["talker_config"] as? [String: Any] else {
+            return nil
+        }
+
+        // Parse spk_id: {"serena": 3066, "vivian": 3065, ...}
+        let spkIdRaw = talkerConfig["spk_id"] as? [String: Any] ?? [:]
+        var speakerIds: [String: Int] = [:]
+        for (name, value) in spkIdRaw {
+            if let id = value as? Int {
+                speakerIds[name.lowercased()] = id
+            }
+        }
+
+        // Return nil if no speakers defined (Base model has empty spk_id)
+        guard !speakerIds.isEmpty else { return nil }
+
+        // Parse spk_is_dialect: {"eric": "sichuan_dialect", "dylan": "beijing_dialect"}
+        let dialectRaw = talkerConfig["spk_is_dialect"] as? [String: String] ?? [:]
+        var speakerDialects: [String: String] = [:]
+        for (name, dialect) in dialectRaw {
+            speakerDialects[name.lowercased()] = dialect.lowercased()
+        }
+
+        // Parse codec_language_id: {"english": 2050, "chinese": 2055, ...}
+        let langIdRaw = talkerConfig["codec_language_id"] as? [String: Any] ?? [:]
+        var codecLanguageIds: [String: Int] = [:]
+        for (name, value) in langIdRaw {
+            if let id = value as? Int {
+                codecLanguageIds[name.lowercased()] = id
+            }
+        }
+
+        return SpeakerConfig(
+            speakerIds: speakerIds,
+            speakerDialects: speakerDialects,
+            codecLanguageIds: codecLanguageIds)
     }
 }
