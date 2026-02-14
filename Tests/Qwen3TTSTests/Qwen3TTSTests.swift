@@ -71,6 +71,23 @@ final class Qwen3TTSConfigTests: XCTestCase {
         XCTAssertNil(CodecTokens.languageId(for: "unknown"))
     }
 
+    func testExtendedLanguageIds() {
+        XCTAssertEqual(CodecTokens.languageId(for: "spanish"), 2054)
+        XCTAssertEqual(CodecTokens.languageId(for: "es"), 2054)
+        XCTAssertEqual(CodecTokens.languageId(for: "french"), 2061)
+        XCTAssertEqual(CodecTokens.languageId(for: "fr"), 2061)
+        XCTAssertEqual(CodecTokens.languageId(for: "korean"), 2064)
+        XCTAssertEqual(CodecTokens.languageId(for: "ko"), 2064)
+        XCTAssertEqual(CodecTokens.languageId(for: "russian"), 2069)
+        XCTAssertEqual(CodecTokens.languageId(for: "ru"), 2069)
+        XCTAssertEqual(CodecTokens.languageId(for: "italian"), 2070)
+        XCTAssertEqual(CodecTokens.languageId(for: "it"), 2070)
+        XCTAssertEqual(CodecTokens.languageId(for: "portuguese"), 2071)
+        XCTAssertEqual(CodecTokens.languageId(for: "pt"), 2071)
+        XCTAssertEqual(CodecTokens.languageId(for: "beijing_dialect"), 2074)
+        XCTAssertEqual(CodecTokens.languageId(for: "sichuan_dialect"), 2062)
+    }
+
     func testCombinedConfig() {
         let config = Qwen3TTSConfig.base06B
         XCTAssertEqual(config.talker.hiddenSize, 1024)
@@ -111,6 +128,71 @@ final class SamplingTests: XCTestCase {
         let config = SamplingConfig.greedy
         XCTAssertEqual(config.temperature, 0)
         XCTAssertEqual(config.topK, 1)
+    }
+}
+
+// MARK: - Speaker Config Tests
+
+final class SpeakerConfigTests: XCTestCase {
+
+    func testSpeakerConfigParsing() {
+        let config = SpeakerConfig(
+            speakerIds: ["serena": 3066, "vivian": 3065, "ryan": 3061, "aiden": 2861],
+            speakerDialects: ["eric": "sichuan_dialect", "dylan": "beijing_dialect"])
+        XCTAssertEqual(config.speakerIds["serena"], 3066)
+        XCTAssertEqual(config.speakerIds["vivian"], 3065)
+        XCTAssertEqual(config.speakerIds["ryan"], 3061)
+        XCTAssertEqual(config.availableSpeakers, ["aiden", "ryan", "serena", "vivian"])
+    }
+
+    func testSpeakerDialectMapping() {
+        let config = SpeakerConfig(
+            speakerIds: ["eric": 2875, "dylan": 2878],
+            speakerDialects: ["eric": "sichuan_dialect", "dylan": "beijing_dialect"])
+        XCTAssertEqual(config.speakerDialects["eric"], "sichuan_dialect")
+        XCTAssertEqual(config.speakerDialects["dylan"], "beijing_dialect")
+    }
+
+    func testEmptySpeakerConfig() {
+        let config = SpeakerConfig(speakerIds: [:], speakerDialects: [:])
+        XCTAssertTrue(config.availableSpeakers.isEmpty)
+    }
+
+    func testCodecPrefixWithoutSpeaker() {
+        let model = Qwen3TTSModel()
+        let prefix = model.buildCodecPrefix(languageId: CodecTokens.languageEnglish)
+        XCTAssertEqual(prefix.count, 6)
+        XCTAssertEqual(prefix[0], Int32(CodecTokens.codecThink))
+        XCTAssertEqual(prefix[1], Int32(CodecTokens.codecThinkBos))
+        XCTAssertEqual(prefix[2], Int32(CodecTokens.languageEnglish))
+        XCTAssertEqual(prefix[3], Int32(CodecTokens.codecThinkEos))
+        XCTAssertEqual(prefix[4], Int32(CodecTokens.codecPad))
+        XCTAssertEqual(prefix[5], Int32(CodecTokens.codecBos))
+    }
+
+    func testCodecPrefixWithSpeaker() {
+        let model = Qwen3TTSModel()
+        let speakerTokenId = 3065  // vivian
+        let prefix = model.buildCodecPrefix(languageId: CodecTokens.languageEnglish, speakerTokenId: speakerTokenId)
+        XCTAssertEqual(prefix.count, 7)
+        XCTAssertEqual(prefix[0], Int32(CodecTokens.codecThink))
+        XCTAssertEqual(prefix[1], Int32(CodecTokens.codecThinkBos))
+        XCTAssertEqual(prefix[2], Int32(CodecTokens.languageEnglish))
+        XCTAssertEqual(prefix[3], Int32(CodecTokens.codecThinkEos))
+        XCTAssertEqual(prefix[4], Int32(CodecTokens.codecPad))
+        XCTAssertEqual(prefix[5], Int32(CodecTokens.codecBos))
+        XCTAssertEqual(prefix[6], Int32(speakerTokenId))
+    }
+
+    func testTTSModelVariant() {
+        XCTAssertEqual(TTSModelVariant.base.rawValue, "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit")
+        XCTAssertEqual(TTSModelVariant.customVoice.rawValue, "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-4bit")
+    }
+
+    func testAvailableSpeakersEmptyByDefault() {
+        let model = Qwen3TTSModel()
+        XCTAssertTrue(model.availableSpeakers.isEmpty)
+        XCTAssertNil(model.speakerConfig)
     }
 }
 

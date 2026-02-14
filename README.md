@@ -13,7 +13,8 @@ Papers: [Qwen3-ASR](https://arxiv.org/abs/2601.21337), [Qwen3-TTS](https://arxiv
 |-------|------|--------------|-------------|
 | Qwen3-ASR-0.6B (4-bit) | ASR | ~400 MB | `mlx-community/Qwen3-ASR-0.6B-4bit` |
 | Qwen3-ASR-1.7B (8-bit) | ASR | ~2.5 GB | `mlx-community/Qwen3-ASR-1.7B-8bit` |
-| Qwen3-TTS-0.6B (4-bit) | TTS | ~977 MB + 651 MB codec | `mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit` |
+| Qwen3-TTS-0.6B Base (4-bit) | TTS | ~977 MB + 651 MB codec | `mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit` |
+| Qwen3-TTS-0.6B CustomVoice (4-bit) | TTS + Speakers | ~977 MB + 651 MB codec | `mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-4bit` |
 
 ## Installation
 
@@ -112,6 +113,59 @@ CLI:
 ```bash
 .build/release/qwen3-tts-cli "Hello world" --stream --output output.wav
 ```
+
+### Custom Voice / Speaker Selection
+
+The **CustomVoice** model variant supports 9 built-in speaker voices. Load it by passing the CustomVoice model ID:
+
+```swift
+import Qwen3TTS
+
+// Load the CustomVoice model (downloads ~1.7 GB on first run)
+let model = try await Qwen3TTSModel.fromPretrained(
+    modelId: TTSModelVariant.customVoice.rawValue
+)
+
+// Synthesize with a specific speaker
+let audio = model.synthesize(text: "Hello world", language: "english", speaker: "vivian")
+
+// Streaming with speaker
+for try await chunk in model.synthesizeStream(text: "Hello", speaker: "ryan") {
+    player.enqueue(chunk.samples)
+}
+
+// List available speakers
+print(model.availableSpeakers)  // ["aiden", "dylan", "eric", ...]
+```
+
+CLI:
+
+```bash
+# Use CustomVoice model with a speaker
+.build/release/qwen3-tts-cli "Hello world" --model customVoice --speaker vivian --output vivian.wav
+
+# List available speakers
+.build/release/qwen3-tts-cli --model customVoice --list-speakers
+
+# Streaming with speaker
+.build/release/qwen3-tts-cli "Hello world" --model customVoice --speaker ryan --stream
+```
+
+**Available speakers:**
+
+| Speaker | Language | Notes |
+|---------|----------|-------|
+| serena | English | |
+| vivian | English | |
+| ryan | English | |
+| aiden | English | |
+| ono_anna | Japanese | |
+| sohee | Korean | |
+| uncle_fu | Chinese | |
+| eric | Sichuan dialect | Auto-sets language to Sichuan dialect |
+| dylan | Beijing dialect | Auto-sets language to Beijing dialect |
+
+> **Note:** Dialect speakers (Eric, Dylan) automatically override the language to their dialect. The Base model does not support speakers — pass `--model customVoice` or use `TTSModelVariant.customVoice` to enable speaker selection.
 
 ### Sampling Options
 
@@ -220,6 +274,7 @@ swift test --filter Qwen3ASRIntegrationTests
 ## Roadmap
 
 - [x] TTS streaming inference
+- [x] TTS built-in speaker voices (CustomVoice model)
 - [ ] TTS voice cloning (speaker encoder)
 - [ ] TTS voice design
 - [x] TTS inference optimizations (chunked decode, batch embeddings)
@@ -233,9 +288,9 @@ swift test --filter Qwen3ASRIntegrationTests
 
 Chinese, English, Cantonese, Arabic, German, French, Spanish, Portuguese, Indonesian, Italian, Korean, Russian, Thai, Vietnamese, Japanese, Turkish, Hindi, Malay, Dutch, Swedish, Danish, Finnish, Polish, Czech, Filipino, Persian, Greek, Hungarian, Macedonian, Romanian + 22 Chinese dialects
 
-### TTS (4 Languages)
+### TTS (10 Languages)
 
-English, Chinese, German, Japanese (more via language ID extension)
+English, Chinese, German, Japanese, Spanish, French, Korean, Russian, Italian, Portuguese (+ Beijing/Sichuan dialects via CustomVoice model)
 
 ## License
 
