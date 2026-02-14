@@ -314,6 +314,69 @@ final class TTSE2ETests: XCTestCase {
         print("Play with: afplay /tmp/tts_english.wav && afplay /tmp/tts_german.wav")
     }
 
+    // MARK: - Streaming Tests
+
+    func testStreamingSynthesis() async throws {
+        let ttsModel = try await loadTTSModel()
+
+        let text = "Hello, this is a streaming test of the text to speech system."
+        var chunks: [Qwen3TTSModel.AudioChunk] = []
+        var totalSamples = 0
+
+        let stream = ttsModel.synthesizeStream(text: text, language: "english")
+        for try await chunk in stream {
+            if chunk.isFinal && chunk.samples.isEmpty { break }
+            if !chunk.samples.isEmpty {
+                chunks.append(chunk)
+                totalSamples += chunk.samples.count
+            }
+        }
+
+        XCTAssertGreaterThan(chunks.count, 0, "Should produce at least one audio chunk")
+        XCTAssertGreaterThan(totalSamples, 0, "Should produce audio samples")
+
+        // Verify all samples are in valid range
+        for chunk in chunks {
+            for sample in chunk.samples {
+                XCTAssertFalse(sample.isNaN, "Sample should not be NaN")
+                XCTAssertFalse(sample.isInfinite, "Sample should not be Inf")
+                XCTAssertGreaterThanOrEqual(sample, -1.0, "Sample should be >= -1.0")
+                XCTAssertLessThanOrEqual(sample, 1.0, "Sample should be <= 1.0")
+            }
+        }
+
+        let audioDur = Double(totalSamples) / 24000.0
+        print("Streaming: \(chunks.count) chunks, \(totalSamples) samples (\(fmt(audioDur))s)")
+    }
+
+    func testStreamingWAVWriter() async throws {
+        let ttsModel = try await loadTTSModel()
+
+        let text = "Testing streaming WAV output."
+        let outputURL = URL(fileURLWithPath: "/tmp/tts_streaming_test.wav")
+
+        let writer = try StreamingWAVWriter(to: outputURL)
+
+        let stream = ttsModel.synthesizeStream(text: text, language: "english")
+        for try await chunk in stream {
+            if chunk.isFinal && chunk.samples.isEmpty { break }
+            if !chunk.samples.isEmpty {
+                writer.write(samples: chunk.samples)
+            }
+        }
+
+        let result = writer.finalize()
+        XCTAssertGreaterThan(result.sampleCount, 0, "Should have written samples")
+
+        // Verify the file is valid WAV
+        let data = try Data(contentsOf: outputURL)
+        XCTAssertGreaterThan(data.count, 44, "WAV file should be larger than header")
+        XCTAssertEqual(String(data: data[0..<4], encoding: .ascii), "RIFF")
+        XCTAssertEqual(String(data: data[8..<12], encoding: .ascii), "WAVE")
+
+        print("Streaming WAV: \(result.sampleCount) samples -> \(outputURL.path)")
+    }
+
     // MARK: - Helpers
 
     private func loadTTSModel() async throws -> Qwen3TTSModel {
@@ -384,5 +447,51 @@ final class TTSE2ETests: XCTestCase {
 
     private func fmt(_ value: Double) -> String {
         String(format: "%.2f", value)
+    }
+}
+
+// MARK: - TextChunker Tests
+
+final class TextChunkerTests: XCTestCase {
+
+    func testShortTextNoChunking() {
+        let text = "Hello world."
+        let chunks = TextChunker.chunk(text)
+        XCTAssertEqual(chunks.count, 1)
+        XCTAssertEqual(chunks[0], "Hello world.")
+    }
+
+    func testEmptyText() {
+        XCTAssertEqual(TextChunker.chunk(""), [])
+        XCTAssertEqual(TextChunker.chunk("   "), [])
+    }
+
+    func testLongTextChunksAtSentence() {
+        let text = "This is the first sentence. This is the second sentence. " +
+                   "And here is a third one that makes this text quite long enough to need chunking. " +
+                   "Finally we add a fourth sentence to push it way over the word limit."
+        let chunks = TextChunker.chunk(text, maxWords: 20)
+        XCTAssertGreaterThan(chunks.count, 1, "Should split into multiple chunks")
+        // Verify no chunk exceeds max words (with some tolerance for boundary finding)
+        for chunk in chunks {
+            let wordCount = chunk.split(separator: " ").count
+            XCTAssertLessThanOrEqual(wordCount, 25, "Chunk should not be much longer than maxWords")
+        }
+        // Verify full text is preserved
+        let rejoined = chunks.joined(separator: " ")
+        XCTAssertTrue(rejoined.contains("first sentence"))
+        XCTAssertTrue(rejoined.contains("fourth sentence"))
+    }
+
+    func testChunkAtComma() {
+        let text = "One two three four five six seven eight nine ten, eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty"
+        let chunks = TextChunker.chunk(text, maxWords: 15)
+        XCTAssertGreaterThanOrEqual(chunks.count, 1)
+    }
+
+    func testMaxWordsRespected() {
+        let words = (0..<100).map { "word\($0)" }.joined(separator: " ")
+        let chunks = TextChunker.chunk(words, maxWords: 20)
+        XCTAssertGreaterThan(chunks.count, 3)
     }
 }
