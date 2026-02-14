@@ -101,6 +101,399 @@ public class Qwen3TTSModel {
         return waveform
     }
 
+    // MARK: - Batch Synthesis
+
+    /// Synthesize speech from multiple texts in parallel using batched generation.
+    ///
+    /// All items generate tokens in lockstep. Items that finish early (hit EOS) receive
+    /// padding tokens. Generation stops when all items are done or the safety cap is reached.
+    ///
+    /// Texts are sorted by length before batching so similar-length items are grouped together,
+    /// minimizing wasted compute from padding. Results are returned in the original input order.
+    ///
+    /// **Memory:** Each item uses ~55 MB KV cache per 500 tokens. B=4 at 500 tokens ≈ 220 MB.
+    ///
+    /// **Limitations:**
+    /// - Repetition penalty is not applied in batch mode (requires per-item token history).
+    /// - Items with very different output lengths waste compute on padding steps.
+    ///   If one item fails to hit EOS, all items in the batch run to the safety cap.
+    ///
+    /// - Parameters:
+    ///   - texts: Array of texts to synthesize
+    ///   - language: Language tag (e.g., "english", "chinese")
+    ///   - sampling: Sampling configuration
+    ///   - maxBatchSize: Maximum items per batch (default 4)
+    /// - Returns: Array of audio samples at 24kHz, one per input text (same order as input)
+    public func synthesizeBatch(
+        texts: [String],
+        language: String = "english",
+        sampling: SamplingConfig = .default,
+        maxBatchSize: Int = 4
+    ) -> [[Float]] {
+        guard !texts.isEmpty else { return [] }
+
+        // Single item: delegate to existing method for zero overhead
+        if texts.count == 1 {
+            return [synthesize(text: texts[0], language: language, sampling: sampling)]
+        }
+
+        guard let tokenizer = tokenizer else {
+            fatalError("Tokenizer not loaded. Call setTokenizer() first.")
+        }
+
+        guard let langId = CodecTokens.languageId(for: language) else {
+            print("Warning: Unknown language '\(language)', defaulting to English")
+            return synthesizeBatch(texts: texts, language: "english", sampling: sampling, maxBatchSize: maxBatchSize)
+        }
+
+        // Sort texts by length to group similar-length items together.
+        // This minimizes padding waste: if one batch has all short texts and another
+        // has all long texts, no short text is forced to wait for a long one.
+        let indexed = texts.enumerated().map { ($0.offset, $0.element) }
+        let sorted = indexed.sorted { $0.1.count < $1.1.count }
+        let sortedTexts = sorted.map { $0.1 }
+        let originalIndices = sorted.map { $0.0 }
+
+        // Process in chunks if exceeding maxBatchSize
+        var sortedResults: [[Float]]
+        if sortedTexts.count > maxBatchSize {
+            sortedResults = []
+            for chunkStart in stride(from: 0, to: sortedTexts.count, by: maxBatchSize) {
+                let chunkEnd = min(chunkStart + maxBatchSize, sortedTexts.count)
+                let chunk = Array(sortedTexts[chunkStart..<chunkEnd])
+                let chunkResults = synthesizeBatchInternal(texts: chunk, langId: langId, tokenizer: tokenizer, sampling: sampling)
+                sortedResults.append(contentsOf: chunkResults)
+            }
+        } else {
+            sortedResults = synthesizeBatchInternal(texts: sortedTexts, langId: langId, tokenizer: tokenizer, sampling: sampling)
+        }
+
+        // Restore original order
+        var results = [[Float]](repeating: [], count: texts.count)
+        for (sortedIdx, origIdx) in originalIndices.enumerated() {
+            results[origIdx] = sortedResults[sortedIdx]
+        }
+        return results
+    }
+
+    /// Internal batch synthesis for a single chunk (already sorted, within maxBatchSize).
+    private func synthesizeBatchInternal(
+        texts: [String],
+        langId: Int,
+        tokenizer: Qwen3Tokenizer,
+        sampling: SamplingConfig
+    ) -> [[Float]] {
+        let t0 = CFAbsoluteTimeGetCurrent()
+        let batchSize = texts.count
+
+        // Stage 1: Prepare per-item data
+        let codecPrefixTokens = buildCodecPrefix(languageId: langId)
+
+        var prefills: [MLXArray] = []
+        var trailings: [MLXArray] = []
+        var padEmbeds: [MLXArray] = []
+
+        for text in texts {
+            let textTokens = prepareTextTokens(text: text, tokenizer: tokenizer)
+            let (prefill, trailing, padEmbed) = buildPrefillEmbeddings(
+                textTokens: textTokens, codecPrefixTokens: codecPrefixTokens)
+            prefills.append(prefill)
+            trailings.append(trailing)
+            padEmbeds.append(padEmbed)
+        }
+
+        // All prefills are length 9 — stack directly
+        let batchPrefill = concatenated(prefills, axis: 0)  // [B, 9, D]
+        let ttsPadEmbed = padEmbeds[0]  // All pad embeds are the same — use first
+
+        // Pre-pad trailing texts to max length
+        let maxTrailingLen = trailings.map { $0.dim(1) }.max()!
+        var paddedTrailings: [MLXArray] = []
+        for trailing in trailings {
+            let trailLen = trailing.dim(1)
+            if trailLen < maxTrailingLen {
+                let padCount = maxTrailingLen - trailLen
+                let padding = broadcast(ttsPadEmbed, to: [1, padCount, config.talker.hiddenSize])
+                paddedTrailings.append(concatenated([trailing, padding], axis: 1))
+            } else {
+                paddedTrailings.append(trailing)
+            }
+        }
+        let batchTrailing = concatenated(paddedTrailings, axis: 0)  // [B, maxTrailingLen, D]
+
+        eval(batchPrefill, batchTrailing)
+        let t1 = CFAbsoluteTimeGetCurrent()
+
+        // Stage 2: Batch generation
+        let (allCodebooksList, frameCounts) = generateBatchWithCodePredictor(
+            batchPrefill: batchPrefill,
+            batchTrailing: batchTrailing,
+            ttsPadEmbed: ttsPadEmbed,
+            sampling: sampling)
+
+        let t2 = CFAbsoluteTimeGetCurrent()
+
+        // Log padding waste: how many steps each item wasted after hitting EOS
+        let maxFrames = frameCounts.max() ?? 0
+        if maxFrames > 0 {
+            let wastedSteps = frameCounts.map { maxFrames - $0 }
+            let totalWaste = wastedSteps.reduce(0, +)
+            let wasteRatio = Double(totalWaste) / Double(maxFrames * batchSize)
+            if wasteRatio > 0.3 {
+                print("  Warning: \(Int(wasteRatio * 100))% padding waste " +
+                      "(items finished at: \(frameCounts.map { String($0) }.joined(separator: ", ")) steps). " +
+                      "Batch similar-length texts for better efficiency.")
+            }
+        }
+
+        // Stage 3: Decode each item
+        var results: [[Float]] = []
+        for i in 0..<batchSize {
+            let numFrames = frameCounts[i]
+            if numFrames == 0 {
+                print("  Item \(i): no tokens generated")
+                results.append([])
+                continue
+            }
+            let codes = allCodebooksList[i]  // [1, 16, Ti]
+            let outputSamples = numFrames * 1920
+            print("  Item \(i): decoding \(numFrames) frames -> \(outputSamples) samples (\(String(format: "%.1f", Double(outputSamples) / 24000.0))s)...")
+            let waveform = codecDecoder.decode(codes: codes)
+            results.append(waveform)
+        }
+        let t3 = CFAbsoluteTimeGetCurrent()
+
+        let totalAudio = results.reduce(0.0) { $0 + Double($1.count) / 24000.0 }
+        let totalFrames = frameCounts.reduce(0, +)
+        print("  Batch timing: embed=\(String(format: "%.3f", t1-t0))s | " +
+              "generate=\(String(format: "%.3f", t2-t1))s (\(totalFrames) total steps, " +
+              "\(batchSize) items) | " +
+              "decode=\(String(format: "%.3f", t3-t2))s | " +
+              "total=\(String(format: "%.3f", t3-t0))s | " +
+              "audio=\(String(format: "%.2f", totalAudio))s | " +
+              "RTF=\(String(format: "%.2f", (t3-t0)/max(totalAudio, 0.001)))")
+
+        return results
+    }
+
+    // MARK: - Batch Generation Loop
+
+    /// Batch autoregressive generation: all B items in lockstep.
+    private func generateBatchWithCodePredictor(
+        batchPrefill: MLXArray,
+        batchTrailing: MLXArray,
+        ttsPadEmbed: MLXArray,
+        sampling: SamplingConfig
+    ) -> (allCodebooksList: [MLXArray], frameCounts: [Int]) {
+        let batchSize = batchPrefill.dim(0)
+        let safeMaxTokens = min(sampling.maxTokens, 500)
+        let maxTrailingLen = batchTrailing.dim(1)
+        let cpSamplingConfig = SamplingConfig(temperature: sampling.temperature, topK: sampling.topK)
+        let codecPadToken = Int32(CodecTokens.codecPad)
+
+        // Prefill
+        let prefillLen = batchPrefill.dim(1)
+        let positionIds = buildTTSPositionIds(seqLen: prefillLen)  // [3, 1, 9] — broadcasts over B
+
+        var (logits, hiddenStates, talkerCache) = talker(
+            inputsEmbeds: batchPrefill,
+            positionIds: positionIds,
+            cache: nil)
+
+        // Sample first token for each item
+        let firstLogits = logits[0..., (prefillLen - 1)..<prefillLen, 0...]  // [B, 1, vocab]
+        var finished = MLXArray(Array(repeating: false, count: batchSize))  // [B]
+
+        var nextTokens = sampleTokensBatch(
+            logits: firstLogits,
+            config: sampling,
+            finishedMask: finished,
+            padToken: codecPadToken,
+            suppressRange: (2048, 3072),
+            eosTokenId: CodecTokens.codecEos)
+
+        // Check which items hit EOS immediately
+        let eosCheck = nextTokens .== MLXArray(Int32(CodecTokens.codecEos))
+        finished = logicalOr(finished, eosCheck)
+
+        // Get hidden states for code predictor
+        var lastHidden = hiddenStates[0..., (prefillLen - 1)..<prefillLen, 0...]  // [B, 1, D]
+
+        // Predict remaining 15 codebooks for first timestep
+        var cpTokens = predictCodebooksForTimestepBatch(
+            hiddenStates: lastHidden,
+            firstCodebookTokens: nextTokens,
+            cpSamplingConfig: cpSamplingConfig)  // [B, 15]
+
+        // Accumulate codebooks: list of [B, 16] per timestep
+        var allCBSteps: [MLXArray] = []
+        let firstStep = concatenated([nextTokens.expandedDimensions(axis: 1), cpTokens], axis: 1)  // [B, 16]
+        allCBSteps.append(firstStep)
+
+        var trailingIdx = 0
+        var step = prefillLen
+
+        // Autoregressive generation
+        for iterIdx in 1..<safeMaxTokens {
+            // Text side: next trailing text embed or pad (same index for all items since pre-padded)
+            let textEmbed: MLXArray
+            if trailingIdx < maxTrailingLen {
+                textEmbed = batchTrailing[0..., trailingIdx..<(trailingIdx + 1), 0...]  // [B, 1, D]
+                trailingIdx += 1
+            } else {
+                // Broadcast pad embed to [B, 1, D]
+                textEmbed = broadcast(ttsPadEmbed, to: [batchSize, 1, config.talker.hiddenSize])
+            }
+
+            // Codec side: embed first codebook + sum of 15 predicted codebooks
+            let codecEmbed = talker.embedCodec(
+                nextTokens.expandedDimensions(axis: 1))  // [B, 1] → [B, 1, D]
+                + codePredictor.batchEmbedAllGroupsBatch(cpTokens)  // [B, 1, D]
+
+            let stepEmbeds = textEmbed + codecEmbed  // [B, 1, D]
+            let stepPosIds = buildTTSPositionIds(seqLen: 1, offset: step)
+
+            let newResult = talker(
+                inputsEmbeds: stepEmbeds,
+                positionIds: stepPosIds,
+                cache: talkerCache)
+            logits = newResult.0
+            hiddenStates = newResult.1
+            talkerCache = newResult.2
+
+            nextTokens = sampleTokensBatch(
+                logits: logits,
+                config: sampling,
+                finishedMask: finished,
+                padToken: codecPadToken,
+                suppressRange: (2048, 3072),
+                eosTokenId: CodecTokens.codecEos)
+
+            // Update finished mask
+            let newEos = nextTokens .== MLXArray(Int32(CodecTokens.codecEos))
+            finished = logicalOr(finished, newEos)
+
+            // Code predictor for this timestep
+            lastHidden = hiddenStates  // [B, 1, D]
+            cpTokens = predictCodebooksForTimestepBatch(
+                hiddenStates: lastHidden,
+                firstCodebookTokens: nextTokens,
+                cpSamplingConfig: cpSamplingConfig)
+
+            let stepCB = concatenated([nextTokens.expandedDimensions(axis: 1), cpTokens], axis: 1)
+            allCBSteps.append(stepCB)
+
+            step += 1
+
+            // Check if all items are done
+            eval(finished)
+            let finishedArray = finished.asArray(Bool.self)
+            if finishedArray.allSatisfy({ $0 }) { break }
+
+            if iterIdx % 50 == 0 {
+                let estSec = Double(iterIdx) / 12.5
+                let doneCount = finishedArray.filter { $0 }.count
+                print("  Batch: \(iterIdx) steps (~\(String(format: "%.1f", estSec))s), \(doneCount)/\(batchSize) done...")
+            }
+        }
+
+        let totalSteps = allCBSteps.count
+        print("  Batch generation done: \(totalSteps) steps, \(batchSize) items")
+
+        // Stack all timesteps: [B, 16, T]
+        let stepsStacked = stacked(allCBSteps, axis: 0)  // [T, B, 16]
+        let allCB = stepsStacked.transposed(1, 2, 0)  // [B, 16, T]
+        eval(allCB)
+
+        // Extract per-item codebooks, trimming at EOS
+        var results: [MLXArray] = []
+        var frameCounts: [Int] = []
+
+        for i in 0..<batchSize {
+            let itemCB = allCB[i..<(i + 1)]  // [1, 16, T]
+            let firstCBRow = itemCB[0..., 0, 0...]  // [1, T] — first codebook
+            eval(firstCBRow)
+            let tokens = firstCBRow.squeezed().asArray(Int32.self)
+
+            // Find EOS position
+            var eosPos = tokens.count
+            for (j, tok) in tokens.enumerated() {
+                if tok == Int32(CodecTokens.codecEos) {
+                    eosPos = j
+                    break
+                }
+            }
+
+            if eosPos == 0 {
+                results.append(MLXArray.zeros([1, 16, 0]))
+                frameCounts.append(0)
+            } else {
+                let trimmed = itemCB[0..., 0..., 0..<eosPos]  // [1, 16, eosPos]
+                results.append(trimmed)
+                frameCounts.append(eosPos)
+            }
+        }
+
+        return (results, frameCounts)
+    }
+
+    /// Predict 15 remaining codebook tokens for B items at a single timestep.
+    private func predictCodebooksForTimestepBatch(
+        hiddenStates: MLXArray,
+        firstCodebookTokens: MLXArray,
+        cpSamplingConfig: SamplingConfig
+    ) -> MLXArray {
+        let batchSize = hiddenStates.dim(0)
+        let numGroups = config.codePredictor.numCodeGroups - 1  // 15
+
+        var cpCache: [(MLXArray, MLXArray)]? = nil
+
+        // First codebook embedding (from talker's codec embedding)
+        let code0Embed = talker.embedCodec(
+            firstCodebookTokens.expandedDimensions(axis: 1))  // [B, 1, D]
+
+        // Prefill: [hidden_state, code_0_embed] — length 2
+        let prefillInput = concatenated([hiddenStates, code0Embed], axis: 1)  // [B, 2, D]
+
+        // Predict codebook group 0
+        var (cpLogits, cpNewCache) = codePredictor(
+            inputsEmbeds: prefillInput, groupIndex: 0, cache: nil)
+        cpCache = cpNewCache
+
+        let lastCpLogits = cpLogits[0..., 1..<2, 0...]  // [B, 1, vocab]
+
+        // No EOS/suppress needed for code predictor
+        let noFinished = MLXArray(Array(repeating: false, count: batchSize))
+        var prevTokens = sampleTokensBatch(
+            logits: lastCpLogits,
+            config: cpSamplingConfig,
+            finishedMask: noFinished,
+            padToken: 0)
+
+        var groupTokens: [MLXArray] = [prevTokens]  // list of [B]
+
+        // Remaining 14 codebook groups
+        for groupIdx in 1..<numGroups {
+            let prevEmbed = codePredictor.embedCodecGroup(
+                prevTokens.expandedDimensions(axis: 1),
+                groupIndex: groupIdx - 1)  // [B, 1, D]
+
+            (cpLogits, cpNewCache) = codePredictor(
+                inputsEmbeds: prevEmbed, groupIndex: groupIdx, cache: cpCache)
+            cpCache = cpNewCache
+
+            prevTokens = sampleTokensBatch(
+                logits: cpLogits,
+                config: cpSamplingConfig,
+                finishedMask: noFinished,
+                padToken: 0)
+            groupTokens.append(prevTokens)
+        }
+
+        // Stack: 15 × [B] → [B, 15]
+        return stacked(groupTokens, axis: 1)
+    }
+
     // MARK: - Streaming Synthesis
 
     /// A chunk of generated audio for streaming playback.
