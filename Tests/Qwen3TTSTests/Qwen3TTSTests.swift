@@ -459,6 +459,55 @@ final class TTSE2ETests: XCTestCase {
         print("Streaming WAV: \(result.sampleCount) samples -> \(outputURL.path)")
     }
 
+    /// Streaming TTS -> ASR round-trip: verify streaming audio quality matches standard synthesis
+    func testStreamingQualityRoundTrip() async throws {
+        let ttsModel = try await loadTTSModel()
+        let asrModel = try await loadASRModel()
+
+        let text = "The quick brown fox jumps over the lazy dog."
+
+        // Standard synthesis
+        let standardSamples = ttsModel.synthesize(text: text, language: "english")
+        let standardTranscription = asrModel.transcribe(audio: standardSamples, sampleRate: 24000)
+        print("Standard: \"\(standardTranscription)\"")
+
+        // Streaming synthesis — collect all chunks
+        var streamingSamples: [Float] = []
+        let stream = ttsModel.synthesizeStream(text: text, language: "english")
+        for try await chunk in stream {
+            if chunk.isFinal && chunk.samples.isEmpty { break }
+            if !chunk.samples.isEmpty {
+                streamingSamples.append(contentsOf: chunk.samples)
+            }
+        }
+
+        let streamingTranscription = asrModel.transcribe(audio: streamingSamples, sampleRate: 24000)
+        print("Streaming: \"\(streamingTranscription)\"")
+
+        // Both should produce recognizable speech
+        let expectedWords = ["quick", "brown", "fox", "lazy", "dog"]
+        let standardMatched = expectedWords.filter { standardTranscription.lowercased().contains($0) }
+        let streamingMatched = expectedWords.filter { streamingTranscription.lowercased().contains($0) }
+
+        print("Standard matched: \(standardMatched.count)/\(expectedWords.count) \(standardMatched)")
+        print("Streaming matched: \(streamingMatched.count)/\(expectedWords.count) \(streamingMatched)")
+
+        XCTAssertGreaterThanOrEqual(standardMatched.count, 3,
+            "Standard synthesis should match at least 3 words")
+        XCTAssertGreaterThanOrEqual(streamingMatched.count, 2,
+            "Streaming synthesis should match at least 2 words (quality parity)")
+
+        // Audio durations should be comparable (within 50%)
+        let standardDur = Double(standardSamples.count) / 24000.0
+        let streamingDur = Double(streamingSamples.count) / 24000.0
+        print("Standard duration: \(fmt(standardDur))s, Streaming duration: \(fmt(streamingDur))s")
+
+        XCTAssertGreaterThan(streamingDur, standardDur * 0.5,
+            "Streaming audio should not be much shorter than standard")
+        XCTAssertLessThan(streamingDur, standardDur * 1.5,
+            "Streaming audio should not be much longer than standard")
+    }
+
     // MARK: - Helpers
 
     private func loadTTSModel() async throws -> Qwen3TTSModel {

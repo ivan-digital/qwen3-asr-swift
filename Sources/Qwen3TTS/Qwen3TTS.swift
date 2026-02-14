@@ -542,8 +542,8 @@ public class Qwen3TTSModel {
                         text: text, langId: langId, speakerTokenId: speakerTokenId,
                         tokenizer: tokenizer, sampling: sampling, chunkSize: chunkSize)
 
-                    let decodeChunkSize = 18
-                    let leftContextSize = 8
+                    let decodeChunkSize = 25
+                    let leftContextSize = 10
                     let samplesPerFrame = 1920
                     let numCodeGroups = self.config.codePredictor.numCodeGroups
 
@@ -782,7 +782,8 @@ public class Qwen3TTSModel {
         }
 
         let flatCodes: [Int32] = decodeInput.flatMap { $0 }
-        let codesArray = MLXArray(flatCodes).reshaped([1, numCodeGroups, decodeInput.count])
+        // flatMap gives [T, 16] row-major; reshape to [1, T, 16] then transpose to [1, 16, T]
+        let codesArray = MLXArray(flatCodes).reshaped([1, decodeInput.count, numCodeGroups]).transposed(0, 2, 1)
         let waveform = codecDecoder.chunkedDecode(codes: codesArray)
         let flat = waveform.squeezed()
         eval(flat)
