@@ -542,7 +542,7 @@ public class Qwen3TTSModel {
                         text: text, langId: langId, speakerTokenId: speakerTokenId,
                         tokenizer: tokenizer, sampling: sampling, chunkSize: chunkSize)
 
-                    let decodeChunkSize = 25
+                    let decodeChunkSize = 12
                     let leftContextSize = 10
                     let samplesPerFrame = 1920
                     let numCodeGroups = self.config.codePredictor.numCodeGroups
