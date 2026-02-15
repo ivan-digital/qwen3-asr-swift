@@ -276,7 +276,7 @@ public extension Qwen3ASRModel {
             try await HuggingFaceDownloader.downloadWeights(
                 modelId: modelId,
                 to: cacheDir,
-                additionalFiles: ["vocab.json", "tokenizer_config.json"],
+                additionalFiles: ["vocab.json", "merges.txt", "tokenizer_config.json"],
                 progressHandler: { progress in
                     progressHandler?(0.1 + progress * 0.4, "Downloading weights...")
                 }
