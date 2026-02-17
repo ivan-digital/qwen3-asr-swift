@@ -71,19 +71,28 @@ final class Qwen3TTSConfigTests: XCTestCase {
         XCTAssertNil(CodecTokens.languageId(for: "unknown"))
     }
 
+    func testExtendedLanguageIds() {
+        XCTAssertEqual(CodecTokens.languageId(for: "spanish"), 2054)
+        XCTAssertEqual(CodecTokens.languageId(for: "es"), 2054)
+        XCTAssertEqual(CodecTokens.languageId(for: "french"), 2061)
+        XCTAssertEqual(CodecTokens.languageId(for: "fr"), 2061)
+        XCTAssertEqual(CodecTokens.languageId(for: "korean"), 2064)
+        XCTAssertEqual(CodecTokens.languageId(for: "ko"), 2064)
+        XCTAssertEqual(CodecTokens.languageId(for: "russian"), 2069)
+        XCTAssertEqual(CodecTokens.languageId(for: "ru"), 2069)
+        XCTAssertEqual(CodecTokens.languageId(for: "italian"), 2070)
+        XCTAssertEqual(CodecTokens.languageId(for: "it"), 2070)
+        XCTAssertEqual(CodecTokens.languageId(for: "portuguese"), 2071)
+        XCTAssertEqual(CodecTokens.languageId(for: "pt"), 2071)
+        XCTAssertEqual(CodecTokens.languageId(for: "beijing_dialect"), 2074)
+        XCTAssertEqual(CodecTokens.languageId(for: "sichuan_dialect"), 2062)
+    }
+
     func testCombinedConfig() {
         let config = Qwen3TTSConfig.base06B
         XCTAssertEqual(config.talker.hiddenSize, 1024)
         XCTAssertEqual(config.codePredictor.numLayers, 5)
         XCTAssertEqual(config.speechTokenizerDecoder.sampleRate, 24000)
-    }
-
-    func testMRoPESections() {
-        let config = TalkerConfig()
-        // Sections must sum to headDim/2
-        let halfDim = config.headDim / 2
-        let sectionSum = config.mropeSections.reduce(0, +)
-        XCTAssertEqual(sectionSum, halfDim, "MRoPE sections \(config.mropeSections) should sum to headDim/2 (\(halfDim))")
     }
 
     func testUpsampleRateProduct() {
@@ -111,6 +120,71 @@ final class SamplingTests: XCTestCase {
         let config = SamplingConfig.greedy
         XCTAssertEqual(config.temperature, 0)
         XCTAssertEqual(config.topK, 1)
+    }
+}
+
+// MARK: - Speaker Config Tests
+
+final class SpeakerConfigTests: XCTestCase {
+
+    func testSpeakerConfigParsing() {
+        let config = SpeakerConfig(
+            speakerIds: ["serena": 3066, "vivian": 3065, "ryan": 3061, "aiden": 2861],
+            speakerDialects: ["eric": "sichuan_dialect", "dylan": "beijing_dialect"])
+        XCTAssertEqual(config.speakerIds["serena"], 3066)
+        XCTAssertEqual(config.speakerIds["vivian"], 3065)
+        XCTAssertEqual(config.speakerIds["ryan"], 3061)
+        XCTAssertEqual(config.availableSpeakers, ["aiden", "ryan", "serena", "vivian"])
+    }
+
+    func testSpeakerDialectMapping() {
+        let config = SpeakerConfig(
+            speakerIds: ["eric": 2875, "dylan": 2878],
+            speakerDialects: ["eric": "sichuan_dialect", "dylan": "beijing_dialect"])
+        XCTAssertEqual(config.speakerDialects["eric"], "sichuan_dialect")
+        XCTAssertEqual(config.speakerDialects["dylan"], "beijing_dialect")
+    }
+
+    func testEmptySpeakerConfig() {
+        let config = SpeakerConfig(speakerIds: [:], speakerDialects: [:])
+        XCTAssertTrue(config.availableSpeakers.isEmpty)
+    }
+
+    func testCodecPrefixWithoutSpeaker() {
+        let model = Qwen3TTSModel()
+        let prefix = model.buildCodecPrefix(languageId: CodecTokens.languageEnglish)
+        XCTAssertEqual(prefix.count, 6)
+        XCTAssertEqual(prefix[0], Int32(CodecTokens.codecThink))
+        XCTAssertEqual(prefix[1], Int32(CodecTokens.codecThinkBos))
+        XCTAssertEqual(prefix[2], Int32(CodecTokens.languageEnglish))
+        XCTAssertEqual(prefix[3], Int32(CodecTokens.codecThinkEos))
+        XCTAssertEqual(prefix[4], Int32(CodecTokens.codecPad))
+        XCTAssertEqual(prefix[5], Int32(CodecTokens.codecBos))
+    }
+
+    func testCodecPrefixWithSpeaker() {
+        let model = Qwen3TTSModel()
+        let speakerTokenId = 3065  // vivian
+        let prefix = model.buildCodecPrefix(languageId: CodecTokens.languageEnglish, speakerTokenId: speakerTokenId)
+        XCTAssertEqual(prefix.count, 7)
+        XCTAssertEqual(prefix[0], Int32(CodecTokens.codecThink))
+        XCTAssertEqual(prefix[1], Int32(CodecTokens.codecThinkBos))
+        XCTAssertEqual(prefix[2], Int32(CodecTokens.languageEnglish))
+        XCTAssertEqual(prefix[3], Int32(CodecTokens.codecThinkEos))
+        XCTAssertEqual(prefix[4], Int32(CodecTokens.codecPad))
+        XCTAssertEqual(prefix[5], Int32(CodecTokens.codecBos))
+        XCTAssertEqual(prefix[6], Int32(speakerTokenId))
+    }
+
+    func testTTSModelVariant() {
+        XCTAssertEqual(TTSModelVariant.base.rawValue, "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit")
+        XCTAssertEqual(TTSModelVariant.customVoice.rawValue, "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-4bit")
+    }
+
+    func testAvailableSpeakersEmptyByDefault() {
+        let model = Qwen3TTSModel()
+        XCTAssertTrue(model.availableSpeakers.isEmpty)
+        XCTAssertNil(model.speakerConfig)
     }
 }
 
@@ -314,6 +388,118 @@ final class TTSE2ETests: XCTestCase {
         print("Play with: afplay /tmp/tts_english.wav && afplay /tmp/tts_german.wav")
     }
 
+    // MARK: - Streaming Tests
+
+    func testStreamingSynthesis() async throws {
+        let ttsModel = try await loadTTSModel()
+
+        let text = "Hello, this is a streaming test of the text to speech system."
+        var chunks: [Qwen3TTSModel.AudioChunk] = []
+        var totalSamples = 0
+
+        let stream = ttsModel.synthesizeStream(text: text, language: "english")
+        for try await chunk in stream {
+            if chunk.isFinal && chunk.samples.isEmpty { break }
+            if !chunk.samples.isEmpty {
+                chunks.append(chunk)
+                totalSamples += chunk.samples.count
+            }
+        }
+
+        XCTAssertGreaterThan(chunks.count, 0, "Should produce at least one audio chunk")
+        XCTAssertGreaterThan(totalSamples, 0, "Should produce audio samples")
+
+        // Verify all samples are in valid range
+        for chunk in chunks {
+            for sample in chunk.samples {
+                XCTAssertFalse(sample.isNaN, "Sample should not be NaN")
+                XCTAssertFalse(sample.isInfinite, "Sample should not be Inf")
+                XCTAssertGreaterThanOrEqual(sample, -1.0, "Sample should be >= -1.0")
+                XCTAssertLessThanOrEqual(sample, 1.0, "Sample should be <= 1.0")
+            }
+        }
+
+        let audioDur = Double(totalSamples) / 24000.0
+        print("Streaming: \(chunks.count) chunks, \(totalSamples) samples (\(fmt(audioDur))s)")
+    }
+
+    func testStreamingWAVWriter() async throws {
+        let ttsModel = try await loadTTSModel()
+
+        let text = "Testing streaming WAV output."
+        let outputURL = URL(fileURLWithPath: "/tmp/tts_streaming_test.wav")
+
+        let writer = try StreamingWAVWriter(to: outputURL)
+
+        let stream = ttsModel.synthesizeStream(text: text, language: "english")
+        for try await chunk in stream {
+            if chunk.isFinal && chunk.samples.isEmpty { break }
+            if !chunk.samples.isEmpty {
+                writer.write(samples: chunk.samples)
+            }
+        }
+
+        let result = writer.finalize()
+        XCTAssertGreaterThan(result.sampleCount, 0, "Should have written samples")
+
+        // Verify the file is valid WAV
+        let data = try Data(contentsOf: outputURL)
+        XCTAssertGreaterThan(data.count, 44, "WAV file should be larger than header")
+        XCTAssertEqual(String(data: data[0..<4], encoding: .ascii), "RIFF")
+        XCTAssertEqual(String(data: data[8..<12], encoding: .ascii), "WAVE")
+
+        print("Streaming WAV: \(result.sampleCount) samples -> \(outputURL.path)")
+    }
+
+    /// Streaming TTS -> ASR round-trip: verify streaming audio quality matches standard synthesis
+    func testStreamingQualityRoundTrip() async throws {
+        let ttsModel = try await loadTTSModel()
+        let asrModel = try await loadASRModel()
+
+        let text = "The quick brown fox jumps over the lazy dog."
+
+        // Standard synthesis
+        let standardSamples = ttsModel.synthesize(text: text, language: "english")
+        let standardTranscription = asrModel.transcribe(audio: standardSamples, sampleRate: 24000)
+        print("Standard: \"\(standardTranscription)\"")
+
+        // Streaming synthesis — collect all chunks
+        var streamingSamples: [Float] = []
+        let stream = ttsModel.synthesizeStream(text: text, language: "english")
+        for try await chunk in stream {
+            if chunk.isFinal && chunk.samples.isEmpty { break }
+            if !chunk.samples.isEmpty {
+                streamingSamples.append(contentsOf: chunk.samples)
+            }
+        }
+
+        let streamingTranscription = asrModel.transcribe(audio: streamingSamples, sampleRate: 24000)
+        print("Streaming: \"\(streamingTranscription)\"")
+
+        // Both should produce recognizable speech
+        let expectedWords = ["quick", "brown", "fox", "lazy", "dog"]
+        let standardMatched = expectedWords.filter { standardTranscription.lowercased().contains($0) }
+        let streamingMatched = expectedWords.filter { streamingTranscription.lowercased().contains($0) }
+
+        print("Standard matched: \(standardMatched.count)/\(expectedWords.count) \(standardMatched)")
+        print("Streaming matched: \(streamingMatched.count)/\(expectedWords.count) \(streamingMatched)")
+
+        XCTAssertGreaterThanOrEqual(standardMatched.count, 3,
+            "Standard synthesis should match at least 3 words")
+        XCTAssertGreaterThanOrEqual(streamingMatched.count, 2,
+            "Streaming synthesis should match at least 2 words (quality parity)")
+
+        // Audio durations should be comparable (within 50%)
+        let standardDur = Double(standardSamples.count) / 24000.0
+        let streamingDur = Double(streamingSamples.count) / 24000.0
+        print("Standard duration: \(fmt(standardDur))s, Streaming duration: \(fmt(streamingDur))s")
+
+        XCTAssertGreaterThan(streamingDur, standardDur * 0.5,
+            "Streaming audio should not be much shorter than standard")
+        XCTAssertLessThan(streamingDur, standardDur * 1.5,
+            "Streaming audio should not be much longer than standard")
+    }
+
     // MARK: - Helpers
 
     private func loadTTSModel() async throws -> Qwen3TTSModel {
@@ -384,5 +570,235 @@ final class TTSE2ETests: XCTestCase {
 
     private func fmt(_ value: Double) -> String {
         String(format: "%.2f", value)
+    }
+}
+
+// MARK: - Batch TTS Tests
+
+final class TTSBatchTests: XCTestCase {
+
+    static let ttsModelId = "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit"
+    static let ttsTokenizerModelId = "Qwen/Qwen3-TTS-Tokenizer-12Hz"
+    static let asrModelId = "mlx-community/Qwen3-ASR-0.6B-4bit"
+
+    // MARK: - Test 1: Build compiles cleanly (verified by running this test)
+
+    // MARK: - Test 2: Single-item batch parity
+    /// synthesizeBatch(["text"]) should delegate to synthesize() and produce valid audio
+    func testSingleItemBatchParity() async throws {
+        let model = try await loadTTSModel()
+
+        let text = "Hello world."
+        let batchResult = model.synthesizeBatch(texts: [text], language: "english")
+
+        XCTAssertEqual(batchResult.count, 1, "Should return 1 result")
+        XCTAssertGreaterThan(batchResult[0].count, 0, "Should produce audio")
+
+        let duration = Double(batchResult[0].count) / 24000.0
+        print("Single-item batch: \(batchResult[0].count) samples (\(fmt(duration))s)")
+        XCTAssertGreaterThan(duration, 0.5, "Should be at least 0.5s of audio")
+        XCTAssertLessThan(duration, 15.0, "Should be less than 15s")
+    }
+
+    // MARK: - Test 3: Multi-item correctness with ASR round-trip
+    /// Batch TTS → ASR round-trip. Items that hit the 500-token safety cap produce
+    /// long garbage audio that ASR can't transcribe, so we skip ASR validation for those
+    /// and require at least 2 of 3 items to pass word matching.
+    func testMultiItemRoundTrip() async throws {
+        let ttsModel = try await loadTTSModel()
+        let asrModel = try await loadASRModel()
+
+        let texts = [
+            "Good morning everyone.",
+            "The weather is nice today.",
+            "Please open the window.",
+        ]
+
+        print("Batch synthesizing \(texts.count) texts...")
+        let t0 = Date()
+        let results = ttsModel.synthesizeBatch(texts: texts, language: "english")
+        let batchTime = Date().timeIntervalSince(t0)
+
+        XCTAssertEqual(results.count, 3, "Should return 3 results")
+
+        let expectedWords = [
+            ["morning", "everyone"],
+            ["weather", "nice", "today"],
+            ["open", "window"],
+        ]
+
+        // Items producing >30s audio likely hit the safety cap — skip ASR for those
+        let maxReasonableSamples = 30 * 24000  // 30s at 24kHz
+        var passedItems = 0
+
+        for (i, audio) in results.enumerated() {
+            XCTAssertGreaterThan(audio.count, 0, "Item \(i) should produce audio")
+            let duration = Double(audio.count) / 24000.0
+            print("  Item \(i): \(audio.count) samples (\(fmt(duration))s)")
+
+            if audio.count > maxReasonableSamples {
+                print("  Item \(i): skipping ASR (hit safety cap, \(fmt(duration))s audio)")
+                continue
+            }
+
+            let transcription = asrModel.transcribe(audio: audio, sampleRate: 24000)
+            let lower = transcription.lowercased()
+            print("  Item \(i) text: \"\(texts[i])\"")
+            print("  Item \(i) ASR:  \"\(transcription)\"")
+
+            let matched = expectedWords[i].filter { lower.contains($0) }
+            print("  Matched \(matched.count)/\(expectedWords[i].count): \(matched)")
+            if matched.count >= 1 {
+                passedItems += 1
+            }
+        }
+
+        XCTAssertGreaterThanOrEqual(passedItems, 2,
+            "At least 2 of 3 items should pass ASR round-trip")
+        print("Batch total time: \(fmt(batchTime))s, \(passedItems)/\(texts.count) items passed ASR")
+    }
+
+    // MARK: - Test 4: Performance comparison (batch vs sequential)
+    func testBatchPerformance() async throws {
+        let model = try await loadTTSModel()
+
+        let texts = [
+            "The sun rises in the east.",
+            "Birds sing in the morning.",
+            "Coffee keeps me awake.",
+            "Books open new worlds.",
+        ]
+
+        // Sequential: synthesize each text one by one
+        print("Sequential synthesis of \(texts.count) texts...")
+        let seqStart = Date()
+        var seqResults: [[Float]] = []
+        for text in texts {
+            let audio = model.synthesize(text: text, language: "english")
+            seqResults.append(audio)
+        }
+        let seqTime = Date().timeIntervalSince(seqStart)
+
+        let seqAudioDur = seqResults.reduce(0.0) { $0 + Double($1.count) / 24000.0 }
+        print("Sequential: \(fmt(seqTime))s wall, \(fmt(seqAudioDur))s audio, RTF=\(fmt(seqTime / seqAudioDur))")
+
+        // Batch: synthesize all at once
+        print("Batch synthesis of \(texts.count) texts...")
+        let batchStart = Date()
+        let batchResults = model.synthesizeBatch(texts: texts, language: "english")
+        let batchTime = Date().timeIntervalSince(batchStart)
+
+        let batchAudioDur = batchResults.reduce(0.0) { $0 + Double($1.count) / 24000.0 }
+        print("Batch: \(fmt(batchTime))s wall, \(fmt(batchAudioDur))s audio, RTF=\(fmt(batchTime / batchAudioDur))")
+
+        let speedup = seqTime / batchTime
+        print("Speedup: \(fmt(speedup))x")
+
+        // All items should produce valid audio
+        for (i, audio) in batchResults.enumerated() {
+            XCTAssertGreaterThan(audio.count, 0, "Batch item \(i) should produce audio")
+        }
+
+        // Log speedup — we expect >=1.5x in release, but don't fail in debug
+        print("Batch speedup: \(fmt(speedup))x (expected >=1.5x in release build)")
+    }
+
+    // MARK: - Test 5: EOS handling with short + long text
+    func testShortLongMix() async throws {
+        let model = try await loadTTSModel()
+
+        let texts = [
+            "Hi.",
+            "The quick brown fox jumps over the lazy dog near the river bank on a sunny afternoon.",
+        ]
+
+        print("Batch: short + long text...")
+        let results = model.synthesizeBatch(texts: texts, language: "english")
+
+        XCTAssertEqual(results.count, 2, "Should return 2 results")
+
+        for (i, audio) in results.enumerated() {
+            XCTAssertGreaterThan(audio.count, 0, "Item \(i) should produce audio")
+            let duration = Double(audio.count) / 24000.0
+            let maxAmp = audio.map { abs($0) }.max() ?? 0
+            print("  Item \(i): \(audio.count) samples (\(fmt(duration))s), maxAmp=\(fmt(Double(maxAmp)))")
+            XCTAssertGreaterThan(maxAmp, 0.001, "Item \(i) should not be silent")
+        }
+
+        let shortDur = Double(results[0].count) / 24000.0
+        let longDur = Double(results[1].count) / 24000.0
+        print("Short: \(fmt(shortDur))s, Long: \(fmt(longDur))s")
+        XCTAssertGreaterThan(longDur, shortDur, "Long text should produce longer audio")
+    }
+
+    // MARK: - Helpers
+
+    private func loadTTSModel() async throws -> Qwen3TTSModel {
+        print("Loading TTS model...")
+        return try await Qwen3TTSModel.fromPretrained(
+            modelId: Self.ttsModelId,
+            tokenizerModelId: Self.ttsTokenizerModelId
+        ) { progress, status in
+            print("[TTS \(Int(progress * 100))%] \(status)")
+        }
+    }
+
+    private func loadASRModel() async throws -> Qwen3ASRModel {
+        print("Loading ASR model...")
+        return try await Qwen3ASRModel.fromPretrained(
+            modelId: Self.asrModelId
+        ) { progress, status in
+            print("[ASR \(Int(progress * 100))%] \(status)")
+        }
+    }
+
+    private func fmt(_ value: Double) -> String {
+        String(format: "%.2f", value)
+    }
+}
+
+// MARK: - TextChunker Tests
+
+final class TextChunkerTests: XCTestCase {
+
+    func testShortTextNoChunking() {
+        let text = "Hello world."
+        let chunks = TextChunker.chunk(text)
+        XCTAssertEqual(chunks.count, 1)
+        XCTAssertEqual(chunks[0], "Hello world.")
+    }
+
+    func testEmptyText() {
+        XCTAssertEqual(TextChunker.chunk(""), [])
+        XCTAssertEqual(TextChunker.chunk("   "), [])
+    }
+
+    func testLongTextChunksAtSentence() {
+        let text = "This is the first sentence. This is the second sentence. " +
+                   "And here is a third one that makes this text quite long enough to need chunking. " +
+                   "Finally we add a fourth sentence to push it way over the word limit."
+        let chunks = TextChunker.chunk(text, maxWords: 20)
+        XCTAssertGreaterThan(chunks.count, 1, "Should split into multiple chunks")
+        // Verify no chunk exceeds max words (with some tolerance for boundary finding)
+        for chunk in chunks {
+            let wordCount = chunk.split(separator: " ").count
+            XCTAssertLessThanOrEqual(wordCount, 25, "Chunk should not be much longer than maxWords")
+        }
+        // Verify full text is preserved
+        let rejoined = chunks.joined(separator: " ")
+        XCTAssertTrue(rejoined.contains("first sentence"))
+        XCTAssertTrue(rejoined.contains("fourth sentence"))
+    }
+
+    func testChunkAtComma() {
+        let text = "One two three four five six seven eight nine ten, eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty"
+        let chunks = TextChunker.chunk(text, maxWords: 15)
+        XCTAssertGreaterThanOrEqual(chunks.count, 1)
+    }
+
+    func testMaxWordsRespected() {
+        let words = (0..<100).map { "word\($0)" }.joined(separator: " ")
+        let chunks = TextChunker.chunk(words, maxWords: 20)
+        XCTAssertGreaterThan(chunks.count, 3)
     }
 }

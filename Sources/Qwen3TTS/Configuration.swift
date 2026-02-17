@@ -83,6 +83,14 @@ public struct CodecTokens {
     public static let languageGerman: Int = 2052
     public static let languageChinese: Int = 2055
     public static let languageJapanese: Int = 2058
+    public static let languageSpanish: Int = 2054
+    public static let languageFrench: Int = 2061
+    public static let languageKorean: Int = 2064
+    public static let languageRussian: Int = 2069
+    public static let languageItalian: Int = 2070
+    public static let languagePortuguese: Int = 2071
+    public static let languageBeijingDialect: Int = 2074
+    public static let languageSichuanDialect: Int = 2062
 
     public static func languageId(for language: String) -> Int? {
         switch language.lowercased() {
@@ -90,9 +98,45 @@ public struct CodecTokens {
         case "german", "de": return languageGerman
         case "chinese", "zh": return languageChinese
         case "japanese", "ja": return languageJapanese
+        case "spanish", "es": return languageSpanish
+        case "french", "fr": return languageFrench
+        case "korean", "ko": return languageKorean
+        case "russian", "ru": return languageRussian
+        case "italian", "it": return languageItalian
+        case "portuguese", "pt": return languagePortuguese
+        case "beijing_dialect": return languageBeijingDialect
+        case "sichuan_dialect": return languageSichuanDialect
         default: return nil
         }
     }
+}
+
+// MARK: - Speaker Config
+
+/// Parsed speaker data from CustomVoice model config.json
+public struct SpeakerConfig: Sendable {
+    /// Speaker name → codec token ID mapping
+    public let speakerIds: [String: Int]
+    /// Speaker name → dialect name mapping (e.g., "eric" → "sichuan_dialect")
+    public let speakerDialects: [String: String]
+    /// Dynamic language ID mapping from config.json codec_language_id
+    public let codecLanguageIds: [String: Int]
+
+    public var availableSpeakers: [String] { Array(speakerIds.keys).sorted() }
+
+    public init(speakerIds: [String: Int], speakerDialects: [String: String], codecLanguageIds: [String: Int] = [:]) {
+        self.speakerIds = speakerIds
+        self.speakerDialects = speakerDialects
+        self.codecLanguageIds = codecLanguageIds
+    }
+}
+
+// MARK: - Model Variant
+
+/// Well-known TTS model variants
+public enum TTSModelVariant: String, CaseIterable, Sendable {
+    case base = "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit"
+    case customVoice = "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-4bit"
 }
 
 // MARK: - Combined TTS Config

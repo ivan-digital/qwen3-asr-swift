@@ -1,5 +1,6 @@
 .build/
 .swiftpm/
+.vscode/
 Package.resolved
 DerivedData/
 *.xcodeproj/project.xcworkspace/
