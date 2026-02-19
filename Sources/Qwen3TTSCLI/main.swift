@@ -42,9 +42,6 @@ struct Qwen3TTSCLI: ParsableCommand {
     @Option(name: .long, help: "Maximum batch size for parallel generation")
     var batchSize: Int = 4
 
-    @Flag(name: .long, help: "Stream audio generation (lower latency, incremental file output)")
-    var stream: Bool = false
-
     func validate() throws {
         if text == nil && batchFile == nil && !listSpeakers {
             throw ValidationError("Either a text argument, --batch-file, or --list-speakers must be provided")
@@ -134,11 +131,7 @@ struct Qwen3TTSCLI: ParsableCommand {
                         print("Saved item \(i): \(audio.count) samples (\(String(format: "%.2f", Double(audio.count) / 24000.0))s) to \(path)")
                     }
                 } else if let inputText = text {
-                    if stream {
-                        try await runStreaming(model: ttsModel, text: inputText, config: config)
-                    } else {
-                        try runStandard(model: ttsModel, text: inputText, config: config)
-                    }
+                    try runStandard(model: ttsModel, text: inputText, config: config)
                 }
 
                 exitCode = 0
@@ -175,54 +168,6 @@ struct Qwen3TTSCLI: ParsableCommand {
         let outputURL = URL(fileURLWithPath: output)
         try WAVWriter.write(samples: audio, sampleRate: 24000, to: outputURL)
         print("Saved \(audio.count) samples (\(String(format: "%.2f", Double(audio.count) / 24000.0))s) to \(output)")
-    }
-
-    private func runStreaming(model: Qwen3TTSModel, text: String, config: SamplingConfig) async throws {
-        if let spk = speaker {
-            print("Streaming synthesis: \"\(text)\" [speaker: \(spk)]")
-        } else {
-            print("Streaming synthesis: \"\(text)\"")
-        }
-        let t0 = CFAbsoluteTimeGetCurrent()
-
-        let outputURL = URL(fileURLWithPath: output)
-        let writer = try StreamingWAVWriter(to: outputURL)
-        var totalSamples = 0
-        var chunkCount = 0
-        var firstChunkTime: Double?
-
-        let stream = model.synthesizeStream(
-            text: text,
-            language: language,
-            speaker: speaker,
-            sampling: config)
-
-        for try await chunk in stream {
-            if chunk.isFinal && chunk.samples.isEmpty { break }
-
-            if !chunk.samples.isEmpty {
-                writer.write(samples: chunk.samples)
-                totalSamples += chunk.samples.count
-                chunkCount += 1
-
-                if firstChunkTime == nil {
-                    firstChunkTime = CFAbsoluteTimeGetCurrent() - t0
-                    print("  First audio chunk in \(String(format: "%.2f", firstChunkTime!))s")
-                }
-
-                let dur = Double(chunk.samples.count) / 24000.0
-                print("  Chunk \(chunkCount): \(chunk.samples.count) samples (\(String(format: "%.2f", dur))s)")
-            }
-        }
-
-        let result = writer.finalize()
-        let t1 = CFAbsoluteTimeGetCurrent()
-        let audioDur = Double(result.sampleCount) / 24000.0
-
-        print("Saved \(result.sampleCount) samples (\(String(format: "%.2f", audioDur))s) to \(output)")
-        print("  Total time: \(String(format: "%.2f", t1 - t0))s, " +
-              "RTF: \(String(format: "%.2f", (t1 - t0) / max(audioDur, 0.001))), " +
-              "\(chunkCount) chunks")
     }
 }
 

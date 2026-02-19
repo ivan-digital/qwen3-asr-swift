@@ -138,17 +138,6 @@ Audio waveform [1, T*1920, 1] at 24kHz
 - **Bulk float extraction** — Waveform extracted via single `.asArray(Float.self)` call
 - **Causal mask in decoder transformer** — Additive causal mask for pre-transformer attention (required for chunked decoding correctness)
 
-## Streaming Mode (Not Yet Implemented)
-
-> The following describes the reference Python implementation. The Swift port does not yet support streaming.
-
-The Talker generates in chunks for low-latency streaming:
-
-1. Generate `streaming_interval` tokens (~25 = ~2 seconds of audio)
-2. Keep 25-token context overlap for smooth transitions
-3. Decode each chunk independently through Code Predictor + Codec
-4. Stitch audio chunks with proportional trimming at boundaries
-
 ## Voice Cloning (Not Yet Implemented)
 
 > The following describes the reference Python implementation. The Swift port does not yet support voice cloning.

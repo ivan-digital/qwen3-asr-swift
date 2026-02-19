@@ -20,6 +20,10 @@ let package = Package(
             name: "Qwen3Common",
             targets: ["Qwen3Common"]
         ),
+        .library(
+            name: "MarvisTTS",
+            targets: ["MarvisTTS"]
+        ),
         .executable(
             name: "qwen3-asr-cli",
             targets: ["Qwen3ASRCLI"]
@@ -27,11 +31,16 @@ let package = Package(
         .executable(
             name: "qwen3-tts-cli",
             targets: ["Qwen3TTSCLI"]
+        ),
+        .executable(
+            name: "marvis-tts-cli",
+            targets: ["MarvisTTSCLI"]
         )
     ],
     dependencies: [
         .package(url: "https://github.com/ml-explore/mlx-swift", from: "0.21.0"),
-        .package(url: "https://github.com/apple/swift-argument-parser", from: "1.3.0")
+        .package(url: "https://github.com/apple/swift-argument-parser", from: "1.3.0"),
+        .package(url: "https://github.com/huggingface/swift-transformers", from: "0.1.14")
     ],
     targets: [
         .target(
@@ -60,6 +69,16 @@ let package = Package(
                 .product(name: "MLXFast", package: "mlx-swift")
             ]
         ),
+        .target(
+            name: "MarvisTTS",
+            dependencies: [
+                "Qwen3Common",
+                .product(name: "MLX", package: "mlx-swift"),
+                .product(name: "MLXNN", package: "mlx-swift"),
+                .product(name: "MLXFast", package: "mlx-swift"),
+                .product(name: "Transformers", package: "swift-transformers")
+            ]
+        ),
         .executableTarget(
             name: "Qwen3ASRCLI",
             dependencies: [
@@ -74,6 +93,15 @@ let package = Package(
                 .product(name: "ArgumentParser", package: "swift-argument-parser")
             ]
         ),
+        .executableTarget(
+            name: "MarvisTTSCLI",
+            dependencies: [
+                "MarvisTTS",
+                "Qwen3Common",
+                .product(name: "MLX", package: "mlx-swift"),
+                .product(name: "ArgumentParser", package: "swift-argument-parser")
+            ]
+        ),
         .testTarget(
             name: "Qwen3ASRTests",
             dependencies: ["Qwen3ASR", "Qwen3Common"],
@@ -84,6 +112,10 @@ let package = Package(
         .testTarget(
             name: "Qwen3TTSTests",
             dependencies: ["Qwen3TTS", "Qwen3ASR", "Qwen3Common"]
+        ),
+        .testTarget(
+            name: "MarvisTTSTests",
+            dependencies: ["MarvisTTS", "Qwen3Common"]
         )
     ]
 )
