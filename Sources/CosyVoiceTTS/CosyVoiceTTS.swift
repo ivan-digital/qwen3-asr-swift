@@ -40,6 +40,7 @@ public final class CosyVoiceTTSModel {
     let llm: CosyVoiceLLM
     let flow: CosyVoiceFlowModel
     let hifigan: HiFiGANGenerator
+    let tokenizer: Qwen3Tokenizer
 
     /// Initialize with config
     public init(config: CosyVoiceConfig = .default) {
@@ -47,6 +48,7 @@ public final class CosyVoiceTTSModel {
         self.llm = CosyVoiceLLM(config: config.llm)
         self.flow = CosyVoiceFlowModel(config: config.flow)
         self.hifigan = HiFiGANGenerator(config: config.hifigan)
+        self.tokenizer = Qwen3Tokenizer()
     }
 
     /// Download and load model from HuggingFace
@@ -63,13 +65,20 @@ public final class CosyVoiceTTSModel {
         // Get cache directory
         let cacheDir = try HuggingFaceDownloader.getCacheDirectory(for: modelId)
 
-        // Download if needed
-        if !HuggingFaceDownloader.weightsExist(in: cacheDir) {
-            progressHandler?(0.0, "Downloading model weights...")
+        // Download if needed (check both weights and tokenizer)
+        let needsWeights = !HuggingFaceDownloader.weightsExist(in: cacheDir)
+        let needsTokenizer = !FileManager.default.fileExists(
+            atPath: cacheDir.appendingPathComponent("vocab.json").path)
+
+        if needsWeights || needsTokenizer {
+            progressHandler?(0.0, "Downloading model files...")
             try await HuggingFaceDownloader.downloadWeights(
                 modelId: modelId,
                 to: cacheDir,
-                additionalFiles: ["llm.safetensors", "flow.safetensors", "hifigan.safetensors"]
+                additionalFiles: [
+                    "llm.safetensors", "flow.safetensors", "hifigan.safetensors",
+                    "vocab.json", "merges.txt", "tokenizer_config.json",
+                ]
             ) { progress in
                 progressHandler?(progress * 0.5, "Downloading...")
             }
@@ -88,6 +97,11 @@ public final class CosyVoiceTTSModel {
         let hifiganURL = cacheDir.appendingPathComponent("hifigan.safetensors")
         try CosyVoiceWeightLoader.loadHiFiGAN(model.hifigan, from: hifiganURL)
 
+        // Load tokenizer (Qwen2.5 BPE)
+        progressHandler?(0.95, "Loading tokenizer...")
+        let vocabURL = cacheDir.appendingPathComponent("vocab.json")
+        try model.tokenizer.load(from: vocabURL)
+
         progressHandler?(1.0, "Model loaded")
         return model
     }
@@ -99,8 +113,7 @@ public final class CosyVoiceTTSModel {
         text: String,
         language: String = "english"
     ) -> [Float] {
-        // 1. Tokenize text (simple: convert to UTF-8 bytes or use a tokenizer)
-        // For now, use a simple approach — full tokenizer support added later
+        // 1. Tokenize text via Qwen2.5 BPE tokenizer
         let textTokens = tokenizeText(text, language: language)
 
         // 2. Generate speech tokens via LLM
@@ -160,12 +173,9 @@ public final class CosyVoiceTTSModel {
         return stream
     }
 
-    /// Simple tokenizer — converts text to token IDs.
-    /// In a full implementation, this would use the Qwen2.5 tokenizer.
-    /// For now, uses UTF-8 byte encoding as a placeholder.
+    /// Tokenize text using Qwen2.5 BPE tokenizer.
     private func tokenizeText(_ text: String, language: String) -> [Int32] {
-        // Placeholder: convert characters to their Unicode codepoint values
-        // This will be replaced with proper Qwen2.5 tokenizer
-        return text.unicodeScalars.map { Int32($0.value) }
+        let tokenIds = tokenizer.encode(text)
+        return tokenIds.map { Int32($0) }
     }
 }

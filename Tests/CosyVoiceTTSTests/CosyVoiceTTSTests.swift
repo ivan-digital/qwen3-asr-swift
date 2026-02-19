@@ -1,6 +1,7 @@
 import XCTest
 import MLX
 @testable import CosyVoiceTTS
+import Qwen3Common
 
 final class CosyVoiceTTSConfigTests: XCTestCase {
 
@@ -162,6 +163,91 @@ final class CosyVoiceWeightLoadingTests: XCTestCase {
     }
 }
 
+// MARK: - Tokenizer Tests (require tokenizer files in weights dir)
+
+final class CosyVoiceTokenizerTests: XCTestCase {
+
+    static let weightsDir: String? = ProcessInfo.processInfo.environment["COSYVOICE_WEIGHTS"]
+
+    override func setUpWithError() throws {
+        try XCTSkipUnless(Self.weightsDir != nil, "Set COSYVOICE_WEIGHTS=/path/to/cosyvoice3-mlx-4bit")
+        let vocabPath = URL(fileURLWithPath: Self.weightsDir!).appendingPathComponent("vocab.json").path
+        try XCTSkipUnless(
+            FileManager.default.fileExists(atPath: vocabPath),
+            "vocab.json not found in COSYVOICE_WEIGHTS dir")
+    }
+
+    func testTokenizerLoads() throws {
+        let tokenizer = Qwen3Tokenizer()
+        let vocabURL = URL(fileURLWithPath: Self.weightsDir!).appendingPathComponent("vocab.json")
+        try tokenizer.load(from: vocabURL)
+
+        // Basic sanity: should have loaded a large vocabulary
+        let helloId = tokenizer.encode("Hello")
+        XCTAssertFalse(helloId.isEmpty, "Should encode 'Hello' to non-empty tokens")
+        print("'Hello' -> \(helloId)")
+    }
+
+    func testTokenizerEncodesEnglish() throws {
+        let tokenizer = Qwen3Tokenizer()
+        let vocabURL = URL(fileURLWithPath: Self.weightsDir!).appendingPathComponent("vocab.json")
+        try tokenizer.load(from: vocabURL)
+
+        let tokens = tokenizer.encode("Hello, how are you?")
+        XCTAssertFalse(tokens.isEmpty)
+        print("'Hello, how are you?' -> \(tokens) (\(tokens.count) tokens)")
+
+        // Decode back should be close to original
+        let decoded = tokenizer.decode(tokens: tokens)
+        XCTAssertTrue(decoded.contains("Hello"), "Decoded should contain 'Hello', got: \(decoded)")
+        XCTAssertTrue(decoded.contains("you"), "Decoded should contain 'you', got: \(decoded)")
+    }
+
+    func testTokenizerEncodesChinese() throws {
+        let tokenizer = Qwen3Tokenizer()
+        let vocabURL = URL(fileURLWithPath: Self.weightsDir!).appendingPathComponent("vocab.json")
+        try tokenizer.load(from: vocabURL)
+
+        let tokens = tokenizer.encode("你好世界")
+        XCTAssertFalse(tokens.isEmpty)
+        print("'你好世界' -> \(tokens) (\(tokens.count) tokens)")
+    }
+
+    func testTokenizerEncodesGerman() throws {
+        let tokenizer = Qwen3Tokenizer()
+        let vocabURL = URL(fileURLWithPath: Self.weightsDir!).appendingPathComponent("vocab.json")
+        try tokenizer.load(from: vocabURL)
+
+        let tokens = tokenizer.encode("Guten Tag, wie geht es Ihnen?")
+        XCTAssertFalse(tokens.isEmpty)
+        print("'Guten Tag, wie geht es Ihnen?' -> \(tokens) (\(tokens.count) tokens)")
+
+        let decoded = tokenizer.decode(tokens: tokens)
+        XCTAssertTrue(decoded.contains("Guten"), "Decoded should contain 'Guten', got: \(decoded)")
+    }
+
+    func testTokenizerRoundTrip() throws {
+        let tokenizer = Qwen3Tokenizer()
+        let vocabURL = URL(fileURLWithPath: Self.weightsDir!).appendingPathComponent("vocab.json")
+        try tokenizer.load(from: vocabURL)
+
+        let texts = [
+            "Hello world",
+            "The quick brown fox jumps over the lazy dog.",
+            "你好世界",
+            "Guten Tag!",
+            "こんにちは世界",
+        ]
+
+        for text in texts {
+            let tokens = tokenizer.encode(text)
+            let decoded = tokenizer.decode(tokens: tokens)
+            print("'\(text)' -> \(tokens.count) tokens -> '\(decoded)'")
+            XCTAssertFalse(tokens.isEmpty, "Should encode '\(text)' to non-empty tokens")
+        }
+    }
+}
+
 // MARK: - Forward Pass Tests (require converted safetensors)
 
 final class CosyVoiceForwardPassTests: XCTestCase {
@@ -280,8 +366,13 @@ final class CosyVoiceForwardPassTests: XCTestCase {
 
         print("All models loaded")
 
-        // 2. Generate speech tokens via LLM (placeholder tokenizer — audio won't be intelligible)
-        let textTokens: [Int32] = [9707, 1917]  // approximate "Hello world"
+        // 2. Tokenize text with real BPE tokenizer
+        let tokenizer = Qwen3Tokenizer()
+        let vocabURL = URL(fileURLWithPath: dir).appendingPathComponent("vocab.json")
+        try tokenizer.load(from: vocabURL)
+        let textTokens = tokenizer.encode("Hello world").map { Int32($0) }
+        print("Tokenized 'Hello world' -> \(textTokens)")
+
         let start = CFAbsoluteTimeGetCurrent()
         let speechTokens = llm.generate(textTokens: textTokens, maxTokens: 50)
         let llmTime = CFAbsoluteTimeGetCurrent() - start
