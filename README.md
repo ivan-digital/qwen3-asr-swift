@@ -4,9 +4,9 @@ AI speech models for Apple Silicon, powered by [MLX Swift](https://github.com/ml
 
 - **Qwen3-ASR** — Speech-to-text (automatic speech recognition)
 - **Qwen3-TTS** — Text-to-speech synthesis (highest quality, custom speakers)
-- **Marvis TTS** — Text-to-speech with streaming (low-latency, voice cloning)
+- **CosyVoice TTS** — Text-to-speech with streaming (9 languages, DiT flow matching)
 
-Papers: [Qwen3-ASR](https://arxiv.org/abs/2601.21337), [Qwen3-TTS](https://arxiv.org/abs/2601.15621), [CSM](https://arxiv.org/abs/2503.01758) (Marvis TTS is based on the Sesame CSM architecture), [Mimi](https://arxiv.org/abs/2410.00037) (audio codec used by both Qwen3-TTS and Marvis TTS)
+Papers: [Qwen3-ASR](https://arxiv.org/abs/2601.21337), [Qwen3-TTS](https://arxiv.org/abs/2601.15621), [CosyVoice 3](https://arxiv.org/abs/2505.17589), [Mimi](https://arxiv.org/abs/2410.00037) (audio codec used by Qwen3-TTS)
 
 ## Models
 
@@ -16,12 +16,12 @@ Papers: [Qwen3-ASR](https://arxiv.org/abs/2601.21337), [Qwen3-TTS](https://arxiv
 | Qwen3-ASR-1.7B (8-bit) | Speech → Text | No | 52 languages | ~2.5 GB |
 | Qwen3-TTS-0.6B Base (4-bit) | Text → Speech | No | 10 languages | ~1.7 GB |
 | Qwen3-TTS-0.6B CustomVoice (4-bit) | Text → Speech | No | 10 languages | ~1.7 GB |
-| Marvis TTS 250M (8-bit) | Text → Speech | Yes (~0.5s) | EN/FR/DE | ~666 MB |
+| CosyVoice3-0.5B (4-bit) | Text → Speech | Yes (~150ms) | 9 languages | ~1.9 GB |
 
 ### When to Use Which TTS
 
 - **Qwen3-TTS**: Best quality, 9 built-in speakers, 10 languages, batch synthesis
-- **Marvis TTS**: Low-latency streaming (~0.5s chunks), voice cloning from reference audio, German support
+- **CosyVoice TTS**: Low-latency streaming (~150ms), 9 languages, DiT flow matching + HiFi-GAN vocoder
 
 ## Installation
 
@@ -40,7 +40,7 @@ Import the module you need:
 ```swift
 import Qwen3ASR    // Speech recognition
 import Qwen3TTS    // Text-to-speech (Qwen3)
-import MarvisTTS   // Text-to-speech (streaming)
+import CosyVoiceTTS // Text-to-speech (streaming)
 import Qwen3Common // Shared utilities
 ```
 
@@ -135,22 +135,6 @@ CLI:
 
 ```
 
-**Available speakers:**
-
-| Speaker | Language | Notes |
-|---------|----------|-------|
-| serena | English | |
-| vivian | English | |
-| ryan | English | |
-| aiden | English | |
-| ono_anna | Japanese | |
-| sohee | Korean | |
-| uncle_fu | Chinese | |
-| eric | Sichuan dialect | Auto-sets language to Sichuan dialect |
-| dylan | Beijing dialect | Auto-sets language to Beijing dialect |
-
-> **Note:** Dialect speakers (Eric, Dylan) automatically override the language to their dialect. The Base model does not support speakers — pass `--model customVoice` or use `TTSModelVariant.customVoice` to enable speaker selection.
-
 ### Batch Synthesis
 
 Synthesize multiple texts in a single batched forward pass for higher throughput:
@@ -182,73 +166,42 @@ let config = SamplingConfig(temperature: 0.9, topK: 50, repetitionPenalty: 1.05)
 let audio = model.synthesize(text: "Hello", language: "english", sampling: config)
 ```
 
-## Marvis TTS Usage
+## CosyVoice TTS Usage
+
+### Basic Synthesis
+
+```swift
+import CosyVoiceTTS
+import Qwen3Common  // for WAVWriter
+
+let model = try await CosyVoiceTTSModel.fromPretrained()
+// Downloads ~1.9 GB on first run (LLM + DiT + HiFi-GAN weights)
+
+let audio = model.synthesize(text: "Hello, how are you today?", language: "english")
+// Output is 24kHz mono float samples
+try WAVWriter.write(samples: audio, sampleRate: 24000, to: outputURL)
+```
 
 ### Streaming Synthesis
 
 ```swift
-import MarvisTTS
-import Qwen3Common  // for WAVWriter
-
-let model = try await MarvisTTSModel.fromPretrained()
-// Downloads ~666 MB on first run (CSM model + Mimi codec)
-
-// Streaming: receive audio chunks as they're generated
-for try await chunk in model.synthesizeStream(
-    text: "Hello, how are you today?",
-    voice: .conversationalA,
-    streamingInterval: 0.5
-) {
+// Streaming: receive audio chunks as they're generated (~150ms to first chunk)
+for try await chunk in model.synthesizeStream(text: "Hello, how are you today?", language: "english") {
     // chunk.audio: [Float], chunk.sampleRate: Int
     playAudio(chunk.audio)  // play immediately
 }
 ```
 
-### Blocking Synthesis
-
-```swift
-let audio = try await model.synthesize(text: "Hello world", voice: .conversationalA)
-try WAVWriter.write(samples: audio, sampleRate: model.sampleRate, to: outputURL)
-```
-
-### Voice Cloning
-
-Clone any voice from a reference audio sample:
-
-```swift
-let refSamples = try AudioFileLoader.load(url: refAudioURL, targetSampleRate: model.sampleRate)
-let audio = try await model.synthesize(
-    text: "This will sound like the reference speaker",
-    refAudio: MLXArray(refSamples),
-    refText: "The text spoken in the reference audio"
-)
-```
-
-### Quality Levels
-
-Control the number of audio codebooks used (more = higher quality, slower):
-
-```swift
-let audio = try await model.synthesize(text: "Hello", voice: .conversationalA, quality: .high)
-// .low (8), .medium (16), .high (24), .maximum (32, default)
-```
-
-### Marvis TTS CLI
+### CosyVoice TTS CLI
 
 ```bash
 swift build -c release
 
 # Basic synthesis
-.build/release/marvis-tts-cli "Hello world" --output output.wav
+.build/release/cosyvoice-tts-cli "Hello world" --language english --output output.wav
 
-# Streaming with voice selection
-.build/release/marvis-tts-cli "Hello world" --voice conversational_b --streaming-interval 0.5
-
-# Voice cloning
-.build/release/marvis-tts-cli "Hello world" --ref-audio speaker.wav --ref-text "Text in speaker.wav" --output cloned.wav
-
-# Quality control
-.build/release/marvis-tts-cli "Hello world" --quality high --output output.wav
+# Streaming synthesis
+.build/release/cosyvoice-tts-cli "Hello world" --language english --stream --output output.wav
 ```
 
 ## Latency (M2 Max, 64 GB)
@@ -275,25 +228,7 @@ RTF = Real-Time Factor (lower is better, < 1.0 = faster than real-time).
 
 ## Architecture
 
-See [ASR Inference](docs/asr-inference.md), [ASR Model](docs/asr-model.md), [Qwen3-TTS Inference](docs/qwen3-tts-inference.md), [TTS Model](docs/tts-model.md), [Marvis TTS](docs/marvis-tts.md) for architecture details.
-
-### ASR Pipeline
-
-```
-Audio (16kHz) -> Mel Spectrogram -> Audio Encoder (18/24L) -> Projector -> Text Decoder (28L) -> Text
-```
-
-### Qwen3-TTS Pipeline
-
-```
-Text -> BPE Tokenize -> Talker (28L, MRoPE) -> Code Predictor (5L) -> Codec Decoder (Mimi) -> Audio (24kHz)
-```
-
-### Marvis TTS Pipeline
-
-```
-Text -> LLaMA Tokenize -> Backbone (16L) -> Decoder (4L, per-codebook) -> Mimi Codec Decode -> Audio (24kHz)
-```
+See [ASR Inference](docs/asr-inference.md), [ASR Model](docs/asr-model.md), [Qwen3-TTS Inference](docs/qwen3-tts-inference.md), [TTS Model](docs/tts-model.md), [CosyVoice TTS](docs/cosyvoice-tts.md) for detailed architecture docs.
 
 ## Cache Configuration
 
@@ -318,7 +253,7 @@ swift build -c release --disable-sandbox
 Unit tests (config, sampling) run without model downloads:
 
 ```bash
-swift test --filter "Qwen3TTSConfigTests|SamplingTests|MarvisTTSConfigTests"
+swift test --filter "Qwen3TTSConfigTests|SamplingTests|CosyVoiceTTSConfigTests"
 ```
 
 Integration tests require model weights (downloaded automatically on first run):
@@ -334,55 +269,13 @@ swift test --filter Qwen3ASRIntegrationTests
 > **Note:** MLX Metal library must be built before running tests that use MLX operations.
 > See [MLX Metal Library](#mlx-metal-library) for instructions.
 
-## Development Status
-
-### ASR
-
-- [x] Audio encoder + text decoder
-- [x] Mel spectrogram preprocessing (Accelerate FFT)
-- [x] HuggingFace model download
-- [x] Tokenizer + language auto-detection
-- [x] Inference optimizations (SDPA, vectorized preprocessing)
-- [x] 0.6B (4-bit) and 1.7B (8-bit) model support
-
-### TTS
-
-- [x] Talker transformer (MRoPE, GQA, SDPA)
-- [x] Code Predictor (residual codebook prediction)
-- [x] Speech Tokenizer Decoder (Mimi codec)
-- [x] Sampling (temperature, top-k, top-p, repetition penalty)
-- [x] CLI tool with WAV output
-- [x] BPE text encoding
-
-### Marvis TTS
-
-- [x] CSM dual-transformer (backbone + decoder)
-- [x] Mimi codec (32 codebooks, SEANet, streaming decode)
-- [x] Streaming synthesis (frame-by-frame audio output)
-- [x] Voice cloning (reference audio + text)
-- [x] Built-in voice prompts (conversational_a, conversational_b)
-- [x] CLI tool with streaming output
-
-## Roadmap
-
-- [x] TTS built-in speaker voices (CustomVoice model)
-- [ ] TTS voice cloning (speaker encoder)
-- [ ] TTS voice design
-- [x] TTS inference optimizations (chunked decode, batch embeddings, batch synthesis)
-- [x] Marvis TTS streaming model
-- [ ] ASR 1.7B (4-bit) quantized model
-- [ ] ASR streaming inference
-- [ ] iOS app example
-
 ## Supported Languages
 
-### ASR (52 Languages)
-
-Chinese, English, Cantonese, Arabic, German, French, Spanish, Portuguese, Indonesian, Italian, Korean, Russian, Thai, Vietnamese, Japanese, Turkish, Hindi, Malay, Dutch, Swedish, Danish, Finnish, Polish, Czech, Filipino, Persian, Greek, Hungarian, Macedonian, Romanian + 22 Chinese dialects
-
-### TTS (10 Languages)
-
-English, Chinese, German, Japanese, Spanish, French, Korean, Russian, Italian, Portuguese (+ Beijing/Sichuan dialects via CustomVoice model)
+| Model | Languages |
+|-------|-----------|
+| Qwen3-ASR | 52 languages (CN, EN, Cantonese, DE, FR, ES, JA, KO, RU, + 22 Chinese dialects, ...) |
+| Qwen3-TTS | EN, CN, DE, JA, ES, FR, KO, RU, IT, PT (+ Beijing/Sichuan dialects via CustomVoice) |
+| CosyVoice TTS | CN, EN, JA, KO, DE, ES, FR, IT, RU |
 
 ## License
 

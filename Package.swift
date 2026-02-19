@@ -21,8 +21,8 @@ let package = Package(
             targets: ["Qwen3Common"]
         ),
         .library(
-            name: "MarvisTTS",
-            targets: ["MarvisTTS"]
+            name: "CosyVoiceTTS",
+            targets: ["CosyVoiceTTS"]
         ),
         .executable(
             name: "qwen3-asr-cli",
@@ -33,8 +33,8 @@ let package = Package(
             targets: ["Qwen3TTSCLI"]
         ),
         .executable(
-            name: "marvis-tts-cli",
-            targets: ["MarvisTTSCLI"]
+            name: "cosyvoice-tts-cli",
+            targets: ["CosyVoiceTTSCLI"]
         )
     ],
     dependencies: [
@@ -70,7 +70,7 @@ let package = Package(
             ]
         ),
         .target(
-            name: "MarvisTTS",
+            name: "CosyVoiceTTS",
             dependencies: [
                 "Qwen3Common",
                 .product(name: "MLX", package: "mlx-swift"),
@@ -94,9 +94,9 @@ let package = Package(
             ]
         ),
         .executableTarget(
-            name: "MarvisTTSCLI",
+            name: "CosyVoiceTTSCLI",
             dependencies: [
-                "MarvisTTS",
+                "CosyVoiceTTS",
                 "Qwen3Common",
                 .product(name: "MLX", package: "mlx-swift"),
                 .product(name: "ArgumentParser", package: "swift-argument-parser")
@@ -114,8 +114,8 @@ let package = Package(
             dependencies: ["Qwen3TTS", "Qwen3ASR", "Qwen3Common"]
         ),
         .testTarget(
-            name: "MarvisTTSTests",
-            dependencies: ["MarvisTTS", "Qwen3Common"]
+            name: "CosyVoiceTTSTests",
+            dependencies: ["CosyVoiceTTS", "Qwen3Common"]
         )
     ]
 )
