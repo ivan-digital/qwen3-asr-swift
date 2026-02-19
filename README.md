@@ -6,7 +6,7 @@ AI speech models for Apple Silicon, powered by [MLX Swift](https://github.com/ml
 - **Qwen3-TTS** — Text-to-speech synthesis (highest quality, custom speakers)
 - **Marvis TTS** — Text-to-speech with streaming (low-latency, voice cloning)
 
-Papers: [Qwen3-ASR](https://arxiv.org/abs/2601.21337), [Qwen3-TTS](https://arxiv.org/abs/2601.15621), [CSM](https://arxiv.org/abs/2503.01758) (Sesame), [Mimi codec](https://arxiv.org/abs/2410.00037) (Kyutai)
+Papers: [Qwen3-ASR](https://arxiv.org/abs/2601.21337), [Qwen3-TTS](https://arxiv.org/abs/2601.15621), [CSM](https://arxiv.org/abs/2503.01758) (Marvis TTS is based on the Sesame CSM architecture), [Mimi](https://arxiv.org/abs/2410.00037) (audio codec used by both Qwen3-TTS and Marvis TTS)
 
 ## Models
 
