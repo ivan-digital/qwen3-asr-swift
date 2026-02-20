@@ -56,12 +56,6 @@ public enum CosyVoiceWeightLoader {
             CommonWeightLoader.applyQuantizedLinearWeights(
                 to: layer.selfAttn.oProj, prefix: "\(prefix).self_attn.o_proj", from: weights)
 
-            // Q/K norm
-            CommonWeightLoader.applyRMSNormWeights(
-                to: layer.selfAttn.qNorm, prefix: "\(prefix).self_attn.q_norm", from: weights)
-            CommonWeightLoader.applyRMSNormWeights(
-                to: layer.selfAttn.kNorm, prefix: "\(prefix).self_attn.k_norm", from: weights)
-
             // Layer norms
             CommonWeightLoader.applyRMSNormWeights(
                 to: layer.inputLayerNorm, prefix: "\(prefix).input_layernorm", from: weights)

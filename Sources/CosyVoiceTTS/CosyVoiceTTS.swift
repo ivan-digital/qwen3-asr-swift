@@ -115,14 +115,12 @@ public final class CosyVoiceTTSModel {
     ) -> [Float] {
         // 1. Tokenize text via Qwen2.5 BPE tokenizer
         let textTokens = tokenizeText(text, language: language)
-        print("  Text tokens (\(textTokens.count)): \(textTokens)")
 
         // 2. Generate speech tokens via LLM
         let speechTokens = llm.generate(
             textTokens: textTokens,
             maxTokens: 500  // ~20 seconds of audio at 25 Hz
         )
-        print("  Speech tokens: \(speechTokens.count) (EOS at \(config.llm.eosToken))")
 
         guard !speechTokens.isEmpty else {
             return []
@@ -131,35 +129,14 @@ public final class CosyVoiceTTSModel {
         // 3. Convert speech tokens to mel spectrogram via flow matching
         let tokenArray = MLXArray(speechTokens).expandedDimensions(axis: 0)  // [1, T]
         let mel = flow(tokens: tokenArray)  // [1, 80, T_mel]
-
         eval(mel)
-        let melFlat = mel.reshaped(-1)
-        print("  Mel: shape=\(mel.shape), range=[\(melFlat.min().item(Float.self)), \(melFlat.max().item(Float.self))], mean=\(melFlat.mean().item(Float.self))")
-        print("  Speech tokens: \(speechTokens)")
-
-        // Save mel to file for Python verification
-        do {
-            let melData = mel.reshaped(-1).asArray(Float.self)
-            let melStr = melData.map { String($0) }.joined(separator: "\n")
-            try melStr.write(toFile: "/tmp/cosyvoice_mel.txt", atomically: true, encoding: .utf8)
-            print("  Saved mel to /tmp/cosyvoice_mel.txt (shape: \(mel.shape))")
-        } catch {
-            print("  Could not save mel: \(error)")
-        }
 
         // 4. Convert mel to waveform via HiFi-GAN
         let audio = hifigan(mel)  // [1, samples] or [samples]
+        eval(audio)
 
         // 5. Extract float samples
-        eval(audio)
-        let flatAudio = audio.reshaped(-1)
-        let count = flatAudio.dim(0)
-        var samples = [Float](repeating: 0, count: count)
-        for i in 0..<count {
-            samples[i] = flatAudio[i].item(Float.self)
-        }
-
-        return samples
+        return audio.reshaped(-1).asArray(Float.self)
     }
 
     /// Synthesize with streaming output.
@@ -190,9 +167,23 @@ public final class CosyVoiceTTSModel {
         return stream
     }
 
-    /// Tokenize text using Qwen2.5 BPE tokenizer.
+    /// Token ID for `<|endofprompt|>` — added by CosyVoice3 but not in base tokenizer config.
+    /// The text embedding table (151936 entries) includes this trained embedding at index 151646.
+    private static let endOfPromptToken: Int32 = 151646
+
+    /// Format and tokenize text for CosyVoice3 LLM.
+    ///
+    /// CosyVoice3 requires the text format: `{instruction}<|endofprompt|>{text_to_synthesize}`
+    /// The `<|endofprompt|>` token (ID 151646) marks the boundary between instruction and content.
     private func tokenizeText(_ text: String, language: String) -> [Int32] {
-        let tokenIds = tokenizer.encode(text)
-        return tokenIds.map { Int32($0) }
+        // Encode instruction prefix
+        let instruction = "You are a helpful assistant."
+        let instructionTokens = tokenizer.encode(instruction).map { Int32($0) }
+
+        // Encode text to synthesize
+        let textTokens = tokenizer.encode(text).map { Int32($0) }
+
+        // Concatenate: [instruction_tokens, <|endofprompt|>, text_tokens]
+        return instructionTokens + [Self.endOfPromptToken] + textTokens
     }
 }

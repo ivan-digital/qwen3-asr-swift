@@ -3,80 +3,31 @@ import MLX
 import MLXNN
 import MLXFast
 
-// MARK: - InterpolateRegulator
+// MARK: - RepeatInterleaveUpsampler
 
-/// Upsamples token embeddings from token rate (25 Hz) to mel rate (50 Hz) via linear interpolation.
+/// Upsamples token embeddings from token rate (25 Hz) to mel rate (50 Hz) via repeat-interleave.
 ///
-/// This is a pure function with no learnable parameters. For `ratio=2`, each input frame
-/// produces two output frames: the original frame and the midpoint between it and the next frame.
-/// The last frame is simply duplicated since there is no next frame to interpolate towards.
+/// This is a pure function with no learnable parameters. Each input frame is repeated `ratio`
+/// times along the time axis, matching Python's `torch.repeat_interleave(ratio, dim=1)`.
 ///
-/// Equivalent to `torch.nn.functional.interpolate(scale_factor=ratio, mode='linear')`.
-public enum InterpolateRegulator {
+/// For `ratio=2`: `[a, b, c]` → `[a, a, b, b, c, c]`
+public enum RepeatInterleaveUpsampler {
 
-    /// Upsample by linear interpolation along the time axis.
+    /// Upsample by repeating each frame `ratio` times along the time axis.
     ///
     /// - Parameters:
     ///   - x: `[B, T, D]` input tensor
-    ///   - ratio: integer upsample factor (e.g. 2 for 25 Hz -> 50 Hz)
+    ///   - ratio: integer repeat factor (e.g. 2 for 25 Hz -> 50 Hz)
     /// - Returns: `[B, T*ratio, D]` upsampled tensor
     public static func upsample(_ x: MLXArray, ratio: Int) -> MLXArray {
         guard ratio > 1 else { return x }
 
-        let B = x.dim(0)
-        let T = x.dim(1)
-        let D = x.dim(2)
-
-        if T == 0 {
-            return MLXArray.zeros([B, 0, D], dtype: x.dtype)
-        }
-
-        if T == 1 {
-            // Single frame: just repeat it `ratio` times
-            return repeated(x, count: ratio, axis: 1)
-        }
-
-        // For linear interpolation with scale_factor=ratio:
-        // Output length = T * ratio
-        // For each output index i, compute the corresponding input position:
-        //   srcPos = i * (T - 1) / (T * ratio - 1)
-        // Then linearly interpolate between floor(srcPos) and ceil(srcPos).
-
-        let outLen = T * ratio
-
-        // Build fractional source positions for each output frame
-        // source positions: linspace(0, T-1, outLen)
-        var srcPositions = [Float](repeating: 0, count: outLen)
-        let srcMax = Float(T - 1)
-        let outMax = Float(outLen - 1)
-        for i in 0 ..< outLen {
-            srcPositions[i] = Float(i) * srcMax / outMax
-        }
-
-        // Compute floor indices and fractional weights
-        var loIndices = [Int32](repeating: 0, count: outLen)
-        var hiIndices = [Int32](repeating: 0, count: outLen)
-        var weights = [Float](repeating: 0, count: outLen)
-
-        for i in 0 ..< outLen {
-            let pos = srcPositions[i]
-            let lo = Int32(pos)
-            let hi = min(lo + 1, Int32(T - 1))
-            loIndices[i] = lo
-            hiIndices[i] = hi
-            weights[i] = pos - Float(lo)
-        }
-
-        // Gather frames and interpolate: out = (1 - w) * x[lo] + w * x[hi]
-        let loIdx = MLXArray(loIndices)   // [outLen]
-        let hiIdx = MLXArray(hiIndices)   // [outLen]
-        let w = MLXArray(weights).reshaped(1, outLen, 1)  // [1, outLen, 1] for broadcasting
-
-        // x.take(indices, axis:) gathers along axis 1
-        let xLo = x.take(loIdx, axis: 1)  // [B, outLen, D]
-        let xHi = x.take(hiIdx, axis: 1)  // [B, outLen, D]
-
-        return (1.0 - w) * xLo + w * xHi
+        // [B, T, D] → [B, T, 1, D] → repeat along axis 2 → [B, T, ratio, D] → [B, T*ratio, D]
+        let expanded = x.expandedDimensions(axis: 2)             // [B, T, 1, D]
+        let rep = repeated(expanded, count: ratio, axis: 2)      // [B, T, ratio, D]
+        var shape = x.shape
+        shape[1] *= ratio
+        return rep.reshaped(shape)                                // [B, T*ratio, D]
     }
 }
 
@@ -135,35 +86,32 @@ public class ConditionalFlowMatching: Module {
         // 3. Euler solver with classifier-free guidance
         var x = z
 
+        let cfgRate = MLXArray(config.cfgRate).asType(mu.dtype)
+
         for i in 0 ..< nTimesteps {
             let t = tSchedule[i]
             let dt = tSchedule[i + 1] - tSchedule[i]
 
             let dtScalar = MLXArray(dt).asType(mu.dtype)
 
-            // Batch doubling for CFG: [conditioned, unconditioned]
-            let xIn = concatenated([x, x], axis: 0)
-            let maskIn = concatenated([mask, mask], axis: 0)
-            let muIn = concatenated([mu, MLXArray.zeros(mu.shape, dtype: mu.dtype)], axis: 0)
-
-            // Time tensor: [2*B] with same timestep for all batch elements
+            // Two separate forward passes for CFG (matching Python reference)
             let batchSize = x.dim(0)
-            let tFull = MLXArray([Float](repeating: t, count: batchSize * 2)).asType(mu.dtype)
+            let tArr = MLXArray([Float](repeating: t, count: batchSize)).asType(mu.dtype)
 
-            // CFG: unconditioned path uses zeros for spks and cond
-            let spksIn: MLXArray? = spks.map { concatenated([$0, MLXArray.zeros($0.shape, dtype: $0.dtype)], axis: 0) }
-            let condIn: MLXArray? = cond.map { concatenated([$0, MLXArray.zeros($0.shape, dtype: $0.dtype)], axis: 0) }
+            // Conditioned pass
+            let vCond = decoder(x, mask: mask, mu: mu, t: tArr, spks: spks, cond: cond)
 
-            // Get velocity from DiT
-            let velocity = decoder(xIn, mask: maskIn, mu: muIn, t: tFull, spks: spksIn, cond: condIn)
-
-            // Split conditioned and unconditioned predictions
-            let vCond = velocity[0 ..< batchSize]
-            let vUncond = velocity[batchSize...]
+            // Unconditioned pass
+            let vUncond = decoder(
+                x, mask: mask,
+                mu: MLXArray.zeros(mu.shape, dtype: mu.dtype),
+                t: tArr,
+                spks: spks.map { MLXArray.zeros($0.shape, dtype: $0.dtype) },
+                cond: cond.map { MLXArray.zeros($0.shape, dtype: $0.dtype) }
+            )
 
             // Apply classifier-free guidance:
             //   v = (1 + cfg_rate) * v_cond - cfg_rate * v_uncond
-            let cfgRate = MLXArray(config.cfgRate).asType(mu.dtype)
             let v = (1.0 + cfgRate) * vCond - cfgRate * vUncond
 
             // Euler step: x_{t+dt} = x_t + dt * v
@@ -171,19 +119,6 @@ public class ConditionalFlowMatching: Module {
 
             // Evaluate to avoid building too large a computation graph
             eval(x)
-
-            // Debug: print ODE step statistics
-            let xFlat = x.reshaped(-1)
-            let xMean = xFlat.mean().item(Float.self)
-            let xMin = xFlat.min().item(Float.self)
-            let xMax = xFlat.max().item(Float.self)
-            let vcFlat = vCond.reshaped(-1)
-            let vuFlat = vUncond.reshaped(-1)
-            let vcRMS = sqrt((vcFlat * vcFlat).mean()).item(Float.self)
-            let vuRMS = sqrt((vuFlat * vuFlat).mean()).item(Float.self)
-            let vcMean = vcFlat.mean().item(Float.self)
-            let vuMean = vuFlat.mean().item(Float.self)
-            print("  [ODE] step=\(i), t=\(String(format: "%.4f", t)), x: mean=\(String(format: "%.3f", xMean)) [\(String(format: "%.1f", xMin)),\(String(format: "%.1f", xMax))], v_cond: m=\(String(format: "%.3f", vcMean)) rms=\(String(format: "%.3f", vcRMS)), v_uncond: m=\(String(format: "%.3f", vuMean)) rms=\(String(format: "%.3f", vuRMS))")
         }
 
         return x
@@ -284,8 +219,8 @@ public class CosyVoiceFlowModel: Module {
         mu = preLookaheadLayer(mu.transposed(0, 2, 1)).transposed(0, 2, 1)
 
         // 3. Upsample from token rate (25 Hz) to mel rate (50 Hz)
-        //    [B, T, 80] → [B, T*2, 80]
-        let muUpsampled = InterpolateRegulator.upsample(mu, ratio: config.tokenMelRatio)
+        //    [B, T, 80] → [B, T*2, 80]  (repeat_interleave, each frame duplicated)
+        let muUpsampled = RepeatInterleaveUpsampler.upsample(mu, ratio: config.tokenMelRatio)
         let melLen = muUpsampled.dim(1)
 
         // 4. Transpose to [B, 80, T_mel] for DiT (expects channel-first)

@@ -113,6 +113,8 @@ public struct CosyVoiceSamplingConfig: Codable, Sendable {
     public var topK: Int = 25
     public var winSize: Int = 10
     public var tauR: Float = 0.1
+    public var minTokenTextRatio: Float = 2.0
+    public var maxTokenTextRatio: Float = 20.0
 
     public init() {}
 }

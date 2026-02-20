@@ -22,7 +22,8 @@ public class SinusoidalPositionEmbedding: Module {
         let logFactor = MLXArray(Float(log(10000.0)) / Float(halfDim - 1))
         let freqs = exp(MLXArray(0 ..< Int32(halfDim)).asType(.float32) * (-logFactor))
         // t: [B] -> [B, 1], freqs: [halfDim] -> [1, halfDim]
-        let angles = t.expandedDimensions(axis: 1) * freqs.expandedDimensions(axis: 0)
+        // scale=1000 matches Python's SinusPositionEmbedding default
+        let angles = MLXArray(Float(1000.0)) * t.expandedDimensions(axis: 1) * freqs.expandedDimensions(axis: 0)
         return concatenated([sin(angles), cos(angles)], axis: -1)
     }
 }
@@ -152,7 +153,7 @@ public class DiTAttention: Module {
     /// - Parameters:
     ///   - x: `[B, T, dim]` input
     ///   - mask: optional attention mask `[B, 1, 1, T]` or broadcastable, additive (0 = attend, -inf = mask)
-    ///   - rope: optional RoPE module (applied to q, k in [B, heads, T, dimHead] layout)
+    ///   - rope: optional RoPE module (applied to q, k head 0 only, matching x_transformers)
     /// - Returns: `[B, T, dim]`
     public func callAsFunction(_ x: MLXArray, mask: MLXArray? = nil, rope: MLXNN.RoPE? = nil) -> MLXArray {
         let B = x.dim(0)
@@ -160,22 +161,24 @@ public class DiTAttention: Module {
 
         var q = toQ(x)  // [B, T, heads*dimHead]
         var k = toK(x)  // [B, T, heads*dimHead]
-        var v = toV(x)  // [B, T, heads*dimHead]
+        let v = toV(x)  // [B, T, heads*dimHead]
+
+        // Apply RoPE BEFORE head reshape (matching Python x_transformers).
+        // RoPE(dimensions=64) rotates first 64 of 1024 dims.
+        // After reshape to [B, T, 16, 64], only head 0 (dims 0-63) is rotated.
+        if let rope = rope {
+            q = rope(q)
+            k = rope(k)
+        }
 
         // Reshape to [B, T, heads, dimHead] then transpose to [B, heads, T, dimHead]
         q = q.reshaped(B, T, heads, dimHead).transposed(0, 2, 1, 3)
         k = k.reshaped(B, T, heads, dimHead).transposed(0, 2, 1, 3)
-        v = v.reshaped(B, T, heads, dimHead).transposed(0, 2, 1, 3)
-
-        // Apply RoPE if provided
-        if let rope = rope {
-            q = rope(q)  // offset=0 default
-            k = rope(k)
-        }
+        let vHead = v.reshaped(B, T, heads, dimHead).transposed(0, 2, 1, 3)
 
         // Scaled dot-product attention: [B, heads, T, dimHead]
         let attnOut = MLXFast.scaledDotProductAttention(
-            queries: q, keys: k, values: v,
+            queries: q, keys: k, values: vHead,
             scale: scale, mask: mask)
 
         // Transpose back: [B, heads, T, dimHead] -> [B, T, heads, dimHead] -> [B, T, heads*dimHead]
@@ -262,48 +265,61 @@ public class DiTBlock: Module {
 
 // MARK: - ConvPositionEmbedding
 
-/// Convolutional position embedding with two grouped convolutions + GELU.
+/// Causal convolutional position embedding with two grouped convolutions + Mish.
 ///
-/// Two Conv1d layers (groups=dim//64, kernel=31) with symmetric padding=15
-/// inject local positional information. Each followed by GELU activation.
-/// Residual connection adds the output back to the input.
+/// Two Conv1d layers (groups=dim//64, kernel=31) applied **sequentially** with
+/// left-only (causal) padding. Each followed by Mish activation.
+/// No internal residual — the residual connection is in InputEmbedding.
+///
+/// Matches Python `CausalConvPositionEmbedding`:
+///   x = F.pad(x, (kernel_size-1, 0))
+///   x = self.conv1(x)  # Conv1d + Mish
+///   x = F.pad(x, (kernel_size-1, 0))
+///   x = self.conv2(x)  # Conv1d + Mish
 public class ConvPositionEmbedding: Module {
     let kernelSize: Int
-    let padding: Int
     @ModuleInfo var conv1: MLXNN.Conv1d
     @ModuleInfo var conv2: MLXNN.Conv1d
 
     public init(dim: Int, kernelSize: Int = 31) {
         self.kernelSize = kernelSize
-        self.padding = kernelSize / 2  // 15 for k=31 (symmetric)
         let groups = dim / 64  // 1024 / 64 = 16
+        // No built-in padding — we apply causal (left-only) padding manually
         self._conv1.wrappedValue = MLXNN.Conv1d(
             inputChannels: dim, outputChannels: dim,
-            kernelSize: kernelSize, stride: 1, padding: padding,
+            kernelSize: kernelSize, stride: 1, padding: 0,
             groups: groups, bias: true)
         self._conv2.wrappedValue = MLXNN.Conv1d(
             inputChannels: dim, outputChannels: dim,
-            kernelSize: kernelSize, stride: 1, padding: padding,
+            kernelSize: kernelSize, stride: 1, padding: 0,
             groups: groups, bias: true)
         super.init()
     }
 
     /// - Parameter x: `[B, T, dim]` (NLC format, matching MLXNN.Conv1d expectation)
-    /// - Returns: `[B, T, dim]` with local positional information added
+    /// - Returns: `[B, T, dim]` position-encoded (NO residual — added by caller)
     public func callAsFunction(_ x: MLXArray) -> MLXArray {
-        let T = x.dim(1)
-        // Both convolutions take the SAME input (parallel), then sum.
-        // Each conv is wrapped in Sequential(Conv1d, GELU) in Python.
-        var h1 = conv1(x)
-        if h1.dim(1) > T { h1 = h1[0..., 0..<T, 0...] }
-        h1 = geluApproximate(h1)
+        // Sequential: conv1 → Mish → conv2 → Mish
+        // With left-only (causal) padding of (kernel_size - 1) before each conv
+        let leftPad = kernelSize - 1  // 30 for k=31
 
-        var h2 = conv2(x)
-        if h2.dim(1) > T { h2 = h2[0..., 0..<T, 0...] }
-        h2 = geluApproximate(h2)
+        // Conv1 + Mish
+        var h = padded(x, widths: [.init((low: 0, high: 0)), .init((low: leftPad, high: 0)), .init((low: 0, high: 0))])
+        h = conv1(h)
+        h = mish(h)
 
-        return x + h1 + h2
+        // Conv2 + Mish
+        h = padded(h, widths: [.init((low: 0, high: 0)), .init((low: leftPad, high: 0)), .init((low: 0, high: 0))])
+        h = conv2(h)
+        h = mish(h)
+
+        return h
     }
+}
+
+/// Mish activation: x * tanh(softplus(x)) = x * tanh(ln(1 + exp(x)))
+private func mish(_ x: MLXArray) -> MLXArray {
+    x * tanh(log1p(exp(x)))
 }
 
 // MARK: - InputEmbedding
@@ -350,8 +366,9 @@ public class InputEmbedding: Module {
         // Project to model dimension
         h = proj(h)  // [B, T, dim]
 
-        // Add convolutional position embedding
-        h = convPosEmbed(h)  // [B, T, dim]
+        // Add convolutional position embedding with residual
+        // Python: x = self.conv_pos_embed(x) + x
+        h = convPosEmbed(h) + h  // [B, T, dim]
 
         return h
     }
@@ -383,9 +400,10 @@ public class DiT: Module {
             melDim: config.melDim, muDim: config.muDim,
             spkDim: config.spkDim, dim: config.dim)
 
-        // RoPE: dimensions = dimHead (64), traditional=false (split-half), base=10000
+        // RoPE: dimensions = dimHead (64), traditional=true (interleaved pairs matching
+        // x_transformers' rotate_half + duplicated freqs), base=10000
         self.rotaryEmbed = MLXNN.RoPE(
-            dimensions: config.dimHead, traditional: false, base: 10000)
+            dimensions: config.dimHead, traditional: true, base: 10000)
 
         self._transformerBlocks.wrappedValue = (0 ..< config.depth).map { _ in
             DiTBlock(

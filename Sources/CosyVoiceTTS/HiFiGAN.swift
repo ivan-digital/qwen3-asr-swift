@@ -765,20 +765,6 @@ public class HiFiGANGenerator: Module {
         // 1. Predict F0 from mel: [B, 80, T] -> [B, T]
         let f0 = f0Predictor(melNCL)
 
-        eval(f0)
-        let f0Flat = f0.reshaped(-1)
-        let f0Count = f0Flat.dim(0)
-        var f0Sum: Float = 0
-        var f0Max: Float = 0
-        var f0NonZero = 0
-        for i in 0..<f0Count {
-            let v = f0Flat[i].item(Float.self)
-            f0Sum += v
-            if v > f0Max { f0Max = v }
-            if v > 1.0 { f0NonZero += 1 }
-        }
-        print("  [HiFiGAN] F0: mean=\(f0Sum/Float(f0Count)), max=\(f0Max), nonzero(>1Hz)=\(f0NonZero)/\(f0Count)")
-
         // 2. Upsample F0 to waveform sample rate
         //    Total upsample: prod(upsampleRates) * istftHopLen = 120 * 4 = 480
         let totalUpsample = config.totalUpsampleFactor * config.istftHopLen
@@ -788,28 +774,17 @@ public class HiFiGANGenerator: Module {
         let f0UpExpanded = f0Up.expandedDimensions(axis: 2)  // [B, T*480, 1]
         let sourceSignal = source(f0UpExpanded)  // [B, T*480, 1]
 
-        eval(sourceSignal)
-        let srcFlat2 = sourceSignal.reshaped(-1)
-        let srcRMS = sqrt((srcFlat2 * srcFlat2).mean()).item(Float.self)
-        print("  [HiFiGAN] Source signal: shape=\(sourceSignal.shape), RMS=\(srcRMS)")
-
         // 4. STFT of source -> real and imaginary parts in NCL format
         let sourceFlat = sourceSignal.squeezed(axis: 2)  // [B, T*480]
         let (sourceReal, sourceImag) = stft(
             signal: sourceFlat, nFFT: config.istftNFFT, hopLen: config.istftHopLen)
         // sourceReal, sourceImag: [B, nBins=9, T_stft]
 
-        eval(sourceReal, sourceImag)
-        print("  [HiFiGAN] Source STFT: real=\(sourceReal.shape), imag=\(sourceImag.shape)")
-
         // Concatenate real and imaginary as source STFT features: [B, 18, T_stft]
         let sourceSTFT = concatenated([sourceReal, sourceImag], axis: 1)
 
         // 5. Main decoder: conv_pre
         var x = convPre(melNCL)  // [B, 512, T]
-        eval(x)
-        let convPreRMS = sqrt((x * x).mean()).item(Float.self)
-        print("  [HiFiGAN] After conv_pre: shape=\(x.shape), RMS=\(convPreRMS)")
 
         // 6. Channel-reduction stages with source injection and multi-receptive-field fusion
         let numKernels = Float(config.resblockKernelSizes.count)
@@ -829,8 +804,8 @@ public class HiFiGANGenerator: Module {
 
             // Source injection: each sourceDowns independently projects the original
             // 18-channel STFT source to this stage's channel count, then adds via resblock.
-            let debugSkipSource = false  // Set to true to debug without source
-            if !debugSkipSource {
+            // Source injection
+            do {
                 let sDn: MLXArray
                 if let downSample = sourceDowns[i] as? CausalConv1dDownSample {
                     sDn = downSample(sourceSTFT)
@@ -858,29 +833,12 @@ public class HiFiGANGenerator: Module {
                 fused = fused + resblocks[i][j](x)
             }
             x = fused / MLXArray(numKernels)
-
-            eval(x)
-            let stageRMS = sqrt((x * x).mean()).item(Float.self)
-            print("  [HiFiGAN] After stage \(i): shape=\(x.shape), RMS=\(stageRMS)")
         }
 
         // 7. Final layers (LeakyReLU + conv_post)
         // Python uses F.leaky_relu(x) with DEFAULT slope=0.01 (not config lrelu_slope=0.1)
         x = maximum(x, MLXArray(Float(0.01)) * x)
         x = convPost(x)  // [B, 18, T_final]
-
-        eval(x)
-        let postRMS = sqrt((x * x).mean()).item(Float.self)
-        print("  [HiFiGAN] After conv_post: shape=\(x.shape), RMS=\(postRMS)")
-        // Per-channel stats for magnitude (first 9) and phase (last 9)
-        for ch in 0..<18 {
-            let chData = x[0, ch]
-            let chMean = chData.mean().item(Float.self)
-            let chMin = chData.min().item(Float.self)
-            let chMax = chData.max().item(Float.self)
-            let label = ch < 9 ? "mag" : "phs"
-            print("    ch[\(ch)] \(label): mean=\(chMean), range=[\(chMin), \(chMax)]")
-        }
 
         // 8. Split into magnitude (exp) and phase (sin)
         let nBins = config.istftNFFT / 2 + 1  // 9
@@ -889,11 +847,6 @@ public class HiFiGANGenerator: Module {
 
         let outputMag = exp(magPart)
         let outputPhase = sin(phasePart)
-
-        eval(outputMag, outputPhase)
-        let magMean = outputMag.mean().item(Float.self)
-        let magMax = outputMag.max().item(Float.self)
-        print("  [HiFiGAN] ISTFT mag: mean=\(magMean), max=\(magMax), phase_range=[\(phasePart.min().item(Float.self)), \(phasePart.max().item(Float.self))]")
 
         // 9. ISTFT to reconstruct audio
         let audio = istft(
