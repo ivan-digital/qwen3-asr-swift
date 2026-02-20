@@ -18,6 +18,9 @@ public enum DownloadError: Error, LocalizedError {
 /// HuggingFace model downloader — shared between ASR and TTS
 public enum HuggingFaceDownloader {
 
+    /// Max retries per file download
+    private static let maxRetries = 3
+
     /// Get cache directory for a model
     public static func getCacheDirectory(for modelId: String, cacheDirName: String = "qwen3-speech") throws -> URL {
         let cacheKey = sanitizedCacheKey(for: modelId)
@@ -98,6 +101,55 @@ public enum HuggingFaceDownloader {
         return local
     }
 
+    /// Create a URLSession configured for large model downloads
+    private static func makeSession() -> URLSession {
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 30      // 30s to start receiving data
+        config.timeoutIntervalForResource = 600    // 10 min max per file
+        config.waitsForConnectivity = true
+        return URLSession(configuration: config)
+    }
+
+    /// Download a single file with retry logic, streaming to disk
+    private static func downloadFile(
+        url: URL,
+        to localPath: URL,
+        session: URLSession,
+        fileName: String
+    ) async throws {
+        var lastError: Error?
+
+        for attempt in 1...maxRetries {
+            do {
+                let (tempURL, response) = try await session.download(from: url)
+
+                guard let httpResponse = response as? HTTPURLResponse,
+                      httpResponse.statusCode == 200 else {
+                    let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+                    throw DownloadError.failedToDownload("\(fileName) (HTTP \(status))")
+                }
+
+                // Move downloaded file to final location
+                let fm = FileManager.default
+                if fm.fileExists(atPath: localPath.path) {
+                    try fm.removeItem(at: localPath)
+                }
+                try fm.moveItem(at: tempURL, to: localPath)
+                return  // Success
+            } catch {
+                lastError = error
+                if attempt < maxRetries {
+                    // Exponential backoff: 1s, 2s, 4s
+                    let delay = UInt64(pow(2.0, Double(attempt - 1))) * 1_000_000_000
+                    print("[Download] Retry \(attempt)/\(maxRetries) for \(fileName): \(error.localizedDescription)")
+                    try? await Task.sleep(nanoseconds: delay)
+                }
+            }
+        }
+
+        throw lastError ?? DownloadError.failedToDownload(fileName)
+    }
+
     /// Download model files from HuggingFace
     public static func downloadWeights(
         modelId: String,
@@ -106,7 +158,8 @@ public enum HuggingFaceDownloader {
         progressHandler: ((Double) -> Void)? = nil
     ) async throws {
         let baseURL = "https://huggingface.co/\(modelId)/resolve/main"
-        let session = URLSession(configuration: .ephemeral)
+        let session = makeSession()
+        defer { session.finishTasksAndInvalidate() }
 
         // Files to download (config and tokenizer)
         var filesToDownload = [
@@ -114,34 +167,35 @@ public enum HuggingFaceDownloader {
         ]
         filesToDownload.append(contentsOf: additionalFiles)
 
-        // Determine model file(s) to download
-        let indexPath = directory.appendingPathComponent("model.safetensors.index.json")
+        // Discover model files only if additionalFiles doesn't already include safetensors
+        let hasExplicitWeights = additionalFiles.contains { $0.hasSuffix(".safetensors") }
+        if !hasExplicitWeights {
+            let indexPath = directory.appendingPathComponent("model.safetensors.index.json")
 
-        if !FileManager.default.fileExists(atPath: indexPath.path) {
-            let indexURL = URL(string: "\(baseURL)/model.safetensors.index.json")!
-            if let (indexData, indexResponse) = try? await session.data(from: indexURL),
-               let httpResponse = indexResponse as? HTTPURLResponse,
-               httpResponse.statusCode == 200 {
-                try indexData.write(to: indexPath)
+            if !FileManager.default.fileExists(atPath: indexPath.path) {
+                let indexURL = URL(string: "\(baseURL)/model.safetensors.index.json")!
+                if let (tempURL, indexResponse) = try? await session.download(from: indexURL),
+                   let httpResponse = indexResponse as? HTTPURLResponse,
+                   httpResponse.statusCode == 200 {
+                    try? FileManager.default.moveItem(at: tempURL, to: indexPath)
+                }
             }
-        }
 
-        // Check if we have an index file and get model files from it
-        var modelFiles: [String] = []
-        if FileManager.default.fileExists(atPath: indexPath.path),
-           let indexData = try? Data(contentsOf: indexPath),
-           let index = try? JSONSerialization.jsonObject(with: indexData) as? [String: Any],
-           let weightMap = index["weight_map"] as? [String: String],
-           !weightMap.isEmpty {
-            let uniqueFiles = Set(weightMap.values)
-            modelFiles = Array(uniqueFiles).sorted()
-        } else {
-            // Remove corrupt/empty index so it gets re-downloaded next time
-            try? FileManager.default.removeItem(at: indexPath)
-            modelFiles = ["model.safetensors"]
-        }
+            var modelFiles: [String] = []
+            if FileManager.default.fileExists(atPath: indexPath.path),
+               let indexData = try? Data(contentsOf: indexPath),
+               let index = try? JSONSerialization.jsonObject(with: indexData) as? [String: Any],
+               let weightMap = index["weight_map"] as? [String: String],
+               !weightMap.isEmpty {
+                let uniqueFiles = Set(weightMap.values)
+                modelFiles = Array(uniqueFiles).sorted()
+            } else {
+                try? FileManager.default.removeItem(at: indexPath)
+                modelFiles = ["model.safetensors"]
+            }
 
-        filesToDownload.append(contentsOf: modelFiles)
+            filesToDownload.append(contentsOf: modelFiles)
+        }
 
         for (index, file) in filesToDownload.enumerated() {
             let safeFile = try validatedRemoteFileName(file)
@@ -153,14 +207,7 @@ public enum HuggingFaceDownloader {
             }
 
             let url = URL(string: "\(baseURL)/\(safeFile)")!
-            let (data, response) = try await session.data(from: url)
-
-            guard let httpResponse = response as? HTTPURLResponse,
-                  httpResponse.statusCode == 200 else {
-                throw DownloadError.failedToDownload(file)
-            }
-
-            try data.write(to: localPath)
+            try await downloadFile(url: url, to: localPath, session: session, fileName: safeFile)
 
             progressHandler?(Double(index + 1) / Double(filesToDownload.count))
         }

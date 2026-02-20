@@ -1,6 +1,13 @@
 .build/
 .swiftpm/
+.vscode/
 Package.resolved
 DerivedData/
 *.xcodeproj/project.xcworkspace/
 *.xcodeproj/xcuserdata/
+
+# Model weights
+cosyvoice3-mlx-4bit/
+*.safetensors
+*.pt
+*.onnx

@@ -4,7 +4,12 @@ import MLXNN
 import MLXFast
 import Qwen3Common
 
-/// GQA attention for TTS Talker with MRoPE (instead of standard RoPE)
+/// GQA attention for TTS Talker with standard RoPE via MLXFast fused kernel.
+///
+/// For basic TTS where all 3 MRoPE position dimensions are identical (T=H=W),
+/// MRoPE reduces to standard 1D RoPE. Using MLXNN.RoPE (backed by MLXFast.RoPE)
+/// replaces 56 manual cos/sin + rotate-half kernel dispatches per step with 56
+/// fused Metal kernel calls, reducing command buffer overhead.
 public class TalkerAttention: Module {
     let numHeads: Int
     let numKVHeads: Int
@@ -17,6 +22,8 @@ public class TalkerAttention: Module {
     @ModuleInfo var oProj: QuantizedLinear
     @ModuleInfo var qNorm: RMSNorm
     @ModuleInfo var kNorm: RMSNorm
+
+    let rope: MLXNN.RoPE
 
     public init(config: TalkerConfig) {
         self.numHeads = config.numHeads
@@ -42,25 +49,29 @@ public class TalkerAttention: Module {
         self._qNorm.wrappedValue = RMSNorm(dimensions: headDim, eps: config.rmsNormEps)
         self._kNorm.wrappedValue = RMSNorm(dimensions: headDim, eps: config.rmsNormEps)
 
+        self.rope = MLXNN.RoPE(dimensions: headDim, traditional: false, base: config.ropeTheta)
+
         super.init()
     }
 
-    /// Forward pass with external position embeddings (MRoPE cos/sin)
+    /// Forward pass with RoPE offset for positional encoding.
+    /// Offset is MLXArray to enable compile tracking (compile bakes Swift Ints as constants).
+    /// Batch dimension uses -1 in reshapes so compiled graph works for any batch size.
     public func callAsFunction(
         _ hiddenStates: MLXArray,
-        positionEmbeddings: (cos: MLXArray, sin: MLXArray),
+        offset: MLXArray,
         attentionMask: MLXArray? = nil,
         cache: (MLXArray, MLXArray)? = nil
     ) -> (MLXArray, (MLXArray, MLXArray)) {
-        let (batch, seqLen, _) = (hiddenStates.dim(0), hiddenStates.dim(1), hiddenStates.dim(2))
+        let seqLen = hiddenStates.dim(1)
 
         var queries = qProj(hiddenStates)
         var keys = kProj(hiddenStates)
         var values = vProj(hiddenStates)
 
-        queries = queries.reshaped(batch, seqLen, numHeads, headDim)
-        keys = keys.reshaped(batch, seqLen, numKVHeads, headDim)
-        values = values.reshaped(batch, seqLen, numKVHeads, headDim)
+        queries = queries.reshaped(-1, seqLen, numHeads, headDim)
+        keys = keys.reshaped(-1, seqLen, numKVHeads, headDim)
+        values = values.reshaped(-1, seqLen, numKVHeads, headDim)
 
         queries = qNorm(queries)
         keys = kNorm(keys)
@@ -70,9 +81,9 @@ public class TalkerAttention: Module {
         keys = keys.transposed(0, 2, 1, 3)
         values = values.transposed(0, 2, 1, 3)
 
-        // Apply MRoPE
-        queries = applyRotaryPosEmb(queries, cos: positionEmbeddings.cos, sin: positionEmbeddings.sin)
-        keys = applyRotaryPosEmb(keys, cos: positionEmbeddings.cos, sin: positionEmbeddings.sin)
+        // Apply RoPE via fused MLXFast kernel (MLXArray offset for compile compatibility)
+        queries = rope(queries, offset: offset)
+        keys = rope(keys, offset: offset)
 
         // Update KV cache
         var cachedKeys = keys
@@ -88,7 +99,7 @@ public class TalkerAttention: Module {
             scale: scale, mask: attentionMask)
 
         // [B, N, S, D] -> [B, S, N, D] -> [B, S, N*D]
-        let output = oProj(attnOutput.transposed(0, 2, 1, 3).reshaped(batch, seqLen, numHeads * headDim))
+        let output = oProj(attnOutput.transposed(0, 2, 1, 3).reshaped(-1, seqLen, numHeads * headDim))
 
         return (output, (cachedKeys, cachedValues))
     }
@@ -116,14 +127,14 @@ public class TalkerDecoderLayer: Module {
 
     public func callAsFunction(
         _ hiddenStates: MLXArray,
-        positionEmbeddings: (cos: MLXArray, sin: MLXArray),
+        offset: MLXArray,
         attentionMask: MLXArray? = nil,
         cache: (MLXArray, MLXArray)? = nil
     ) -> (MLXArray, (MLXArray, MLXArray)) {
         let residual = hiddenStates
         var hidden = inputLayerNorm(hiddenStates)
         let (attnOutput, newCache) = selfAttn(
-            hidden, positionEmbeddings: positionEmbeddings,
+            hidden, offset: offset,
             attentionMask: attentionMask, cache: cache)
         hidden = residual + attnOutput
 
@@ -163,7 +174,6 @@ public class TextProjectionMLP: Module {
 /// Full TTS Talker model
 public class TalkerModel: Module {
     public let config: TalkerConfig
-    let rotaryEmb: TalkerRotaryEmbedding
 
     @ModuleInfo var codecEmbedding: Embedding
     @ModuleInfo var textEmbedding: Embedding
@@ -174,10 +184,6 @@ public class TalkerModel: Module {
 
     public init(config: TalkerConfig) {
         self.config = config
-        self.rotaryEmb = TalkerRotaryEmbedding(
-            headDim: config.headDim,
-            sections: config.mropeSections,
-            base: config.ropeTheta)
 
         // Codec embedding: not quantized (float)
         self._codecEmbedding.wrappedValue = Embedding(
@@ -227,18 +233,16 @@ public class TalkerModel: Module {
         codecEmbedding
     }
 
-    /// Forward pass through Talker
+    /// Forward pass through Talker.
+    /// Offset is MLXArray for compile tracking (compile bakes Swift Int as constant).
     /// - Returns: (logits, hiddenStates, newCache)
     public func callAsFunction(
         inputsEmbeds: MLXArray,
-        positionIds: MLXArray,
+        offset: MLXArray,
         attentionMask: MLXArray? = nil,
         cache: [(MLXArray, MLXArray)]? = nil
     ) -> (MLXArray, MLXArray, [(MLXArray, MLXArray)]) {
         var hiddenStates = inputsEmbeds
-
-        // Compute MRoPE embeddings
-        let (cosEmbed, sinEmbed) = rotaryEmb.forward(positionIds: positionIds)
 
         // Determine attention mask
         let seqLen = hiddenStates.dim(1)
@@ -257,13 +261,13 @@ public class TalkerModel: Module {
                 .asType(hiddenStates.dtype)
         }
 
-        // Apply decoder layers
+        // Apply decoder layers with RoPE offset
         var newCache: [(MLXArray, MLXArray)] = []
         for (i, layer) in layers.enumerated() {
             let layerCache = cache?[i]
             let (output, updatedCache) = layer(
                 hiddenStates,
-                positionEmbeddings: (cos: cosEmbed, sin: sinEmbed),
+                offset: offset,
                 attentionMask: mask,
                 cache: layerCache)
             hiddenStates = output

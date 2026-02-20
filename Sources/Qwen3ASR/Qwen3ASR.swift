@@ -271,17 +271,15 @@ public extension Qwen3ASRModel {
         // Get cache directory
         let cacheDir = try HuggingFaceDownloader.getCacheDirectory(for: modelId)
 
-        // Download weights if needed
-        if !HuggingFaceDownloader.weightsExist(in: cacheDir) {
-            try await HuggingFaceDownloader.downloadWeights(
-                modelId: modelId,
-                to: cacheDir,
-                additionalFiles: ["vocab.json", "tokenizer_config.json"],
-                progressHandler: { progress in
-                    progressHandler?(0.1 + progress * 0.4, "Downloading weights...")
-                }
-            )
-        }
+        // Download weights and tokenizer files (skips files that already exist on disk)
+        try await HuggingFaceDownloader.downloadWeights(
+            modelId: modelId,
+            to: cacheDir,
+            additionalFiles: ["vocab.json", "merges.txt", "tokenizer_config.json"],
+            progressHandler: { progress in
+                progressHandler?(0.1 + progress * 0.4, "Downloading weights...")
+            }
+        )
 
         progressHandler?(0.5, "Loading tokenizer...")
 

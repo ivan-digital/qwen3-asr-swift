@@ -83,6 +83,11 @@ public enum CommonWeightLoader {
         if let biases = weights["\(prefix).biases"] {
             params["biases"] = .value(biases)
         }
+        // Regular linear bias (separate from quantization biases)
+        // Qwen2.5 attention q/k/v projections have regular biases
+        if let bias = weights["\(prefix).bias"] {
+            params["bias"] = .value(bias)
+        }
 
         if !params.isEmpty {
             linear.update(parameters: ModuleParameters(values: params))
