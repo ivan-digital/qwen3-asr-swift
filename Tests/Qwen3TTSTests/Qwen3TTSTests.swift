@@ -826,7 +826,52 @@ final class TTSStreamingTests: XCTestCase {
         XCTAssertEqual(config.decoderLeftContext, 10)
     }
 
-    // MARK: - Test 6: Custom streaming config
+    // MARK: - Test 6: Low-latency streaming ASR round-trip
+
+    /// 1-frame streaming (zero-pad decode) should produce intelligible audio verified by ASR.
+    func testLowLatencyStreamingASRRoundTrip() async throws {
+        let ttsModel = try await loadTTSModel()
+        let asrModel = try await loadASRModel()
+
+        let text = "The weather is beautiful today."
+
+        var chunks: [TTSAudioChunk] = []
+        let stream = ttsModel.synthesizeStream(
+            text: text,
+            language: "english",
+            streaming: .lowLatency)
+
+        for try await chunk in stream {
+            chunks.append(chunk)
+        }
+
+        XCTAssertGreaterThan(chunks.count, 0, "Should produce chunks")
+
+        // First chunk should be 1 frame (low-latency zero-pad decode)
+        let firstFrames = chunks[0].totalFrames - chunks[0].frameIndex
+        XCTAssertEqual(firstFrames, 1, "First chunk should be 1 frame")
+
+        let allSamples = chunks.flatMap { $0.samples }
+        let duration = Double(allSamples.count) / 24000.0
+        XCTAssertGreaterThan(duration, 0.5, "Should produce at least 0.5s of audio")
+
+        // ASR round-trip: transcribe the streaming audio back
+        let transcription = asrModel.transcribe(audio: allSamples, sampleRate: 24000)
+
+        print("Input:         \"\(text)\"")
+        print("Transcription: \"\(transcription)\"")
+        print("Chunks: \(chunks.count), duration: \(fmt(duration))s, first-packet: \(fmt(chunks[0].elapsedTime * 1000))ms")
+
+        // Check key words are recognized
+        let expectedWords = ["weather", "beautiful", "today"]
+        let matched = expectedWords.filter { transcription.lowercased().contains($0) }
+        print("Matched \(matched.count)/\(expectedWords.count): \(matched)")
+
+        XCTAssertGreaterThanOrEqual(matched.count, 2,
+            "ASR should recognize at least 2 of \(expectedWords) from low-latency streaming audio (got: \(matched))")
+    }
+
+    // MARK: - Test 7: Custom streaming config
 
     /// Low-latency config should produce smaller first chunk.
     func testLowLatencyConfig() async throws {
