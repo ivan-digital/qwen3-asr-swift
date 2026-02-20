@@ -24,6 +24,9 @@ struct CosyVoiceTTSCLI: ParsableCommand {
     @Option(name: .long, help: "Streaming chunk interval in seconds (0 = non-streaming)")
     var streamingInterval: Double = 0
 
+    @Flag(name: .long, help: "Show per-phase timing breakdown")
+    var verbose: Bool = false
+
     func run() throws {
         let semaphore = DispatchSemaphore(value: 0)
         var exitCode: Int32 = 0
@@ -62,7 +65,7 @@ struct CosyVoiceTTSCLI: ParsableCommand {
                     print("Saved to \(output)")
                 } else {
                     // Non-streaming mode
-                    let samples = model.synthesize(text: text, language: language)
+                    let samples = model.synthesize(text: text, language: language, verbose: verbose)
 
                     let elapsed = CFAbsoluteTimeGetCurrent() - startTime
                     let duration = Double(samples.count) / 24000.0

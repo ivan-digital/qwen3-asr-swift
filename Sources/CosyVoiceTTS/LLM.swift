@@ -272,6 +272,11 @@ public class CosyVoiceLLM: Module {
     @ModuleInfo var norm: RMSNorm
     @ModuleInfo var speechHead: QuantizedLinear
 
+    /// Compiled generation step (24-layer transformer + speech head) for kernel fusion.
+    /// Uses shapeless=true to handle growing KV cache without recompilation.
+    /// RoPE offset is passed as a regular function input (compile treats inputs as variables).
+    private var compiledStep: (([MLXArray]) -> [MLXArray])?
+
     public init(config: CosyVoiceLLMConfig) {
         self.config = config
 
@@ -299,6 +304,60 @@ public class CosyVoiceLLM: Module {
             groupSize: config.groupSize, bits: config.bits)
 
         super.init()
+    }
+
+    /// Initialize compiled generation step for Metal kernel fusion.
+    ///
+    /// MLX.compile() traces the computation graph on first call and replays it
+    /// on subsequent calls, fusing small kernel dispatches into larger ones.
+    ///
+    /// Uses shapeless=true: RoPE offset passed as regular MLXArray input,
+    /// growing KV cache handled by shapeless mode, batch dim uses -1 reshapes.
+    public func setupCompilation() {
+        let selfRef = self
+        let numLayers = config.numLayers
+
+        // Compiled step: [embeds, offset, K0, V0, ..., K23, V23] →
+        //                [logits, K0, V0, ..., K23, V23]
+        compiledStep = compile(
+            inputs: [selfRef], outputs: [selfRef], shapeless: true
+        ) { inputs in
+            let embeds = inputs[0]
+            let offset = inputs[1]
+            var cache: [(MLXArray, MLXArray)] = []
+            for i in 0..<numLayers {
+                cache.append((inputs[2 + i * 2], inputs[3 + i * 2]))
+            }
+
+            let (logits, newCache) = selfRef.forwardStep(embeds, offset: offset, cache: cache)
+
+            var result: [MLXArray] = [logits]
+            for (k, v) in newCache { result.append(k); result.append(v) }
+            return result
+        }
+    }
+
+    /// Execute a generation step (compiled when available).
+    ///
+    /// The compiled path fuses ~360 Metal kernel dispatches (24 layers × ~15 ops) into
+    /// fewer optimized kernels.
+    func executeStep(
+        embeds: MLXArray, offset: Int, cache: [(MLXArray, MLXArray)]
+    ) -> (MLXArray, [(MLXArray, MLXArray)]) {
+        guard let compiled = compiledStep else {
+            return forwardStep(embeds, offset: MLXArray(Int32(offset)), cache: cache)
+        }
+
+        var flatInputs = [embeds, MLXArray(Int32(offset))]
+        for (k, v) in cache { flatInputs.append(k); flatInputs.append(v) }
+
+        let out = compiled(flatInputs)
+
+        var newCache: [(MLXArray, MLXArray)] = []
+        for i in 0..<config.numLayers {
+            newCache.append((out[1 + i * 2], out[2 + i * 2]))
+        }
+        return (out[0], newCache)
     }
 
     /// Build the input embedding sequence for generation.
@@ -429,16 +488,15 @@ public class CosyVoiceLLM: Module {
         var generatedTokens: [Int32] = [currentToken]
         var currentCache = cache
 
-        // Autoregressive generation loop
+        // Autoregressive generation loop (uses compiled step when available)
         for step in 0..<(maxTokens - 1) {
             // Embed the last generated speech token
             let tokenEmbed = speechEmbedding(
                 MLXArray([currentToken]).expandedDimensions(axis: 0))  // [1, 1, hidden]
 
             // Forward single token through transformer
-            let stepOffset = MLXArray(Int32(prefixLen + step))
-            let (stepLogits, newCache) = forwardStep(
-                tokenEmbed, offset: stepOffset, cache: currentCache)
+            let (stepLogits, newCache) = executeStep(
+                embeds: tokenEmbed, offset: prefixLen + step, cache: currentCache)
             eval(stepLogits, newCache)
             currentCache = newCache
 
