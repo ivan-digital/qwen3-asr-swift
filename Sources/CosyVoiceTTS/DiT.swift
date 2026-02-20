@@ -292,14 +292,17 @@ public class ConvPositionEmbedding: Module {
     /// - Returns: `[B, T, dim]` with local positional information added
     public func callAsFunction(_ x: MLXArray) -> MLXArray {
         let T = x.dim(1)
-        var h = conv1(x)
-        // Trim to original length if padding added extra
-        if h.dim(1) > T { h = h[0..., 0..<T, 0...] }
-        h = geluApproximate(h)
-        h = conv2(h)
-        if h.dim(1) > T { h = h[0..., 0..<T, 0...] }
-        h = geluApproximate(h)
-        return x + h
+        // Both convolutions take the SAME input (parallel), then sum.
+        // Each conv is wrapped in Sequential(Conv1d, GELU) in Python.
+        var h1 = conv1(x)
+        if h1.dim(1) > T { h1 = h1[0..., 0..<T, 0...] }
+        h1 = geluApproximate(h1)
+
+        var h2 = conv2(x)
+        if h2.dim(1) > T { h2 = h2[0..., 0..<T, 0...] }
+        h2 = geluApproximate(h2)
+
+        return x + h1 + h2
     }
 }
 

@@ -290,6 +290,8 @@ final class CosyVoiceForwardPassTests: XCTestCase {
 
         // Expected: [1, 80, 20] (10 tokens * tokenMelRatio=2 = 20 mel frames)
         print("Flow output: \(mel.shape)")
+        let flat = mel.reshaped(-1)
+        print("Flow mel range: [\(MLX.min(flat).item(Float.self)), \(MLX.max(flat).item(Float.self))], mean: \(MLX.mean(flat).item(Float.self))")
         XCTAssertEqual(mel.dim(0), 1, "Batch size should be 1")
         XCTAssertEqual(mel.dim(1), 80, "Should have 80 mel bins")
         XCTAssertEqual(mel.dim(2), 20, "Should have 20 mel frames (10 tokens * 2)")
@@ -422,18 +424,10 @@ final class CosyVoiceForwardPassTests: XCTestCase {
 
 // MARK: - E2E Tests (require model download)
 
-// These tests require the model to be downloaded and are skipped by default.
+// These tests download the model (~2 GB) on first run and cache it.
 // Run with: swift test --filter CosyVoiceTTSE2ETests
-// Requires: ~2 GB disk space for model weights
 
 final class CosyVoiceTTSE2ETests: XCTestCase {
-
-    // Set to true to run E2E tests (requires model download)
-    static let runE2E = ProcessInfo.processInfo.environment["COSYVOICE_E2E"] != nil
-
-    override func setUpWithError() throws {
-        try XCTSkipUnless(Self.runE2E, "Set COSYVOICE_E2E=1 to run E2E tests")
-    }
 
     func testBasicSynthesis() async throws {
         let model = try await CosyVoiceTTSModel.fromPretrained()

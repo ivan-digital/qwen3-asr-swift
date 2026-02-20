@@ -212,16 +212,21 @@ public enum CosyVoiceWeightLoader {
         CommonWeightLoader.applyConv1dWeights(
             to: hifigan.convPre.conv, prefix: "conv_pre", from: weights, transpose: false)
 
-        // Channel-reduction convolutions (CausalDilatedConv1d wraps Conv1d, NOT ConvTranspose1d)
+        // Upsample convolutions (CausalConv1dUpsample: nn.Upsample + CausalDilatedConv1d)
         for (i, up) in hifigan.ups.enumerated() {
             CommonWeightLoader.applyConv1dWeights(
-                to: up.conv, prefix: "ups.\(i)", from: weights, transpose: false)
+                to: up.conv.conv, prefix: "ups.\(i)", from: weights, transpose: false)
         }
 
-        // Source downsampling convolutions (CausalDilatedConv1d wraps Conv1d)
+        // Source downsampling convolutions (CausalConv1dDownSample or CausalDilatedConv1d)
         for (i, down) in hifigan.sourceDowns.enumerated() {
-            CommonWeightLoader.applyConv1dWeights(
-                to: down.conv, prefix: "source_downs.\(i)", from: weights, transpose: false)
+            if let downSample = down as? CausalConv1dDownSample {
+                CommonWeightLoader.applyConv1dWeights(
+                    to: downSample.conv, prefix: "source_downs.\(i)", from: weights, transpose: false)
+            } else if let causalConv = down as? CausalDilatedConv1d {
+                CommonWeightLoader.applyConv1dWeights(
+                    to: causalConv.conv, prefix: "source_downs.\(i)", from: weights, transpose: false)
+            }
         }
 
         // Main resblocks: flattened indexing (stage * numKernels + kernelIdx)

@@ -124,12 +124,13 @@ public class ConditionalFlowMatching: Module {
         // 1. Sample initial noise: z ~ N(0, temperature^2 * I)
         let z = MLXRandom.normal(mu.shape).asType(mu.dtype) * MLXArray(temperature)
 
-        // 2. Create time schedule: linear spacing from 0 to 1
-        // MLX Swift does not have MLXArray.linspace, so build manually
-        let tValues: [Float] = (0 ... nTimesteps).map { Float($0) / Float(nTimesteps) }
-
-        // Apply cosine schedule for better sampling: t' = 1 - cos(t * pi/2)
-        let tSchedule: [Float] = tValues.map { 1.0 - cos($0 * .pi / 2.0) }
+        // 2. Create time schedule with cosine mapping
+        // Python: t_span = torch.linspace(0, 1, n_timesteps + 1)
+        //         t_span = 1 - torch.cos(t_span * 0.5 * torch.pi)
+        let tSchedule: [Float] = (0 ... nTimesteps).map { i in
+            let t = Float(i) / Float(nTimesteps)
+            return 1.0 - cos(t * 0.5 * .pi)
+        }
 
         // 3. Euler solver with classifier-free guidance
         var x = z
@@ -149,8 +150,9 @@ public class ConditionalFlowMatching: Module {
             let batchSize = x.dim(0)
             let tFull = MLXArray([Float](repeating: t, count: batchSize * 2)).asType(mu.dtype)
 
-            let spksIn: MLXArray? = spks.map { concatenated([$0, $0], axis: 0) }
-            let condIn: MLXArray? = cond.map { concatenated([$0, $0], axis: 0) }
+            // CFG: unconditioned path uses zeros for spks and cond
+            let spksIn: MLXArray? = spks.map { concatenated([$0, MLXArray.zeros($0.shape, dtype: $0.dtype)], axis: 0) }
+            let condIn: MLXArray? = cond.map { concatenated([$0, MLXArray.zeros($0.shape, dtype: $0.dtype)], axis: 0) }
 
             // Get velocity from DiT
             let velocity = decoder(xIn, mask: maskIn, mu: muIn, t: tFull, spks: spksIn, cond: condIn)
@@ -169,6 +171,19 @@ public class ConditionalFlowMatching: Module {
 
             // Evaluate to avoid building too large a computation graph
             eval(x)
+
+            // Debug: print ODE step statistics
+            let xFlat = x.reshaped(-1)
+            let xMean = xFlat.mean().item(Float.self)
+            let xMin = xFlat.min().item(Float.self)
+            let xMax = xFlat.max().item(Float.self)
+            let vcFlat = vCond.reshaped(-1)
+            let vuFlat = vUncond.reshaped(-1)
+            let vcRMS = sqrt((vcFlat * vcFlat).mean()).item(Float.self)
+            let vuRMS = sqrt((vuFlat * vuFlat).mean()).item(Float.self)
+            let vcMean = vcFlat.mean().item(Float.self)
+            let vuMean = vuFlat.mean().item(Float.self)
+            print("  [ODE] step=\(i), t=\(String(format: "%.4f", t)), x: mean=\(String(format: "%.3f", xMean)) [\(String(format: "%.1f", xMin)),\(String(format: "%.1f", xMax))], v_cond: m=\(String(format: "%.3f", vcMean)) rms=\(String(format: "%.3f", vcRMS)), v_uncond: m=\(String(format: "%.3f", vuMean)) rms=\(String(format: "%.3f", vuRMS))")
         }
 
         return x
@@ -185,8 +200,12 @@ public class PreLookaheadLayer: Module {
     @ModuleInfo var conv2: CausalDilatedConv1d
 
     public init(inputDim: Int = 80, hiddenDim: Int = 1024) {
+        // conv1: right-padding (look-ahead), kernel_size=4
+        // Python: CausalConv1d(input_dim, hidden_dim, kernel_size, causal_type='right')
         self._conv1.wrappedValue = CausalDilatedConv1d(
-            inputChannels: inputDim, outputChannels: hiddenDim, kernelSize: 4)
+            inputChannels: inputDim, outputChannels: hiddenDim, kernelSize: 4, causalType: .right)
+        // conv2: left-padding (causal), kernel_size=3
+        // Python: CausalConv1d(hidden_dim, input_dim, kernel_size - 1, causal_type='left')
         self._conv2.wrappedValue = CausalDilatedConv1d(
             inputChannels: hiddenDim, outputChannels: inputDim, kernelSize: 3)
         super.init()

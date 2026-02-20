@@ -167,34 +167,35 @@ public enum HuggingFaceDownloader {
         ]
         filesToDownload.append(contentsOf: additionalFiles)
 
-        // Determine model file(s) to download
-        let indexPath = directory.appendingPathComponent("model.safetensors.index.json")
+        // Discover model files only if additionalFiles doesn't already include safetensors
+        let hasExplicitWeights = additionalFiles.contains { $0.hasSuffix(".safetensors") }
+        if !hasExplicitWeights {
+            let indexPath = directory.appendingPathComponent("model.safetensors.index.json")
 
-        if !FileManager.default.fileExists(atPath: indexPath.path) {
-            let indexURL = URL(string: "\(baseURL)/model.safetensors.index.json")!
-            if let (tempURL, indexResponse) = try? await session.download(from: indexURL),
-               let httpResponse = indexResponse as? HTTPURLResponse,
-               httpResponse.statusCode == 200 {
-                try? FileManager.default.moveItem(at: tempURL, to: indexPath)
+            if !FileManager.default.fileExists(atPath: indexPath.path) {
+                let indexURL = URL(string: "\(baseURL)/model.safetensors.index.json")!
+                if let (tempURL, indexResponse) = try? await session.download(from: indexURL),
+                   let httpResponse = indexResponse as? HTTPURLResponse,
+                   httpResponse.statusCode == 200 {
+                    try? FileManager.default.moveItem(at: tempURL, to: indexPath)
+                }
             }
-        }
 
-        // Check if we have an index file and get model files from it
-        var modelFiles: [String] = []
-        if FileManager.default.fileExists(atPath: indexPath.path),
-           let indexData = try? Data(contentsOf: indexPath),
-           let index = try? JSONSerialization.jsonObject(with: indexData) as? [String: Any],
-           let weightMap = index["weight_map"] as? [String: String],
-           !weightMap.isEmpty {
-            let uniqueFiles = Set(weightMap.values)
-            modelFiles = Array(uniqueFiles).sorted()
-        } else {
-            // Remove corrupt/empty index so it gets re-downloaded next time
-            try? FileManager.default.removeItem(at: indexPath)
-            modelFiles = ["model.safetensors"]
-        }
+            var modelFiles: [String] = []
+            if FileManager.default.fileExists(atPath: indexPath.path),
+               let indexData = try? Data(contentsOf: indexPath),
+               let index = try? JSONSerialization.jsonObject(with: indexData) as? [String: Any],
+               let weightMap = index["weight_map"] as? [String: String],
+               !weightMap.isEmpty {
+                let uniqueFiles = Set(weightMap.values)
+                modelFiles = Array(uniqueFiles).sorted()
+            } else {
+                try? FileManager.default.removeItem(at: indexPath)
+                modelFiles = ["model.safetensors"]
+            }
 
-        filesToDownload.append(contentsOf: modelFiles)
+            filesToDownload.append(contentsOf: modelFiles)
+        }
 
         for (index, file) in filesToDownload.enumerated() {
             let safeFile = try validatedRemoteFileName(file)

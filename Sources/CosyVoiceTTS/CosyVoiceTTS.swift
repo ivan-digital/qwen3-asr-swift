@@ -115,12 +115,14 @@ public final class CosyVoiceTTSModel {
     ) -> [Float] {
         // 1. Tokenize text via Qwen2.5 BPE tokenizer
         let textTokens = tokenizeText(text, language: language)
+        print("  Text tokens (\(textTokens.count)): \(textTokens)")
 
         // 2. Generate speech tokens via LLM
         let speechTokens = llm.generate(
             textTokens: textTokens,
             maxTokens: 500  // ~20 seconds of audio at 25 Hz
         )
+        print("  Speech tokens: \(speechTokens.count) (EOS at \(config.llm.eosToken))")
 
         guard !speechTokens.isEmpty else {
             return []
@@ -129,6 +131,21 @@ public final class CosyVoiceTTSModel {
         // 3. Convert speech tokens to mel spectrogram via flow matching
         let tokenArray = MLXArray(speechTokens).expandedDimensions(axis: 0)  // [1, T]
         let mel = flow(tokens: tokenArray)  // [1, 80, T_mel]
+
+        eval(mel)
+        let melFlat = mel.reshaped(-1)
+        print("  Mel: shape=\(mel.shape), range=[\(melFlat.min().item(Float.self)), \(melFlat.max().item(Float.self))], mean=\(melFlat.mean().item(Float.self))")
+        print("  Speech tokens: \(speechTokens)")
+
+        // Save mel to file for Python verification
+        do {
+            let melData = mel.reshaped(-1).asArray(Float.self)
+            let melStr = melData.map { String($0) }.joined(separator: "\n")
+            try melStr.write(toFile: "/tmp/cosyvoice_mel.txt", atomically: true, encoding: .utf8)
+            print("  Saved mel to /tmp/cosyvoice_mel.txt (shape: \(mel.shape))")
+        } catch {
+            print("  Could not save mel: \(error)")
+        }
 
         // 4. Convert mel to waveform via HiFi-GAN
         let audio = hifigan(mel)  // [1, samples] or [samples]

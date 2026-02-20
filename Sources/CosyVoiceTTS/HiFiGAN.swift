@@ -4,34 +4,40 @@ import MLXNN
 
 // MARK: - Snake Activation
 
-/// Snake activation: x + (1/b) * sin^2(a * x)
-/// Parameters alpha stored in log-space; a = exp(alpha).
-/// CosyVoice3 uses alpha-only Snake (beta = alpha).
+/// Snake activation: x + (1/alpha) * sin^2(alpha * x)
+/// CosyVoice3 uses alpha_logscale=False: alpha is stored as raw values (NOT log-space).
+/// Initialized to 1.0 in Python, then trained. No exp() applied.
 public class SnakeActivation: Module {
     @ParameterInfo var alpha: MLXArray  // [channels]
 
     public init(channels: Int) {
-        // Initialize in log-space (exp(0) = 1.0)
-        self._alpha.wrappedValue = MLXArray.zeros([channels])
+        // alpha_logscale=False: initialize to 1.0 (raw, not log-space)
+        self._alpha.wrappedValue = MLXArray.ones([channels])
         super.init()
     }
 
     /// Input/output: [B, C, T] (NCL / channels-first)
     public func callAsFunction(_ x: MLXArray) -> MLXArray {
         // Reshape alpha [C] -> [1, C, 1] for broadcasting with NCL input
-        let a = exp(alpha.reshaped([1, -1, 1]))  // [1, C, 1]
+        let a = alpha.reshaped([1, -1, 1])  // [1, C, 1], raw (no exp)
         let sinTerm = sin(a * x)
-        return x + (1.0 / a) * (sinTerm * sinTerm)
+        return x + (1.0 / (a + 1e-9)) * (sinTerm * sinTerm)
     }
 }
 
 // MARK: - Causal Dilated Conv1d (NCL)
 
-/// Conv1d wrapper operating in NCL (channels-first) format with causal (left) padding.
+/// Conv1d wrapper operating in NCL (channels-first) format with causal padding.
 /// Internally transposes to NLC for MLX's Conv1d, then back to NCL.
+///
+/// - `causalType = .left` (default): left-pad with zeros → standard causal (output at t depends on past)
+/// - `causalType = .right`: right-pad with zeros → look-ahead (output at t depends on future)
 public class CausalDilatedConv1d: Module {
+    public enum CausalType { case left, right }
+
     @ModuleInfo var conv: Conv1d
     let padAmount: Int
+    let causalType: CausalType
 
     public init(
         inputChannels: Int,
@@ -40,9 +46,11 @@ public class CausalDilatedConv1d: Module {
         stride: Int = 1,
         dilation: Int = 1,
         groups: Int = 1,
-        bias: Bool = true
+        bias: Bool = true,
+        causalType: CausalType = .left
     ) {
         self.padAmount = (kernelSize - 1) * dilation
+        self.causalType = causalType
         self._conv.wrappedValue = Conv1d(
             inputChannels: inputChannels,
             outputChannels: outputChannels,
@@ -57,11 +65,15 @@ public class CausalDilatedConv1d: Module {
 
     /// Input: [B, C, T] (NCL) -> Output: [B, C_out, T_out] (NCL)
     public func callAsFunction(_ x: MLXArray) -> MLXArray {
-        // Left-pad along time axis (last axis in NCL)
         var h = x
         if padAmount > 0 {
             let zeros = MLXArray.zeros([x.dim(0), x.dim(1), padAmount], dtype: x.dtype)
-            h = concatenated([zeros, h], axis: 2)
+            switch causalType {
+            case .left:
+                h = concatenated([zeros, h], axis: 2)   // left-pad (causal)
+            case .right:
+                h = concatenated([h, zeros], axis: 2)    // right-pad (look-ahead)
+            }
         }
         // NCL -> NLC for MLX Conv1d
         h = h.transposed(0, 2, 1)
@@ -71,12 +83,55 @@ public class CausalDilatedConv1d: Module {
     }
 }
 
-// MARK: - Causal ConvTransposed1d (NCL)
+// MARK: - Causal Conv1d Upsample (NCL)
 
-/// ConvTransposed1d wrapper operating in NCL format with causal right-trimming.
-public class CausalConvTransposed1d: Module {
-    @ModuleInfo var conv: ConvTransposed1d
-    let trimRight: Int
+/// Causal upsampling: nearest-neighbor upsample + causal Conv1d.
+/// CausalHiFTGenerator uses this instead of ConvTranspose1d.
+/// The upsample is parameter-free (nearest-neighbor), Conv1d refines the result.
+public class CausalConv1dUpsample: Module {
+    @ModuleInfo var conv: CausalDilatedConv1d
+    let stride: Int
+
+    public init(
+        inputChannels: Int,
+        outputChannels: Int,
+        kernelSize: Int,
+        stride: Int
+    ) {
+        self.stride = stride
+        self._conv.wrappedValue = CausalDilatedConv1d(
+            inputChannels: inputChannels,
+            outputChannels: outputChannels,
+            kernelSize: kernelSize)
+        super.init()
+    }
+
+    /// Input: [B, C, T] (NCL) -> Output: [B, C_out, T*stride] (NCL)
+    public func callAsFunction(_ x: MLXArray) -> MLXArray {
+        // Nearest-neighbor upsample along time axis (NCL: axis=2)
+        // Repeat each time step `stride` times: [B, C, T] -> [B, C, T*stride]
+        var h: MLXArray
+        if stride > 1 {
+            // [B, C, T] -> [B, C, T, 1] -> repeat -> [B, C, T, stride] -> reshape [B, C, T*stride]
+            let expanded = x.expandedDimensions(axis: 3)
+            let repeated = MLX.repeated(expanded, count: stride, axis: 3)
+            h = repeated.reshaped(x.dim(0), x.dim(1), x.dim(2) * stride)
+        } else {
+            h = x
+        }
+        // Apply causal Conv1d
+        return conv(h)
+    }
+}
+
+// MARK: - Strided Conv1d (NCL)
+
+/// Causal strided Conv1d for downsampling, operating in NCL format.
+/// Uses left-only padding of (stride - 1) to maintain causal alignment,
+/// matching Python CausalConv1dDownSample behavior.
+public class CausalConv1dDownSample: Module {
+    @ModuleInfo var conv: Conv1d
+    let causalPadding: Int
 
     public init(
         inputChannels: Int,
@@ -85,8 +140,9 @@ public class CausalConvTransposed1d: Module {
         stride: Int = 1,
         bias: Bool = true
     ) {
-        self.trimRight = kernelSize - stride
-        self._conv.wrappedValue = ConvTransposed1d(
+        // Python: self.causal_padding = stride - 1
+        self.causalPadding = stride > 1 ? stride - 1 : 0
+        self._conv.wrappedValue = Conv1d(
             inputChannels: inputChannels,
             outputChannels: outputChannels,
             kernelSize: kernelSize,
@@ -98,17 +154,17 @@ public class CausalConvTransposed1d: Module {
 
     /// Input: [B, C, T] (NCL) -> Output: [B, C_out, T_out] (NCL)
     public func callAsFunction(_ x: MLXArray) -> MLXArray {
-        // NCL -> NLC
-        var h = x.transposed(0, 2, 1)
+        var h = x
+        // Left-only causal padding (matches Python CausalConv1dDownSample)
+        if causalPadding > 0 {
+            let zeros = MLXArray.zeros([x.dim(0), x.dim(1), causalPadding], dtype: x.dtype)
+            h = concatenated([zeros, h], axis: 2)
+        }
+        // NCL -> NLC for MLX Conv1d
+        h = h.transposed(0, 2, 1)
         h = conv(h)
         // NLC -> NCL
-        h = h.transposed(0, 2, 1)
-        // Trim right side for causality
-        if trimRight > 0 {
-            let outLen = h.dim(2)
-            h = h[0..., 0..., 0..<(outLen - trimRight)]
-        }
-        return h
+        return h.transposed(0, 2, 1)
     }
 }
 
@@ -286,11 +342,14 @@ public class F0Predictor: Module {
         for i in 0..<numLayers {
             let inC = (i == 0) ? inChannels : hiddenChannels
             let kernelSize = (i == 0) ? 4 : 3  // First layer kernel=4, rest kernel=3
+            // First layer uses right-padding (look-ahead), rest use left-padding (causal)
+            let causal: CausalDilatedConv1d.CausalType = (i == 0) ? .right : .left
             layers.append(CausalDilatedConv1d(
                 inputChannels: inC,
                 outputChannels: hiddenChannels,
                 kernelSize: kernelSize,
-                dilation: 1))
+                dilation: 1,
+                causalType: causal))
         }
         self._condnet = ModuleInfo(wrappedValue: layers)
         self._classifier.wrappedValue = Linear(hiddenChannels, 1)
@@ -347,7 +406,7 @@ private func interpolateF0(_ f0: MLXArray, factor: Int) -> MLXArray {
 ///   - signal: [B, T] waveform
 ///   - nFFT: FFT size (16 for this vocoder)
 ///   - hopLen: hop length (4 for this vocoder)
-/// - Returns: (magnitude [B, nBins, nFrames], phase [B, nBins, nFrames]) where nBins = n_fft/2 + 1
+/// - Returns: (real [B, nBins, nFrames], imag [B, nBins, nFrames]) where nBins = n_fft/2 + 1
 private func stft(
     signal: MLXArray, nFFT: Int, hopLen: Int
 ) -> (MLXArray, MLXArray) {
@@ -375,10 +434,20 @@ private func stft(
     let dftRealMat = MLXArray(dftRealData).reshaped([nBins, nFFT])
     let dftImagMat = MLXArray(dftImagData).reshaped([nBins, nFFT])
 
-    // Pad signal if too short
+    // Center padding: pad n_fft//2 on each side with reflection (matches torch.stft center=True)
     var sig = signal
-    if sigLen < nFFT {
-        sig = concatenated([sig, MLXArray.zeros([batch, nFFT - sigLen])], axis: 1)
+    let centerPad = nFFT / 2
+    if centerPad > 0 {
+        // Reflection padding: reverse indices [centerPad, centerPad-1, ..., 1]
+        let leftIndices = MLXArray((1...centerPad).reversed().map { Int32($0) })
+        let leftReflect = sig.take(leftIndices, axis: 1)
+        // Reverse indices [sigLen-2, sigLen-3, ..., sigLen-1-centerPad]
+        let rightIndices = MLXArray(((sigLen - 1 - centerPad)..<(sigLen - 1)).reversed().map { Int32($0) })
+        let rightReflect = sig.take(rightIndices, axis: 1)
+        sig = concatenated([leftReflect, sig, rightReflect], axis: 1)
+    }
+    if sig.dim(1) < nFFT {
+        sig = concatenated([sig, MLXArray.zeros([batch, nFFT - sig.dim(1)])], axis: 1)
     }
     let paddedLen = sig.dim(1)
 
@@ -412,12 +481,8 @@ private func stft(
     let real = matmul(windowed, dftRealT)  // [B, nFrames, nBins]
     let imag = matmul(windowed, dftImagT)  // [B, nFrames, nBins]
 
-    // Magnitude and phase
-    let magnitude = sqrt(real * real + imag * imag + MLXArray(Float(1e-9)))
-    let phase = atan2(imag, real)
-
     // Transpose to NCL format: [B, nBins, nFrames]
-    return (magnitude.transposed(0, 2, 1), phase.transposed(0, 2, 1))
+    return (real.transposed(0, 2, 1), imag.transposed(0, 2, 1))
 }
 
 // MARK: - ISTFT
@@ -576,13 +641,16 @@ public class HiFiGANGenerator: Module {
 
     // Main decoder
     @ModuleInfo var convPre: CausalDilatedConv1d
-    @ModuleInfo var ups: [CausalDilatedConv1d]
-    @ModuleInfo var sourceDowns: [CausalDilatedConv1d]
+    @ModuleInfo var ups: [CausalConv1dUpsample]
+    @ModuleInfo var sourceDowns: [Module]
     @ModuleInfo var sourceResblocks: [ResBlock]
     @ModuleInfo var resblocks: [[ResBlock]]
     @ModuleInfo var convPost: CausalDilatedConv1d
 
-    /// Source downsample kernel sizes (derived from actual weights: [30, 6, 1])
+    /// Source downsample strides: cumulative reverse of upsample_rates
+    /// For [8,5,3]: downsample_rates=[1,3,5], cumprod=[1,3,15], reversed=[15,3,1]
+    static let sourceDownStrides = [15, 3, 1]
+    /// Source downsample kernel sizes: stride*2 (or 1 for stride=1)
     static let sourceDownKernelSizes = [30, 6, 1]
 
     public init(config: CosyVoiceHiFiGANConfig = CosyVoiceHiFiGANConfig()) {
@@ -601,11 +669,12 @@ public class HiFiGANGenerator: Module {
         // F0 predictor
         self._f0Predictor.wrappedValue = F0Predictor(inChannels: config.inChannels)
 
-        // conv_pre: 80 -> 512, kernel=5
+        // conv_pre: 80 -> 512, kernel=5, right-padding (look-ahead)
         self._convPre.wrappedValue = CausalDilatedConv1d(
             inputChannels: config.inChannels,
             outputChannels: config.baseChannels,
-            kernelSize: config.convPreLookRight + 1)  // 4 + 1 = 5
+            kernelSize: config.convPreLookRight + 1,  // 4 + 1 = 5
+            causalType: .right)
 
         // Channel sizes: 512 -> 256 -> 128 -> 64
         var channels = [config.baseChannels]
@@ -613,28 +682,42 @@ public class HiFiGANGenerator: Module {
             channels.append(channels.last! / 2)
         }
 
-        // Channel-reduction layers (Conv1d, NOT ConvTranspose1d)
-        // These halve channels at each stage. In CosyVoice3 HiFTGenerator,
-        // spatial upsampling is handled by ISTFT, not convolutions.
-        var upLayers: [CausalDilatedConv1d] = []
+        // Causal upsample layers: nearest-neighbor upsample + Conv1d
+        // CausalHiFTGenerator uses nn.Upsample(nearest) + Conv1d, not ConvTranspose1d
+        var upLayers: [CausalConv1dUpsample] = []
         for i in 0..<numStages {
-            upLayers.append(CausalDilatedConv1d(
+            upLayers.append(CausalConv1dUpsample(
                 inputChannels: channels[i],
                 outputChannels: channels[i + 1],
-                kernelSize: config.upsampleKernelSizes[i]))
+                kernelSize: config.upsampleKernelSizes[i],
+                stride: config.upsampleRates[i]))
         }
         self._ups = ModuleInfo(wrappedValue: upLayers)
 
         // Source downsampling: each takes STFT source (18 channels) and reduces
-        // to match the decoder channel count at each stage.
+        // to match the decoder channel count and time resolution at each stage.
+        // Strides [15, 3, 1] downsample source from T*120 (STFT of T*480 waveform)
+        // to match decoder resolution: T*8, T*40, T*120 after each ups stage.
         let stftChannels = config.istftNFFT + 2  // 18
-        var srcDowns: [CausalDilatedConv1d] = []
+        var srcDowns: [Module] = []
         var srcResblks: [ResBlock] = []
         for i in 0..<numStages {
-            srcDowns.append(CausalDilatedConv1d(
-                inputChannels: stftChannels,
-                outputChannels: channels[i + 1],
-                kernelSize: Self.sourceDownKernelSizes[i]))
+            let stride = Self.sourceDownStrides[i]
+            let kernelSize = Self.sourceDownKernelSizes[i]
+            if stride > 1 {
+                // CausalConv1dDownSample: strided conv with left-only causal padding
+                srcDowns.append(CausalConv1dDownSample(
+                    inputChannels: stftChannels,
+                    outputChannels: channels[i + 1],
+                    kernelSize: kernelSize,
+                    stride: stride))
+            } else {
+                // CausalConv1d: kernel=1, no padding needed (left-pad, causal)
+                srcDowns.append(CausalDilatedConv1d(
+                    inputChannels: stftChannels,
+                    outputChannels: channels[i + 1],
+                    kernelSize: kernelSize))
+            }
             srcResblks.append(ResBlock(
                 channels: channels[i + 1],
                 kernelSize: config.sourceResblockKernelSizes[i],
@@ -682,6 +765,20 @@ public class HiFiGANGenerator: Module {
         // 1. Predict F0 from mel: [B, 80, T] -> [B, T]
         let f0 = f0Predictor(melNCL)
 
+        eval(f0)
+        let f0Flat = f0.reshaped(-1)
+        let f0Count = f0Flat.dim(0)
+        var f0Sum: Float = 0
+        var f0Max: Float = 0
+        var f0NonZero = 0
+        for i in 0..<f0Count {
+            let v = f0Flat[i].item(Float.self)
+            f0Sum += v
+            if v > f0Max { f0Max = v }
+            if v > 1.0 { f0NonZero += 1 }
+        }
+        print("  [HiFiGAN] F0: mean=\(f0Sum/Float(f0Count)), max=\(f0Max), nonzero(>1Hz)=\(f0NonZero)/\(f0Count)")
+
         // 2. Upsample F0 to waveform sample rate
         //    Total upsample: prod(upsampleRates) * istftHopLen = 120 * 4 = 480
         let totalUpsample = config.totalUpsampleFactor * config.istftHopLen
@@ -691,17 +788,28 @@ public class HiFiGANGenerator: Module {
         let f0UpExpanded = f0Up.expandedDimensions(axis: 2)  // [B, T*480, 1]
         let sourceSignal = source(f0UpExpanded)  // [B, T*480, 1]
 
-        // 4. STFT of source -> magnitude and phase in NCL format
-        let sourceFlat = sourceSignal.squeezed(axis: 2)  // [B, T*480]
-        let (sourceMag, sourcePhase) = stft(
-            signal: sourceFlat, nFFT: config.istftNFFT, hopLen: config.istftHopLen)
-        // sourceMag, sourcePhase: [B, nBins=9, T_stft]
+        eval(sourceSignal)
+        let srcFlat2 = sourceSignal.reshaped(-1)
+        let srcRMS = sqrt((srcFlat2 * srcFlat2).mean()).item(Float.self)
+        print("  [HiFiGAN] Source signal: shape=\(sourceSignal.shape), RMS=\(srcRMS)")
 
-        // Concatenate magnitude and phase as source STFT features: [B, 18, T_stft]
-        let sourceSTFT = concatenated([sourceMag, sourcePhase], axis: 1)
+        // 4. STFT of source -> real and imaginary parts in NCL format
+        let sourceFlat = sourceSignal.squeezed(axis: 2)  // [B, T*480]
+        let (sourceReal, sourceImag) = stft(
+            signal: sourceFlat, nFFT: config.istftNFFT, hopLen: config.istftHopLen)
+        // sourceReal, sourceImag: [B, nBins=9, T_stft]
+
+        eval(sourceReal, sourceImag)
+        print("  [HiFiGAN] Source STFT: real=\(sourceReal.shape), imag=\(sourceImag.shape)")
+
+        // Concatenate real and imaginary as source STFT features: [B, 18, T_stft]
+        let sourceSTFT = concatenated([sourceReal, sourceImag], axis: 1)
 
         // 5. Main decoder: conv_pre
         var x = convPre(melNCL)  // [B, 512, T]
+        eval(x)
+        let convPreRMS = sqrt((x * x).mean()).item(Float.self)
+        print("  [HiFiGAN] After conv_pre: shape=\(x.shape), RMS=\(convPreRMS)")
 
         // 6. Channel-reduction stages with source injection and multi-receptive-field fusion
         let numKernels = Float(config.resblockKernelSizes.count)
@@ -709,22 +817,40 @@ public class HiFiGANGenerator: Module {
         for i in 0..<config.upsampleRates.count {
             // LeakyReLU activation before channel reduction
             x = maximum(x, lreluSlope * x)
-            x = ups[i](x)  // Channel reduction (Conv1d, not upsample)
+            x = ups[i](x)  // Nearest-neighbor upsample + Conv1d channel reduction
+
+            // Reflection pad at last upsample stage: pad 1 sample on the left
+            if i == config.upsampleRates.count - 1 {
+                // nn.ReflectionPad1d((1, 0)): for input [a, b, c, ...], output is [b, a, b, c, ...]
+                // Reflects from position 1 (not copies position 0)
+                let reflected = x[0..., 0..., 1..<2]  // Second time sample [B, C, 1]
+                x = concatenated([reflected, x], axis: 2)
+            }
 
             // Source injection: each sourceDowns independently projects the original
             // 18-channel STFT source to this stage's channel count, then adds via resblock.
-            let sDn = sourceDowns[i](sourceSTFT)
-            let sRes = sourceResblocks[i](sDn)
+            let debugSkipSource = false  // Set to true to debug without source
+            if !debugSkipSource {
+                let sDn: MLXArray
+                if let downSample = sourceDowns[i] as? CausalConv1dDownSample {
+                    sDn = downSample(sourceSTFT)
+                } else if let causalConv = sourceDowns[i] as? CausalDilatedConv1d {
+                    sDn = causalConv(sourceSTFT)
+                } else {
+                    fatalError("Unexpected sourceDowns type")
+                }
+                let sRes = sourceResblocks[i](sDn)
 
-            // Match time dimensions (trim to minimum length)
-            let xLen = x.dim(2)
-            let sLen = sRes.dim(2)
-            let minLen = Swift.min(xLen, sLen)
-            if xLen > minLen {
-                x = x[0..., 0..., 0..<minLen]
+                // Match time dimensions (trim to minimum length)
+                let xLen = x.dim(2)
+                let sLen = sRes.dim(2)
+                let minLen = Swift.min(xLen, sLen)
+                if xLen > minLen {
+                    x = x[0..., 0..., 0..<minLen]
+                }
+                let sResTrimmed = (sLen > minLen) ? sRes[0..., 0..., 0..<minLen] : sRes
+                x = x + sResTrimmed
             }
-            let sResTrimmed = (sLen > minLen) ? sRes[0..., 0..., 0..<minLen] : sRes
-            x = x + sResTrimmed
 
             // Multi-receptive-field fusion: average outputs of resblocks with different kernel sizes
             var fused = resblocks[i][0](x)
@@ -732,11 +858,29 @@ public class HiFiGANGenerator: Module {
                 fused = fused + resblocks[i][j](x)
             }
             x = fused / MLXArray(numKernels)
+
+            eval(x)
+            let stageRMS = sqrt((x * x).mean()).item(Float.self)
+            print("  [HiFiGAN] After stage \(i): shape=\(x.shape), RMS=\(stageRMS)")
         }
 
         // 7. Final layers (LeakyReLU + conv_post)
-        x = maximum(x, lreluSlope * x)
+        // Python uses F.leaky_relu(x) with DEFAULT slope=0.01 (not config lrelu_slope=0.1)
+        x = maximum(x, MLXArray(Float(0.01)) * x)
         x = convPost(x)  // [B, 18, T_final]
+
+        eval(x)
+        let postRMS = sqrt((x * x).mean()).item(Float.self)
+        print("  [HiFiGAN] After conv_post: shape=\(x.shape), RMS=\(postRMS)")
+        // Per-channel stats for magnitude (first 9) and phase (last 9)
+        for ch in 0..<18 {
+            let chData = x[0, ch]
+            let chMean = chData.mean().item(Float.self)
+            let chMin = chData.min().item(Float.self)
+            let chMax = chData.max().item(Float.self)
+            let label = ch < 9 ? "mag" : "phs"
+            print("    ch[\(ch)] \(label): mean=\(chMean), range=[\(chMin), \(chMax)]")
+        }
 
         // 8. Split into magnitude (exp) and phase (sin)
         let nBins = config.istftNFFT / 2 + 1  // 9
@@ -745,6 +889,11 @@ public class HiFiGANGenerator: Module {
 
         let outputMag = exp(magPart)
         let outputPhase = sin(phasePart)
+
+        eval(outputMag, outputPhase)
+        let magMean = outputMag.mean().item(Float.self)
+        let magMax = outputMag.max().item(Float.self)
+        print("  [HiFiGAN] ISTFT mag: mean=\(magMean), max=\(magMax), phase_range=[\(phasePart.min().item(Float.self)), \(phasePart.max().item(Float.self))]")
 
         // 9. ISTFT to reconstruct audio
         let audio = istft(
