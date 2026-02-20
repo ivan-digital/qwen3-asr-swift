@@ -88,27 +88,37 @@ public class ConditionalFlowMatching: Module {
 
         let cfgRate = MLXArray(config.cfgRate).asType(mu.dtype)
 
+        // Pre-build unconditioned inputs (zeros) for CFG — reused across all ODE steps
+        let muZeros = MLXArray.zeros(mu.shape, dtype: mu.dtype)
+        let spksZeros: MLXArray? = spks.map { MLXArray.zeros($0.shape, dtype: $0.dtype) }
+        let condZeros: MLXArray? = cond.map { MLXArray.zeros($0.shape, dtype: $0.dtype) }
+
         for i in 0 ..< nTimesteps {
             let t = tSchedule[i]
             let dt = tSchedule[i + 1] - tSchedule[i]
 
             let dtScalar = MLXArray(dt).asType(mu.dtype)
 
-            // Two separate forward passes for CFG (matching Python reference)
+            // Batch doubling for CFG: run conditioned + unconditioned in one forward pass
             let batchSize = x.dim(0)
-            let tArr = MLXArray([Float](repeating: t, count: batchSize)).asType(mu.dtype)
+            let xIn = concatenated([x, x], axis: 0)                      // [2B, 80, T]
+            let maskIn = concatenated([mask, mask], axis: 0)              // [2B, 1, T]
+            let muIn = concatenated([mu, muZeros], axis: 0)               // [2B, 80, T]
+            let tArr = MLXArray([Float](repeating: t, count: batchSize * 2)).asType(mu.dtype)
 
-            // Conditioned pass
-            let vCond = decoder(x, mask: mask, mu: mu, t: tArr, spks: spks, cond: cond)
+            let spksIn: MLXArray? = spks.flatMap { s in
+                spksZeros.map { z in concatenated([s, z], axis: 0) }
+            }
+            let condIn: MLXArray? = cond.flatMap { c in
+                condZeros.map { z in concatenated([c, z], axis: 0) }
+            }
 
-            // Unconditioned pass
-            let vUncond = decoder(
-                x, mask: mask,
-                mu: MLXArray.zeros(mu.shape, dtype: mu.dtype),
-                t: tArr,
-                spks: spks.map { MLXArray.zeros($0.shape, dtype: $0.dtype) },
-                cond: cond.map { MLXArray.zeros($0.shape, dtype: $0.dtype) }
-            )
+            // Single forward pass through DiT with doubled batch
+            let velocity = decoder(xIn, mask: maskIn, mu: muIn, t: tArr, spks: spksIn, cond: condIn)
+
+            // Split conditioned and unconditioned predictions
+            let vCond = velocity[0 ..< batchSize]
+            let vUncond = velocity[batchSize...]
 
             // Apply classifier-free guidance:
             //   v = (1 + cfg_rate) * v_cond - cfg_rate * v_uncond
