@@ -131,6 +131,33 @@ public struct SpeakerConfig: Sendable {
     }
 }
 
+// MARK: - Streaming Config
+
+/// Configuration for streaming TTS synthesis with chunked audio output.
+public struct StreamingConfig: Sendable {
+    /// Number of codec frames in the first emitted chunk (lower = lower latency).
+    /// At 12.5 Hz, each frame = 80ms audio. Default 3 = 240ms audio.
+    public var firstChunkFrames: Int
+
+    /// Number of codec frames per subsequent chunk. Default 25 = 2s audio.
+    public var chunkFrames: Int
+
+    /// Left context frames for decoder quality (overlapping decode window). Default 10.
+    public var decoderLeftContext: Int
+
+    public init(firstChunkFrames: Int = 3, chunkFrames: Int = 25, decoderLeftContext: Int = 10) {
+        self.firstChunkFrames = firstChunkFrames
+        self.chunkFrames = chunkFrames
+        self.decoderLeftContext = decoderLeftContext
+    }
+
+    /// Balanced defaults: ~225ms first-packet latency, 2s subsequent chunks.
+    public static var `default`: StreamingConfig { .init() }
+
+    /// Low-latency preset: ~120ms first-packet latency, smaller chunks.
+    public static var lowLatency: StreamingConfig { .init(firstChunkFrames: 1, chunkFrames: 15) }
+}
+
 // MARK: - Model Variant
 
 /// Well-known TTS model variants

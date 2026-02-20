@@ -4,6 +4,37 @@ import MLXNN
 import MLXFast
 import Qwen3Common
 
+/// Errors thrown by streaming TTS synthesis.
+public enum TTSError: Error, LocalizedError {
+    case tokenizerNotLoaded
+    case unknownLanguage(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .tokenizerNotLoaded:
+            return "Tokenizer not loaded. Call setTokenizer() first."
+        case .unknownLanguage(let lang):
+            return "Unknown language '\(lang)'"
+        }
+    }
+}
+
+/// A chunk of audio produced during streaming synthesis.
+public struct TTSAudioChunk: Sendable {
+    /// PCM audio samples at 24 kHz, Float32
+    public let samples: [Float]
+    /// Sample rate (always 24000)
+    public let sampleRate: Int
+    /// Index of the first codec frame in this chunk
+    public let frameIndex: Int
+    /// Cumulative number of codec frames decoded so far
+    public let totalFrames: Int
+    /// True if this is the last chunk (EOS or max tokens reached)
+    public let isFinal: Bool
+    /// Wall-clock seconds since synthesis started
+    public let elapsedTime: Double
+}
+
 /// Main Qwen3-TTS model for text-to-speech synthesis
 public class Qwen3TTSModel {
     public let config: Qwen3TTSConfig
@@ -117,6 +148,310 @@ public class Qwen3TTSModel {
               "RTF=\(String(format: "%.2f", (t3-t0)/audioDur))")
 
         return waveform
+    }
+
+    // MARK: - Streaming Synthesis
+
+    /// Synthesize speech as a stream of audio chunks with low first-packet latency.
+    ///
+    /// The architecture is fully causal (Talker, Code Predictor, Mimi decoder all use causal
+    /// attention/convolutions), so streaming produces the same quality as batch synthesis.
+    ///
+    /// - Parameters:
+    ///   - text: Input text to synthesize
+    ///   - language: Language tag (e.g., "english", "chinese")
+    ///   - speaker: Speaker voice name (requires CustomVoice model)
+    ///   - sampling: Sampling configuration
+    ///   - streaming: Streaming configuration (chunk sizes, decoder context)
+    /// - Returns: An async stream of `TTSAudioChunk` values
+    public func synthesizeStream(
+        text: String,
+        language: String = "english",
+        speaker: String? = nil,
+        sampling: SamplingConfig = .default,
+        streaming: StreamingConfig = .default
+    ) -> AsyncThrowingStream<TTSAudioChunk, Error> {
+        AsyncThrowingStream { continuation in
+            Task {
+                do {
+                    try self.runStreamingGeneration(
+                        text: text,
+                        language: language,
+                        speaker: speaker,
+                        sampling: sampling,
+                        streaming: streaming,
+                        continuation: continuation)
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+        }
+    }
+
+    /// Internal streaming generation loop. Same structure as `synthesize()` but emits audio
+    /// chunks via the continuation as soon as enough frames are accumulated.
+    private func runStreamingGeneration(
+        text: String,
+        language: String,
+        speaker: String?,
+        sampling: SamplingConfig,
+        streaming: StreamingConfig,
+        continuation: AsyncThrowingStream<TTSAudioChunk, Error>.Continuation
+    ) throws {
+        guard let tokenizer = tokenizer else {
+            throw TTSError.tokenizerNotLoaded
+        }
+
+        let (speakerTokenId, effectiveLanguage) = resolveSpeaker(speaker, language: language)
+
+        guard let langId = CodecTokens.languageId(for: effectiveLanguage) else {
+            throw TTSError.unknownLanguage(effectiveLanguage)
+        }
+
+        let t0 = CFAbsoluteTimeGetCurrent()
+        let safeMaxTokens = min(sampling.maxTokens, 500)
+        let samplesPerFrame = 1920  // 24000 / 12.5
+
+        // Stage 1: Prepare embeddings (identical to synthesize)
+        let textTokens = prepareTextTokens(text: text, tokenizer: tokenizer)
+        let codecPrefixTokens = buildCodecPrefix(languageId: langId, speakerTokenId: speakerTokenId)
+        let (prefillEmbeds, trailingTextHidden, ttsPadEmbed) = buildPrefillEmbeddings(
+            textTokens: textTokens, codecPrefixTokens: codecPrefixTokens)
+        eval(prefillEmbeds, trailingTextHidden, ttsPadEmbed)
+
+        // Stage 2: Autoregressive generation with chunked decode + emit
+        let cpSamplingConfig = SamplingConfig(temperature: sampling.temperature, topK: sampling.topK)
+        let prefillLen = prefillEmbeds.dim(1)
+
+        // Prefill
+        var (logits, hiddenStates, newCache) = talker(
+            inputsEmbeds: prefillEmbeds,
+            offset: MLXArray(Int32(0)),
+            cache: nil)
+        var talkerCache = newCache
+
+        // Sample first token
+        let lastLogits = logits[0..., (prefillLen - 1)..<prefillLen, 0...]
+        var nextToken = sampleToken(
+            logits: lastLogits,
+            config: sampling,
+            generatedTokens: [],
+            suppressRange: (2048, 3072),
+            eosTokenId: CodecTokens.codecEos)
+
+        if nextToken == Int32(CodecTokens.codecEos) {
+            let chunk = TTSAudioChunk(
+                samples: [], sampleRate: 24000, frameIndex: 0,
+                totalFrames: 0, isFinal: true,
+                elapsedTime: CFAbsoluteTimeGetCurrent() - t0)
+            continuation.yield(chunk)
+            return
+        }
+
+        var generatedFirstCodebook: [Int32] = [nextToken]
+        var generatedAllCodebooks: [[Int32]] = (0..<config.codePredictor.numCodeGroups).map { _ in [] }
+        generatedAllCodebooks[0].append(nextToken)
+
+        // Code predictor for first timestep
+        let lastHidden = hiddenStates[0..., (prefillLen - 1)..<prefillLen, 0...]
+        var codeTokens = predictCodebooksForTimestep(
+            hiddenState: lastHidden,
+            firstCodebookToken: nextToken,
+            cpSamplingConfig: cpSamplingConfig)
+        for (i, token) in codeTokens.enumerated() {
+            generatedAllCodebooks[i + 1].append(token)
+        }
+
+        var trailingIdx = 0
+        var step = prefillLen
+        var emittedFrames = 0
+
+        var nextEmitThreshold = streaming.firstChunkFrames
+
+        // Emit immediately if prefill already produced enough frames (e.g., firstChunkFrames=1)
+        if generatedFirstCodebook.count >= nextEmitThreshold {
+            let chunk = decodeAndEmitChunk(
+                allCodebooks: generatedAllCodebooks,
+                chunkStart: 0,
+                chunkEnd: generatedFirstCodebook.count,
+                decoderLeftContext: streaming.decoderLeftContext,
+                samplesPerFrame: samplesPerFrame)
+            let audioChunk = TTSAudioChunk(
+                samples: chunk,
+                sampleRate: 24000,
+                frameIndex: 0,
+                totalFrames: generatedFirstCodebook.count,
+                isFinal: false,
+                elapsedTime: CFAbsoluteTimeGetCurrent() - t0)
+            continuation.yield(audioChunk)
+            emittedFrames = generatedFirstCodebook.count
+            nextEmitThreshold = emittedFrames + streaming.chunkFrames
+        }
+
+        // Autoregressive generation loop
+        for iterIdx in 1..<safeMaxTokens {
+            // Text side
+            let textEmbed: MLXArray
+            let trailingLen = trailingTextHidden.dim(1)
+            if trailingIdx < trailingLen {
+                textEmbed = trailingTextHidden[0..., trailingIdx..<(trailingIdx + 1), 0...]
+                trailingIdx += 1
+            } else {
+                textEmbed = ttsPadEmbed
+            }
+
+            // Codec side
+            let codecEmbed = talker.embedCodec(
+                MLXArray([nextToken]).expandedDimensions(axis: 0))
+                + codePredictor.batchEmbedAllGroups(codeTokens)
+
+            let stepEmbeds = textEmbed + codecEmbed
+
+            (logits, hiddenStates, newCache) = executeTalkerStep(
+                embeds: stepEmbeds, offset: step, cache: talkerCache)
+            talkerCache = newCache
+
+            nextToken = sampleToken(
+                logits: logits,
+                config: sampling,
+                generatedTokens: generatedFirstCodebook,
+                suppressRange: (2048, 3072),
+                eosTokenId: CodecTokens.codecEos)
+
+            let isEos = nextToken == Int32(CodecTokens.codecEos)
+
+            if !isEos {
+                generatedFirstCodebook.append(nextToken)
+                generatedAllCodebooks[0].append(nextToken)
+
+                let stepHidden = hiddenStates
+                codeTokens = predictCodebooksForTimestep(
+                    hiddenState: stepHidden,
+                    firstCodebookToken: nextToken,
+                    cpSamplingConfig: cpSamplingConfig)
+                for (i, token) in codeTokens.enumerated() {
+                    generatedAllCodebooks[i + 1].append(token)
+                }
+            }
+
+            step += 1
+            let totalFrames = generatedFirstCodebook.count
+
+            // Emit chunk when we have enough frames or on EOS/max
+            let shouldEmit = isEos || totalFrames >= nextEmitThreshold || iterIdx == safeMaxTokens - 1
+            if shouldEmit && totalFrames > emittedFrames {
+                let chunkFrameStart = emittedFrames
+                let chunkFrameEnd = totalFrames
+
+                let chunk = decodeAndEmitChunk(
+                    allCodebooks: generatedAllCodebooks,
+                    chunkStart: chunkFrameStart,
+                    chunkEnd: chunkFrameEnd,
+                    decoderLeftContext: streaming.decoderLeftContext,
+                    samplesPerFrame: samplesPerFrame)
+
+                let audioChunk = TTSAudioChunk(
+                    samples: chunk,
+                    sampleRate: 24000,
+                    frameIndex: chunkFrameStart,
+                    totalFrames: chunkFrameEnd,
+                    isFinal: isEos || iterIdx == safeMaxTokens - 1,
+                    elapsedTime: CFAbsoluteTimeGetCurrent() - t0)
+                continuation.yield(audioChunk)
+
+                emittedFrames = chunkFrameEnd
+                // After first emit, use regular chunk size
+                nextEmitThreshold = emittedFrames + streaming.chunkFrames
+            }
+
+            if isEos { break }
+
+            if iterIdx % 50 == 0 {
+                let estSec = Double(generatedFirstCodebook.count) / 12.5
+                print("  Streaming: \(generatedFirstCodebook.count) tokens (~\(String(format: "%.1f", estSec))s audio)...")
+            }
+        }
+
+        let numFrames = generatedFirstCodebook.count
+        if numFrames >= safeMaxTokens && nextToken != Int32(CodecTokens.codecEos) {
+            let estSec = Double(numFrames) / 12.5
+            print("Warning: Hit safety limit of \(safeMaxTokens) tokens (~\(String(format: "%.1f", estSec))s audio).")
+        }
+
+        // If we never emitted the final chunk (e.g. exactly at threshold), emit now
+        if emittedFrames < numFrames {
+            let chunk = decodeAndEmitChunk(
+                allCodebooks: generatedAllCodebooks,
+                chunkStart: emittedFrames,
+                chunkEnd: numFrames,
+                decoderLeftContext: streaming.decoderLeftContext,
+                samplesPerFrame: samplesPerFrame)
+            let audioChunk = TTSAudioChunk(
+                samples: chunk,
+                sampleRate: 24000,
+                frameIndex: emittedFrames,
+                totalFrames: numFrames,
+                isFinal: true,
+                elapsedTime: CFAbsoluteTimeGetCurrent() - t0)
+            continuation.yield(audioChunk)
+        }
+    }
+
+    /// Decode a chunk of codec frames to audio samples, using left context for decoder quality.
+    ///
+    /// Builds `[1, 16, contextFrames + chunkFrames]` from accumulated codebooks, runs the codec
+    /// decoder, trims left-context and zero-pad samples, and returns Float PCM.
+    ///
+    /// The codec decoder (ConvNeXt kernel=7 after 2x pre-upsample) requires >= 4 input frames.
+    /// When fewer real frames are available (e.g., 1-frame first chunk with no context), zeros
+    /// are prepended as left padding. The decoder is fully causal (left-padded convolutions),
+    /// so zero-padding produces silence that doesn't affect the real frames' output.
+    private func decodeAndEmitChunk(
+        allCodebooks: [[Int32]],
+        chunkStart: Int,
+        chunkEnd: Int,
+        decoderLeftContext: Int,
+        samplesPerFrame: Int
+    ) -> [Float] {
+        let contextStart = max(chunkStart - decoderLeftContext, 0)
+        let actualContext = chunkStart - contextStart
+
+        // Build [1, 16, contextFrames + chunkFrames] from accumulated codebooks
+        let numGroups = allCodebooks.count
+        let frameRange = contextStart..<chunkEnd
+        var codebookArrays: [MLXArray] = []
+        for g in 0..<numGroups {
+            let slice = Array(allCodebooks[g][frameRange])
+            codebookArrays.append(MLXArray(slice).expandedDimensions(axis: 0))  // [1, T]
+        }
+        var codes = stacked(codebookArrays, axis: 1)  // [1, 16, T]
+
+        // Zero-pad if fewer than 4 frames (codec decoder minimum for ConvNeXt kernel=7)
+        let minDecodeFrames = 4
+        let realFrames = codes.dim(2)
+        let zeroPadFrames = max(minDecodeFrames - realFrames, 0)
+        if zeroPadFrames > 0 {
+            let pad = MLXArray.zeros([1, numGroups, zeroPadFrames]).asType(.int32)
+            codes = concatenated([pad, codes], axis: 2)  // prepend zeros on left
+        }
+
+        // Decode through codec
+        let waveform = codecDecoder.callAsFunction(codes)  // [1, T_samples, 1]
+
+        // Keep the last `realChunkFrames * samplesPerFrame` samples from the decoder output.
+        // The decoder has a ~2880-sample startup overhead (causal conv warmup), so trimming
+        // from the left by `(zeroPad + context) * samplesPerFrame` can overshoot. Instead,
+        // compute the desired output size and trim from the right side of the waveform.
+        let realChunkFrames = chunkEnd - chunkStart
+        let expectedKept = realChunkFrames * samplesPerFrame
+        let totalSamples = waveform.dim(1)
+        let trimSamples = max(0, totalSamples - expectedKept)
+        let kept = waveform[0..., trimSamples..<totalSamples, 0...]
+
+        let flat = kept.squeezed()
+        eval(flat)
+        return flat.asArray(Float.self)
     }
 
     // MARK: - Batch Synthesis
@@ -558,6 +893,10 @@ public class Qwen3TTSModel {
             let groupLogits = codePredictor.lmHeads[groupIdx](cpNormed)
             eval(groupLogits)
         }
+
+        // Note: codec decoder warmup is intentionally omitted. The decoder's Conv1d shaders
+        // are simple enough to JIT-compile in <5ms. A dummy forward pass here actually hurts
+        // first-packet latency by ~300ms due to GPU memory allocation/pipeline overhead.
     }
 
     // MARK: - Compiled Generation Steps
@@ -988,13 +1327,15 @@ public class Qwen3TTSModel {
     /// The code predictor runs autoregressively across codebook groups:
     /// - Step 0: prefill [hidden_state, code_0_embed] (length 2)
     /// - Steps 1-14: single embedding of previous code token (length 1), KV cache
+    ///
+    /// Uses lazy evaluation: all 15 groups are chained as a single MLX computation graph
+    /// with zero GPU sync barriers. One `eval()` at the end materializes all tokens.
+    /// This reduces per-step GPU syncs from 15 to 1.
     private func predictCodebooksForTimestep(
         hiddenState: MLXArray,
         firstCodebookToken: Int32,
         cpSamplingConfig: SamplingConfig
     ) -> [Int32] {
-        var codeTokens: [Int32] = []
-        codeTokens.reserveCapacity(config.codePredictor.numCodeGroups - 1)
         var cpCache: [(MLXArray, MLXArray)]? = nil
 
         // First codebook embedding (from talker's codec embedding)
@@ -1009,27 +1350,30 @@ public class Qwen3TTSModel {
             inputsEmbeds: prefillInput, groupIndex: 0, cache: nil)
         cpCache = cpNewCache
 
-        // Sample from last position (prefill length is always 2)
+        // Sample lazily — returns MLXArray scalar, NO .item() sync
         let lastCpLogits = cpLogits[0..., 1..<2, 0...]
-        var prevToken = sampleToken(logits: lastCpLogits, config: cpSamplingConfig)
-        codeTokens.append(prevToken)
+        var prevTokenArray = sampleTokenLazy(logits: lastCpLogits, config: cpSamplingConfig)
+        var lazyTokens: [MLXArray] = [prevTokenArray]
 
-        // Remaining 14 codebook groups (compiled transformer + separate lm_head)
+        // Remaining 14 codebook groups — fully lazy chain, no GPU syncs
         for groupIdx in 1..<(config.codePredictor.numCodeGroups - 1) {
-            // Embed previous group's token
+            // Embed previous group's token (lazy MLXArray → embedding, no sync needed)
             let prevEmbed = codePredictor.embedCodecGroup(
-                MLXArray([prevToken]).expandedDimensions(axis: 0),
+                prevTokenArray.reshaped(1, 1),
                 groupIndex: groupIdx - 1)  // [1, 1, D]
 
             let cpResult = executeCPTransformerStep(hidden: prevEmbed, cache: cpCache!)
             cpCache = cpResult.newCache
             let groupLogits = codePredictor.lmHeads[groupIdx](cpResult.normed)
 
-            prevToken = sampleToken(logits: groupLogits, config: cpSamplingConfig)
-            codeTokens.append(prevToken)
+            prevTokenArray = sampleTokenLazy(logits: groupLogits, config: cpSamplingConfig)
+            lazyTokens.append(prevTokenArray)
         }
 
-        return codeTokens  // 15 tokens
+        // ONE eval to materialize the entire 15-group computation graph
+        let tokenStack = stacked(lazyTokens)  // [15]
+        eval(tokenStack)
+        return tokenStack.asArray(Int32.self)  // bulk extraction, no per-token sync
     }
 }
 

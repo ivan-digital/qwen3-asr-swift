@@ -14,14 +14,14 @@ Papers: [Qwen3-ASR](https://arxiv.org/abs/2601.21337), [Qwen3-TTS](https://arxiv
 |-------|------|-----------|-----------|--------------|
 | Qwen3-ASR-0.6B (4-bit) | Speech → Text | No | 52 languages | ~400 MB |
 | Qwen3-ASR-1.7B (8-bit) | Speech → Text | No | 52 languages | ~2.5 GB |
-| Qwen3-TTS-0.6B Base (4-bit) | Text → Speech | No | 10 languages | ~1.7 GB |
-| Qwen3-TTS-0.6B CustomVoice (4-bit) | Text → Speech | No | 10 languages | ~1.7 GB |
+| Qwen3-TTS-0.6B Base (4-bit) | Text → Speech | Yes (~120ms) | 10 languages | ~1.7 GB |
+| Qwen3-TTS-0.6B CustomVoice (4-bit) | Text → Speech | Yes (~120ms) | 10 languages | ~1.7 GB |
 | CosyVoice3-0.5B (4-bit) | Text → Speech | Yes (~150ms) | 9 languages | ~1.9 GB |
 
 ### When to Use Which TTS
 
-- **Qwen3-TTS**: Best quality, 9 built-in speakers, 10 languages, batch synthesis
-- **CosyVoice TTS**: Low-latency streaming (~150ms), 9 languages, DiT flow matching + HiFi-GAN vocoder
+- **Qwen3-TTS**: Best quality, streaming (~120ms), 9 built-in speakers, 10 languages, batch synthesis
+- **CosyVoice TTS**: Streaming (~150ms), 9 languages, DiT flow matching + HiFi-GAN vocoder
 
 ## Installation
 
@@ -166,6 +166,34 @@ let config = SamplingConfig(temperature: 0.9, topK: 50, repetitionPenalty: 1.05)
 let audio = model.synthesize(text: "Hello", language: "english", sampling: config)
 ```
 
+### Streaming Synthesis
+
+Emit audio chunks incrementally for low first-packet latency:
+
+```swift
+let stream = model.synthesizeStream(
+    text: "Hello, this is streaming synthesis.",
+    language: "english",
+    streaming: .lowLatency  // ~120ms to first audio chunk
+)
+
+for try await chunk in stream {
+    // chunk.samples: [Float] PCM @ 24kHz
+    // chunk.isFinal: true on last chunk
+    playAudio(chunk.samples)
+}
+```
+
+CLI:
+
+```bash
+# Default streaming (3-frame first chunk, ~225ms latency)
+.build/release/qwen3-tts-cli "Hello world" --stream
+
+# Low-latency (1-frame first chunk, ~120ms latency)
+.build/release/qwen3-tts-cli "Hello world" --stream --first-chunk-frames 1
+```
+
 ## CosyVoice TTS Usage
 
 ### Basic Synthesis
@@ -217,12 +245,12 @@ swift build -c release
 
 ### TTS
 
-| Model | Framework | Short (1s) | Medium (3s) | Long (6s) |
-|-------|-----------|-----------|-------------|------------|
-| Qwen3-TTS-0.6B (4-bit) | MLX Swift (release) | 1.6s (RTF 1.2) | 2.3s (RTF 0.7) | 3.9s (RTF 0.7) |
-| Apple `AVSpeechSynthesizer` | AVFoundation | 0.08s | 0.08s | 0.17s (RTF 0.02) |
+| Model | Framework | Short (1s) | Medium (3s) | Long (6s) | Streaming First-Packet |
+|-------|-----------|-----------|-------------|------------|----------------------|
+| Qwen3-TTS-0.6B (4-bit) | MLX Swift (release) | 1.6s (RTF 1.2) | 2.3s (RTF 0.7) | 3.9s (RTF 0.7) | ~120ms (1-frame) |
+| Apple `AVSpeechSynthesizer` | AVFoundation | 0.08s | 0.08s | 0.17s (RTF 0.02) | N/A |
 
-> Qwen3-TTS generates natural, expressive speech with prosody and emotion, running **faster than real-time** (RTF < 1.0). Apple's built-in TTS is ~35x faster but produces robotic, monotone speech.
+> Qwen3-TTS generates natural, expressive speech with prosody and emotion, running **faster than real-time** (RTF < 1.0). Streaming synthesis delivers the first audio chunk in ~120ms. Apple's built-in TTS is ~35x faster but produces robotic, monotone speech.
 
 RTF = Real-Time Factor (lower is better, < 1.0 = faster than real-time).
 

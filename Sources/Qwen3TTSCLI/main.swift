@@ -42,6 +42,15 @@ struct Qwen3TTSCLI: ParsableCommand {
     @Option(name: .long, help: "Maximum batch size for parallel generation")
     var batchSize: Int = 4
 
+    @Flag(name: .long, help: "Enable streaming synthesis (emit audio chunks incrementally)")
+    var stream: Bool = false
+
+    @Option(name: .long, help: "Codec frames in first streamed chunk (default 3 = 240ms, use 1 for ~70ms latency)")
+    var firstChunkFrames: Int = 3
+
+    @Option(name: .long, help: "Codec frames per subsequent streamed chunk (default 25 = 2s)")
+    var chunkFrames: Int = 25
+
     func validate() throws {
         if text == nil && batchFile == nil && !listSpeakers {
             throw ValidationError("Either a text argument, --batch-file, or --list-speakers must be provided")
@@ -95,7 +104,9 @@ struct Qwen3TTSCLI: ParsableCommand {
                     topK: topK,
                     maxTokens: maxTokens)
 
-                if let batchFile = batchFile {
+                if stream, let inputText = text {
+                    try await runStreaming(model: ttsModel, text: inputText, config: config)
+                } else if let batchFile = batchFile {
                     // Batch mode: read texts from file
                     let content = try String(contentsOfFile: batchFile, encoding: .utf8)
                     let texts = content.components(separatedBy: .newlines)
@@ -146,6 +157,59 @@ struct Qwen3TTSCLI: ParsableCommand {
         if exitCode != 0 {
             throw ExitCode(exitCode)
         }
+    }
+
+    private func runStreaming(model: Qwen3TTSModel, text: String, config: SamplingConfig) async throws {
+        let streamingConfig = StreamingConfig(
+            firstChunkFrames: firstChunkFrames,
+            chunkFrames: chunkFrames)
+
+        if let spk = speaker {
+            print("Streaming synthesis: \"\(text)\" [speaker: \(spk)]")
+        } else {
+            print("Streaming synthesis: \"\(text)\"")
+        }
+        print("  First chunk: \(firstChunkFrames) frames, subsequent: \(chunkFrames) frames")
+
+        var allSamples: [Float] = []
+        var chunkCount = 0
+        var firstPacketLatency: Double?
+
+        let stream = model.synthesizeStream(
+            text: text,
+            language: language,
+            speaker: speaker,
+            sampling: config,
+            streaming: streamingConfig)
+
+        for try await chunk in stream {
+            chunkCount += 1
+            allSamples.append(contentsOf: chunk.samples)
+
+            if firstPacketLatency == nil {
+                firstPacketLatency = chunk.elapsedTime
+            }
+
+            let chunkDuration = Double(chunk.samples.count) / 24000.0
+            let marker = chunk.isFinal ? " [FINAL]" : ""
+            print("  Chunk \(chunkCount): \(chunk.samples.count) samples " +
+                  "(\(String(format: "%.3f", chunkDuration))s) | " +
+                  "frames \(chunk.frameIndex)..<\(chunk.totalFrames) | " +
+                  "elapsed \(String(format: "%.3f", chunk.elapsedTime))s\(marker)")
+        }
+
+        guard !allSamples.isEmpty else {
+            print("Error: No audio generated")
+            throw ExitCode(1)
+        }
+
+        let totalDuration = Double(allSamples.count) / 24000.0
+        print("  First-packet latency: \(String(format: "%.0f", (firstPacketLatency ?? 0) * 1000))ms")
+        print("  Total: \(chunkCount) chunks, \(allSamples.count) samples (\(String(format: "%.2f", totalDuration))s)")
+
+        let outputURL = URL(fileURLWithPath: output)
+        try WAVWriter.write(samples: allSamples, sampleRate: 24000, to: outputURL)
+        print("Saved to \(output)")
     }
 
     private func runStandard(model: Qwen3TTSModel, text: String, config: SamplingConfig) throws {

@@ -120,6 +120,37 @@ public func sampleToken(
     return argMax(perturbedLogits).item(Int32.self)
 }
 
+/// Lazy version of sampleToken for code predictor: returns MLXArray (no GPU sync).
+///
+/// Identical sampling logic (temperature, top-k, Gumbel-max) but returns the argmax result
+/// as a lazy MLXArray scalar instead of calling `.item()`. This allows chaining 15 CP group
+/// predictions into one lazy computation graph, evaluated with a single `eval()` at the end.
+///
+/// Omits repetition penalty, token suppression, and EOS protection (not needed for CP).
+public func sampleTokenLazy(
+    logits: MLXArray,
+    config: SamplingConfig
+) -> MLXArray {
+    var logits = logits.squeezed().asType(.float32)  // [vocab]
+
+    if config.temperature <= 0 {
+        return argMax(logits).asType(.int32)
+    }
+
+    logits = logits / MLXArray(config.temperature)
+
+    let vocabSize = logits.dim(0)
+    if config.topK > 0 && config.topK < vocabSize {
+        let sorted = MLX.sorted(logits)
+        let threshold = sorted[vocabSize - config.topK]
+        logits = MLX.where(logits .< threshold, MLXArray(Float(-1e9)), logits)
+    }
+
+    let gumbel = MLXRandom.gumbel(logits.shape)
+    let perturbedLogits = logits + gumbel
+    return argMax(perturbedLogits).asType(.int32)  // scalar MLXArray — NO .item()!
+}
+
 /// Batch-sample tokens from logits for B items simultaneously.
 /// Supports temperature, top-k, top-p, token suppression, and EOS protection.
 /// Finished items receive `padToken` instead of a sampled token.

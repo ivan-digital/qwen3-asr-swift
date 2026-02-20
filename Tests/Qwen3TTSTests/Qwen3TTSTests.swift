@@ -648,6 +648,238 @@ final class TTSBatchTests: XCTestCase {
     }
 }
 
+// MARK: - Streaming TTS Tests
+
+/// End-to-end tests for streaming TTS synthesis.
+/// Requires TTS model weights (~1.7 GB).
+final class TTSStreamingTests: XCTestCase {
+
+    static let ttsModelId = "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit"
+    static let ttsTokenizerModelId = "Qwen/Qwen3-TTS-Tokenizer-12Hz"
+    static let asrModelId = "mlx-community/Qwen3-ASR-0.6B-4bit"
+
+    // MARK: - Test 1: Streaming produces valid audio
+
+    /// Streaming synthesis should produce non-empty chunks that concatenate to valid audio.
+    func testStreamingProducesAudio() async throws {
+        let model = try await loadTTSModel()
+
+        var chunks: [TTSAudioChunk] = []
+        let stream = model.synthesizeStream(
+            text: "Hello world, this is a streaming test.",
+            language: "english")
+
+        for try await chunk in stream {
+            chunks.append(chunk)
+        }
+
+        XCTAssertGreaterThan(chunks.count, 0, "Should produce at least 1 chunk")
+        XCTAssertTrue(chunks.last!.isFinal, "Last chunk should be marked final")
+
+        let allSamples = chunks.flatMap { $0.samples }
+        XCTAssertGreaterThan(allSamples.count, 0, "Should produce audio samples")
+
+        let duration = Double(allSamples.count) / 24000.0
+        print("Streaming: \(chunks.count) chunks, \(allSamples.count) samples (\(fmt(duration))s)")
+
+        XCTAssertGreaterThan(duration, 0.5, "Should produce at least 0.5s of audio")
+        XCTAssertLessThan(duration, 30.0, "Should not exceed 30s")
+
+        let maxAmp = allSamples.map { abs($0) }.max() ?? 0
+        XCTAssertGreaterThan(maxAmp, 0.001, "Audio should not be silent")
+        XCTAssertLessThanOrEqual(maxAmp, 1.0, "Samples should be in [-1, 1]")
+
+        // All chunks should have correct sample rate
+        for chunk in chunks {
+            XCTAssertEqual(chunk.sampleRate, 24000)
+        }
+    }
+
+    // MARK: - Test 2: Chunk ordering and frame indices
+
+    /// Chunks should have monotonically increasing frame indices with no gaps.
+    func testChunkOrdering() async throws {
+        let model = try await loadTTSModel()
+
+        var chunks: [TTSAudioChunk] = []
+        let stream = model.synthesizeStream(
+            text: "The quick brown fox jumps over the lazy dog.",
+            language: "english")
+
+        for try await chunk in stream {
+            chunks.append(chunk)
+        }
+
+        XCTAssertGreaterThan(chunks.count, 1, "Longer text should produce multiple chunks")
+
+        // Verify frame continuity: each chunk starts where the previous ended
+        for i in 1..<chunks.count {
+            XCTAssertEqual(chunks[i].frameIndex, chunks[i - 1].totalFrames,
+                "Chunk \(i) frameIndex should equal previous chunk's totalFrames")
+        }
+
+        // First chunk starts at 0
+        XCTAssertEqual(chunks[0].frameIndex, 0)
+
+        // Elapsed time should be monotonically increasing
+        for i in 1..<chunks.count {
+            XCTAssertGreaterThan(chunks[i].elapsedTime, chunks[i - 1].elapsedTime,
+                "Elapsed time should increase monotonically")
+        }
+
+        // Only the last chunk should be final
+        for i in 0..<(chunks.count - 1) {
+            XCTAssertFalse(chunks[i].isFinal, "Non-last chunk \(i) should not be final")
+        }
+        XCTAssertTrue(chunks.last!.isFinal)
+
+        print("Chunks: \(chunks.map { "[\($0.frameIndex)..<\($0.totalFrames)]" }.joined(separator: " "))")
+    }
+
+    // MARK: - Test 3: First-packet latency
+
+    /// First chunk should arrive within a reasonable time window.
+    func testFirstPacketLatency() async throws {
+        let model = try await loadTTSModel()
+
+        let stream = model.synthesizeStream(
+            text: "Hello.",
+            language: "english")
+
+        var firstChunkTime: Double?
+        for try await chunk in stream {
+            if firstChunkTime == nil {
+                firstChunkTime = chunk.elapsedTime
+            }
+        }
+
+        guard let latency = firstChunkTime else {
+            XCTFail("No chunks produced")
+            return
+        }
+
+        print("First-packet latency: \(String(format: "%.0f", latency * 1000))ms")
+
+        // First chunk should arrive within 2s (generous bound for debug builds)
+        XCTAssertLessThan(latency, 2.0,
+            "First chunk should arrive within 2s (got \(String(format: "%.0f", latency * 1000))ms)")
+    }
+
+    // MARK: - Test 4: Streaming vs batch quality (ASR round-trip)
+
+    /// Streaming and batch synthesis of the same text should both produce intelligible audio.
+    func testStreamingVsBatchQuality() async throws {
+        let ttsModel = try await loadTTSModel()
+        let asrModel = try await loadASRModel()
+
+        let text = "Good morning, how are you today?"
+
+        // Streaming
+        var streamSamples: [Float] = []
+        let stream = ttsModel.synthesizeStream(text: text, language: "english")
+        for try await chunk in stream {
+            streamSamples.append(contentsOf: chunk.samples)
+        }
+
+        // Batch
+        let batchSamples = ttsModel.synthesize(text: text, language: "english")
+
+        XCTAssertGreaterThan(streamSamples.count, 0, "Streaming should produce audio")
+        XCTAssertGreaterThan(batchSamples.count, 0, "Batch should produce audio")
+
+        // ASR round-trip for both
+        let streamTranscription = asrModel.transcribe(audio: streamSamples, sampleRate: 24000)
+        let batchTranscription = asrModel.transcribe(audio: batchSamples, sampleRate: 24000)
+
+        print("Input:     \"\(text)\"")
+        print("Streaming: \"\(streamTranscription)\"")
+        print("Batch:     \"\(batchTranscription)\"")
+
+        let expectedWords = ["morning", "how", "today"]
+
+        let streamMatched = expectedWords.filter { streamTranscription.lowercased().contains($0) }
+        let batchMatched = expectedWords.filter { batchTranscription.lowercased().contains($0) }
+
+        print("Stream matched \(streamMatched.count)/\(expectedWords.count): \(streamMatched)")
+        print("Batch matched \(batchMatched.count)/\(expectedWords.count): \(batchMatched)")
+
+        // Both should produce intelligible speech (at least 1 word recognized)
+        XCTAssertGreaterThanOrEqual(streamMatched.count, 1,
+            "Streaming ASR should recognize at least 1 word from: \(expectedWords)")
+        XCTAssertGreaterThanOrEqual(batchMatched.count, 1,
+            "Batch ASR should recognize at least 1 word from: \(expectedWords)")
+    }
+
+    // MARK: - Test 5: StreamingConfig presets
+
+    func testStreamingConfigDefaults() {
+        let config = StreamingConfig.default
+        XCTAssertEqual(config.firstChunkFrames, 3)
+        XCTAssertEqual(config.chunkFrames, 25)
+        XCTAssertEqual(config.decoderLeftContext, 10)
+    }
+
+    func testStreamingConfigLowLatency() {
+        let config = StreamingConfig.lowLatency
+        XCTAssertEqual(config.firstChunkFrames, 1)
+        XCTAssertEqual(config.chunkFrames, 15)
+        XCTAssertEqual(config.decoderLeftContext, 10)
+    }
+
+    // MARK: - Test 6: Custom streaming config
+
+    /// Low-latency config should produce smaller first chunk.
+    func testLowLatencyConfig() async throws {
+        let model = try await loadTTSModel()
+
+        let stream = model.synthesizeStream(
+            text: "Testing low latency streaming mode.",
+            language: "english",
+            streaming: .lowLatency)
+
+        var chunks: [TTSAudioChunk] = []
+        for try await chunk in stream {
+            chunks.append(chunk)
+        }
+
+        XCTAssertGreaterThan(chunks.count, 0)
+
+        // First chunk should be exactly 1 frame (low-latency config uses firstChunkFrames=1)
+        let firstChunkFrames = chunks[0].totalFrames - chunks[0].frameIndex
+        XCTAssertEqual(firstChunkFrames, 1,
+            "Low-latency first chunk should be 1 frame (got \(firstChunkFrames))")
+
+        let allSamples = chunks.flatMap { $0.samples }
+        XCTAssertGreaterThan(allSamples.count, 0)
+        print("Low-latency: \(chunks.count) chunks, first chunk \(firstChunkFrames) frames")
+    }
+
+    // MARK: - Helpers
+
+    private func loadTTSModel() async throws -> Qwen3TTSModel {
+        print("Loading TTS model...")
+        return try await Qwen3TTSModel.fromPretrained(
+            modelId: Self.ttsModelId,
+            tokenizerModelId: Self.ttsTokenizerModelId
+        ) { progress, status in
+            print("[TTS \(Int(progress * 100))%] \(status)")
+        }
+    }
+
+    private func loadASRModel() async throws -> Qwen3ASRModel {
+        print("Loading ASR model...")
+        return try await Qwen3ASRModel.fromPretrained(
+            modelId: Self.asrModelId
+        ) { progress, status in
+            print("[ASR \(Int(progress * 100))%] \(status)")
+        }
+    }
+
+    private func fmt(_ value: Double) -> String {
+        String(format: "%.2f", value)
+    }
+}
+
 // MARK: - TextChunker Tests
 
 final class TextChunkerTests: XCTestCase {

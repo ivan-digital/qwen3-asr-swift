@@ -137,6 +137,34 @@ Audio waveform [1, T*1920, 1] at 24kHz
 - **Batch embedding lookups** — All 15 codebook group embeddings summed in one call per step
 - **Bulk float extraction** — Waveform extracted via single `.asArray(Float.self)` call
 - **Causal mask in decoder transformer** — Additive causal mask for pre-transformer attention (required for chunked decoding correctness)
+- **Lazy code predictor chain** — 15 sequential codebook predictions use lazy MLXArray (Gumbel-max trick) with a single `eval()` at the end, reducing 15 GPU sync barriers to 1 per timestep
+- **Compiled talker + code predictor** — `compile(shapeless: true)` for the 28-layer talker (growing KV cache); `compile(shapeless: false)` for the 5-layer code predictor (14 fixed cache sizes)
+
+## Streaming Synthesis
+
+The Talker, Code Predictor, and Mimi decoder are all fully causal, enabling chunk-by-chunk audio emission during generation.
+
+```
+[Prefill] → emit first chunk → [Generate + emit subsequent chunks] → final chunk
+    ~25ms        ~120ms                53ms/step
+```
+
+**`synthesizeStream()`** returns `AsyncThrowingStream<TTSAudioChunk>`:
+
+1. **First chunk** — emitted after `firstChunkFrames` tokens (default 3, or 1 for low-latency)
+2. **Subsequent chunks** — emitted every `chunkFrames` tokens (default 25 = 2s audio)
+3. **Codec decode** — each chunk runs the Mimi decoder with left-context overlap for quality
+
+### Zero-Pad Decode
+
+When `firstChunkFrames < 4` (the codec's minimum input size due to ConvNeXt kernel=7 after 2x pre-upsample), the decoder input is zero-padded on the left. The decoder is fully causal, so zero frames produce silence. Output is trimmed from the right to keep exactly `realChunkFrames × 1920` samples.
+
+### First-Packet Latency (M2 Max, release)
+
+| Config | First Chunk | Latency |
+|--------|-------------|---------|
+| Default (3 frames) | 240ms audio | ~225ms |
+| Low-latency (1 frame) | 80ms audio | ~120ms |
 
 ## Voice Cloning (Not Yet Implemented)
 
