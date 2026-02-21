@@ -42,6 +42,8 @@ public struct CosyVoiceDiTConfig: Codable, Sendable {
     public var spkDim: Int = 80
     public var staticChunkSize: Int = 50
     public var freqEmbedDim: Int = 256
+    public var groupSize: Int = 64
+    public var bits: Int = 4
 
     /// Feedforward network dimension: dim * ffMult
     public var ffDim: Int { dim * ffMult }

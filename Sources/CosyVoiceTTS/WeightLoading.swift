@@ -122,13 +122,13 @@ public enum CosyVoiceWeightLoader {
         // SinusoidalPositionEmbedding has no learnable parameters.
         // TimestepEmbedding: sin_embed (no params) -> linear1 -> SiLU -> linear2
         // Python keys: time_embed.time_mlp.0 (linear1), time_embed.time_mlp.2 (linear2)
-        CommonWeightLoader.applyLinearWeights(
+        CommonWeightLoader.applyQuantizedLinearWeights(
             to: dit.timeEmbed.linear1, prefix: "\(prefix).time_embed.time_mlp.0", from: weights)
-        CommonWeightLoader.applyLinearWeights(
+        CommonWeightLoader.applyQuantizedLinearWeights(
             to: dit.timeEmbed.linear2, prefix: "\(prefix).time_embed.time_mlp.2", from: weights)
 
         // Input embedding: projection + causal conv position embedding
-        CommonWeightLoader.applyLinearWeights(
+        CommonWeightLoader.applyQuantizedLinearWeights(
             to: dit.inputEmbed.proj, prefix: "\(prefix).input_embed.proj", from: weights)
 
         // Conv position embedding: two grouped Conv1d layers
@@ -147,33 +147,33 @@ public enum CosyVoiceWeightLoader {
             let blockPrefix = "\(prefix).transformer_blocks.\(i)"
 
             // AdaLN attention norm: projects timestep embedding to 6 modulation params
-            CommonWeightLoader.applyLinearWeights(
+            CommonWeightLoader.applyQuantizedLinearWeights(
                 to: block.attnNorm.linear, prefix: "\(blockPrefix).attn_norm.linear", from: weights)
 
             // Self-attention (full attention, not GQA)
             // Python keys use to_q, to_k, to_v, to_out.0
-            CommonWeightLoader.applyLinearWeights(
+            CommonWeightLoader.applyQuantizedLinearWeights(
                 to: block.attn.toQ, prefix: "\(blockPrefix).attn.to_q", from: weights)
-            CommonWeightLoader.applyLinearWeights(
+            CommonWeightLoader.applyQuantizedLinearWeights(
                 to: block.attn.toK, prefix: "\(blockPrefix).attn.to_k", from: weights)
-            CommonWeightLoader.applyLinearWeights(
+            CommonWeightLoader.applyQuantizedLinearWeights(
                 to: block.attn.toV, prefix: "\(blockPrefix).attn.to_v", from: weights)
-            CommonWeightLoader.applyLinearWeights(
+            CommonWeightLoader.applyQuantizedLinearWeights(
                 to: block.attn.toOut, prefix: "\(blockPrefix).attn.to_out.0", from: weights)
 
             // Feedforward: GELU(tanh) MLP
             // Python keys: ff.ff.0.0 (linear1 after GELU wrapper), ff.ff.2 (linear2)
-            CommonWeightLoader.applyLinearWeights(
+            CommonWeightLoader.applyQuantizedLinearWeights(
                 to: block.ff.linear1, prefix: "\(blockPrefix).ff.ff.0.0", from: weights)
-            CommonWeightLoader.applyLinearWeights(
+            CommonWeightLoader.applyQuantizedLinearWeights(
                 to: block.ff.linear2, prefix: "\(blockPrefix).ff.ff.2", from: weights)
         }
 
         // Final adaptive norm: projects to 2 modulation params (scale + shift)
-        CommonWeightLoader.applyLinearWeights(
+        CommonWeightLoader.applyQuantizedLinearWeights(
             to: dit.normOut.linear, prefix: "\(prefix).norm_out.linear", from: weights)
 
-        // Output projection: model dim -> mel dim
+        // Output projection: model dim -> mel dim (NOT quantized: 80 % 64 != 0)
         CommonWeightLoader.applyLinearWeights(
             to: dit.projOut, prefix: "\(prefix).proj_out", from: weights)
     }
