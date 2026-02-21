@@ -514,6 +514,10 @@ public class SpeechTokenizerDecoder: Module {
     @ModuleInfo var finalSnake: SnakeBeta
     @ModuleInfo var finalConv: CausalConv1d
 
+    /// Compiled decoder forward pass for kernel fusion. Uses shapeless=false since
+    /// most chunks have a fixed size [1, 16, 35]. Different sizes retrace automatically.
+    private var compiledDecoder: (([MLXArray]) -> [MLXArray])?
+
     public init(config: SpeechTokenizerDecoderConfig) {
         self.config = config
 
@@ -565,6 +569,42 @@ public class SpeechTokenizerDecoder: Module {
         super.init()
     }
 
+    /// Set up compiled decoder forward pass for Metal kernel fusion.
+    ///
+    /// With shapeless=false, the compiled graph is traced once per input shape
+    /// and cached. Most decode chunks share the shape [1, 16, 35], so the graph
+    /// is reused across chunks. Different sizes (e.g., last chunk) retrace once.
+    public func setupCompilation() {
+        let selfRef = self
+
+        compiledDecoder = compile(
+            inputs: [selfRef], outputs: [selfRef], shapeless: false
+        ) { inputs in
+            let codes = inputs[0]
+            let waveform = selfRef.callAsFunction(codes)
+            return [waveform]
+        }
+    }
+
+    /// Execute decoder (compiled when available, falls back to uncompiled).
+    public func executeDecoder(_ codes: MLXArray) -> MLXArray {
+        if let compiled = compiledDecoder {
+            return compiled([codes])[0]
+        }
+        return callAsFunction(codes)
+    }
+
+    /// Warm up the compiled decoder with a dummy forward pass.
+    /// Pre-traces the graph for the common chunk shape [1, 16, 35] and
+    /// compiles Metal shaders so subsequent decodes pay zero compilation cost.
+    public func warmUp() {
+        guard compiledDecoder != nil else { return }
+
+        let dummyCodes = MLXArray.zeros([1, 16, 35]).asType(.int32)
+        let result = executeDecoder(dummyCodes)
+        eval(result)
+    }
+
     /// Decode codebook indices to audio waveform
     public func callAsFunction(_ codes: MLXArray) -> MLXArray {
         // RVQ decode: [B, 16, T] -> [B, T, 512]
@@ -610,7 +650,7 @@ public class SpeechTokenizerDecoder: Module {
 
         if numFrames <= chunkSize + leftContext {
             // Short enough to decode in one pass
-            return callAsFunction(codes)
+            return executeDecoder(codes)
         }
 
         var audioChunks: [MLXArray] = []
@@ -622,7 +662,7 @@ public class SpeechTokenizerDecoder: Module {
             let actualContext = offset - contextStart
 
             let chunkCodes = codes[0..., 0..., contextStart..<chunkEnd]  // [B, 16, contextFrames + chunkFrames]
-            let chunkWaveform = callAsFunction(chunkCodes)  // [B, T_samples, 1]
+            let chunkWaveform = executeDecoder(chunkCodes)  // [B, T_samples, 1]
 
             // Trim left context samples
             let trimSamples = actualContext * samplesPerFrame

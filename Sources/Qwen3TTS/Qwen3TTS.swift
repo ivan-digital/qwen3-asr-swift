@@ -436,8 +436,8 @@ public class Qwen3TTSModel {
             codes = concatenated([pad, codes], axis: 2)  // prepend zeros on left
         }
 
-        // Decode through codec
-        let waveform = codecDecoder.callAsFunction(codes)  // [1, T_samples, 1]
+        // Decode through codec (uses compiled path when available)
+        let waveform = codecDecoder.executeDecoder(codes)  // [1, T_samples, 1]
 
         // Keep the last `realChunkFrames * samplesPerFrame` samples from the decoder output.
         // The decoder has a ~2880-sample startup overhead (causal conv warmup), so trimming
@@ -894,9 +894,11 @@ public class Qwen3TTSModel {
             eval(groupLogits)
         }
 
-        // Note: codec decoder warmup is intentionally omitted. The decoder's Conv1d shaders
-        // are simple enough to JIT-compile in <5ms. A dummy forward pass here actually hurts
-        // first-packet latency by ~300ms due to GPU memory allocation/pipeline overhead.
+        // Compile codec decoder for kernel fusion (different from shader JIT compilation).
+        // compile() fuses multiple kernel dispatches into fewer optimized kernels per chunk.
+        // Warmup adds ~300ms to load time but saves on every generation.
+        codecDecoder.setupCompilation()
+        codecDecoder.warmUp()
     }
 
     // MARK: - Compiled Generation Steps

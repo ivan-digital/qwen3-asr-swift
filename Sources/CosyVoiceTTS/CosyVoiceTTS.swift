@@ -113,7 +113,8 @@ public final class CosyVoiceTTSModel {
     /// Run minimal forward passes to compile Metal shaders and set up compiled generation.
     ///
     /// This eliminates first-inference latency from shader compilation (~200ms) and enables
-    /// Metal kernel fusion for the LLM generation loop (~360 kernel dispatches fused).
+    /// Metal kernel fusion for the LLM generation loop (~360 kernel dispatches fused)
+    /// and DiT flow matching (~330 kernel dispatches × 10 ODE steps fused).
     public func warmUp() {
         // Set up compiled LLM generation step (shapeless=true, traced on first call)
         llm.setupCompilation()
@@ -131,6 +132,10 @@ public final class CosyVoiceTTSModel {
         let (warmupLogits, _) = llm.executeStep(
             embeds: warmupEmbed, offset: prefixEmbeds.dim(1), cache: warmupCache)
         eval(warmupLogits)
+
+        // Set up compiled DiT forward pass (shapeless=false, ~330 kernel dispatches fused)
+        flow.decoder.setupCompilation()
+        flow.decoder.warmUp()
     }
 
     /// Synthesize speech from text (non-streaming).

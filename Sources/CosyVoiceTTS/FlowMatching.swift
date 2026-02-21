@@ -43,10 +43,65 @@ public class ConditionalFlowMatching: Module {
 
     @ModuleInfo var decoder: DiT
 
+    /// Compiled DiT forward pass for kernel fusion. Uses shapeless=false since
+    /// all shapes are constant across the 10 ODE steps within a generation.
+    /// Hardcodes nil spks/cond path (the common case for CosyVoice3 0.5B).
+    private var compiledDiTForward: (([MLXArray]) -> [MLXArray])?
+
     public init(config: CosyVoiceFlowConfig) {
         self.config = config
         self._decoder.wrappedValue = DiT(config: config.dit)
         super.init()
+    }
+
+    /// Set up compiled DiT forward pass for Metal kernel fusion.
+    ///
+    /// With shapeless=false, the compiled graph is traced once per input shape
+    /// and reused across all 10 ODE steps (shapes are identical each step).
+    /// Fuses ~330 Metal kernel dispatches (22 DiT layers) per forward pass.
+    public func setupCompilation() {
+        let decoderRef = decoder
+
+        compiledDiTForward = compile(
+            inputs: [decoderRef], outputs: [decoderRef], shapeless: false
+        ) { inputs in
+            let x = inputs[0]
+            let mask = inputs[1]
+            let mu = inputs[2]
+            let t = inputs[3]
+            let velocity = decoderRef(x, mask: mask, mu: mu, t: t, spks: nil, cond: nil)
+            return [velocity]
+        }
+    }
+
+    /// Execute DiT forward pass (compiled when available, falls back to uncompiled).
+    /// Uses compiled path only when spks and cond are nil.
+    private func executeDiTForward(
+        x: MLXArray, mask: MLXArray, mu: MLXArray, t: MLXArray,
+        spks: MLXArray?, cond: MLXArray?
+    ) -> MLXArray {
+        if let compiled = compiledDiTForward, spks == nil, cond == nil {
+            return compiled([x, mask, mu, t])[0]
+        }
+        return decoder(x, mask: mask, mu: mu, t: t, spks: spks, cond: cond)
+    }
+
+    /// Warm up the compiled DiT with a small dummy forward pass.
+    /// Traces the compiled graph and pre-compiles Metal shaders so the first
+    /// real generation pays zero compilation cost.
+    public func warmUp() {
+        guard compiledDiTForward != nil else { return }
+
+        // Small dummy inputs: [2, 80, 4] (batch=2 for CFG doubling, T=4 minimal)
+        let dummyX = MLXArray.zeros([2, 80, 4])
+        let dummyMask = MLXArray.ones([2, 1, 4])
+        let dummyMu = MLXArray.zeros([2, 80, 4])
+        let dummyT = MLXArray.zeros([2])
+
+        let result = executeDiTForward(
+            x: dummyX, mask: dummyMask, mu: dummyMu, t: dummyT,
+            spks: nil, cond: nil)
+        eval(result)
     }
 
     /// Solve the flow matching ODE to generate a mel spectrogram.
@@ -114,7 +169,8 @@ public class ConditionalFlowMatching: Module {
             }
 
             // Single forward pass through DiT with doubled batch
-            let velocity = decoder(xIn, mask: maskIn, mu: muIn, t: tArr, spks: spksIn, cond: condIn)
+            let velocity = executeDiTForward(
+                x: xIn, mask: maskIn, mu: muIn, t: tArr, spks: spksIn, cond: condIn)
 
             // Split conditioned and unconditioned predictions
             let vCond = velocity[0 ..< batchSize]

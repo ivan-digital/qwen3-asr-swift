@@ -155,6 +155,47 @@ def should_quantize_llm_key(key: str) -> bool:
     return False
 
 
+# Linear layers to quantize in the DiT (flow model)
+# All target layers have cols divisible by 64.
+# NOT quantized: projOut (1024x80, 80%64!=0), Conv1d layers, Embeddings.
+DIT_QUANTIZE_SUFFIXES = {
+    "to_q", "to_k", "to_v", "to_out",  # DiTAttention
+    "linear1", "linear2",               # DiTFeedForward, TimestepEmbedding
+}
+
+DIT_QUANTIZE_PREFIXES = [
+    "decoder.transformer_blocks.",  # 22 DiT layers
+    "decoder.time_embed.",          # TimestepEmbedding
+    "decoder.input_embed.proj",     # InputEmbedding projection
+    "decoder.norm_out.linear",      # AdaLayerNormZeroFinal
+]
+
+# Keys explicitly excluded from DiT quantization
+DIT_NO_QUANTIZE = {
+    "decoder.proj_out.weight",  # 1024x80, 80 % 64 != 0
+}
+
+
+def should_quantize_dit_key(key: str, tensor: torch.Tensor) -> bool:
+    """Check if a remapped flow key should be 4-bit quantized (DiT only)."""
+    if not key.endswith(".weight"):
+        return False
+    if key in DIT_NO_QUANTIZE:
+        return False
+    if tensor.ndim != 2:
+        return False  # Skip Conv1d (3-D) and bias (1-D)
+    rows, cols = tensor.shape
+    if cols % 64 != 0:
+        return False  # Must be divisible by group_size for quantization
+
+    # Check if the key matches a quantizable DiT prefix
+    for prefix in DIT_QUANTIZE_PREFIXES:
+        if key.startswith(prefix):
+            return True
+
+    return False
+
+
 def remap_flow_key(key: str):
     """Remap a flow.pt key. Returns new_key or None to skip."""
     # Strip decoder.estimator. -> decoder.
@@ -326,10 +367,11 @@ def convert_llm(state_dict: dict, quantize: bool, group_size: int = 64):
     return output, param_count
 
 
-def convert_flow(state_dict: dict):
-    """Convert flow state dict with key remapping and Conv1d transposition."""
+def convert_flow(state_dict: dict, quantize_dit: bool = False, group_size: int = 64):
+    """Convert flow state dict with key remapping, Conv1d transposition, and optional DiT quantization."""
     output = {}
     param_count = 0
+    quantized_count = 0
 
     for key, tensor in sorted(state_dict.items()):
         new_key = remap_flow_key(key)
@@ -348,12 +390,27 @@ def convert_flow(state_dict: dict):
             output[new_key] = tensor
             print(f"  {key}")
             print(f"       -> {new_key} {original_shape} -> {list(tensor.shape)} (Conv1d transposed)")
+        elif quantize_dit and should_quantize_dit_key(new_key, tensor):
+            # 4-bit quantize this DiT weight
+            packed, scales, biases = quantize_4bit(tensor, group_size)
+            base = new_key
+            output[base] = packed
+            output[base.replace(".weight", ".scales")] = scales
+            output[base.replace(".weight", ".biases")] = biases
+            quantized_count += 1
+            print(f"  [Q4] {key}")
+            print(f"       -> {base} {list(packed.shape)} uint32")
+            print(f"       -> {base.replace('.weight', '.scales')} {list(scales.shape)} float16")
+            print(f"       -> {base.replace('.weight', '.biases')} {list(biases.shape)} float16")
         else:
             if tensor.dtype in (torch.float32, torch.float64):
                 tensor = tensor.to(torch.bfloat16)
             output[new_key] = tensor
             print(f"  {key}")
             print(f"       -> {new_key} {list(tensor.shape)} {tensor.dtype}")
+
+    if quantize_dit:
+        print(f"\n  Quantized {quantized_count} DiT Linear layers to 4-bit")
 
     return output, param_count
 
@@ -578,6 +635,11 @@ def main():
         help="Group size for 4-bit quantization (default: 64)",
     )
     parser.add_argument(
+        "--quantize-dit",
+        action="store_true",
+        help="4-bit quantize DiT Linear layers in flow model (experimental)",
+    )
+    parser.add_argument(
         "--cache-dir",
         default=None,
         help="HuggingFace cache directory (default: system default)",
@@ -622,12 +684,17 @@ def main():
     # -----------------------------------------------------------------------
     # Convert Flow
     # -----------------------------------------------------------------------
+    dit_label = " (4-bit DiT)" if args.quantize_dit else ""
     print(f"\n{'='*60}")
-    print("Converting Flow (DiT + encoder)...")
+    print(f"Converting Flow (DiT + encoder){dit_label}...")
     print(f"{'='*60}")
     flow_sd = torch.load(files["flow"], map_location="cpu", weights_only=True)
     print(f"  Loaded {len(flow_sd)} keys from flow.pt\n")
-    flow_tensors, flow_params = convert_flow(flow_sd)
+    flow_tensors, flow_params = convert_flow(
+        flow_sd,
+        quantize_dit=args.quantize_dit,
+        group_size=args.group_size,
+    )
     flow_path = output_dir / "flow.safetensors"
     save_file(tensors_to_numpy(flow_tensors), str(flow_path))
     flow_size = os.path.getsize(flow_path) / (1024 * 1024)
@@ -659,6 +726,18 @@ def main():
     config = make_config()
     if args.no_quantize:
         config.pop("quantization", None)
+    if args.quantize_dit:
+        config["dit_quantization"] = {
+            "bits": 4,
+            "group_size": args.group_size,
+            "quantized_prefixes": [
+                "decoder.transformer_blocks.",
+                "decoder.time_embed.",
+                "decoder.input_embed.proj",
+                "decoder.norm_out.linear",
+            ],
+            "excluded_keys": ["decoder.proj_out.weight"],
+        }
     config_path = output_dir / "config.json"
     with open(config_path, "w") as f:
         json.dump(config, f, indent=2)

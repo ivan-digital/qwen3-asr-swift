@@ -497,7 +497,6 @@ public class CosyVoiceLLM: Module {
             // Forward single token through transformer
             let (stepLogits, newCache) = executeStep(
                 embeds: tokenEmbed, offset: prefixLen + step, cache: currentCache)
-            eval(stepLogits, newCache)
             currentCache = newCache
 
             // Sample next token (ignore EOS until min_len reached)
