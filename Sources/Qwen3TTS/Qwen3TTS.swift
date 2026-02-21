@@ -37,6 +37,10 @@ public struct TTSAudioChunk: Sendable {
 
 /// Main Qwen3-TTS model for text-to-speech synthesis
 public class Qwen3TTSModel {
+    /// Default instruct text applied automatically for CustomVoice models when no explicit
+    /// `--instruct` is provided. Prevents rambling output for short texts.
+    public static let defaultInstruct = "Speak naturally."
+
     public let config: Qwen3TTSConfig
     public let talker: TalkerModel
     public let codePredictor: CodePredictorModel
@@ -101,6 +105,9 @@ public class Qwen3TTSModel {
         // Resolve speaker → token ID and optional language override
         let (speakerTokenId, effectiveLanguage) = resolveSpeaker(speaker, language: language)
 
+        // Auto-apply default instruct for CustomVoice when none provided
+        let effectiveInstruct = instruct ?? (speakerConfig != nil ? Self.defaultInstruct : nil)
+
         guard let langId = CodecTokens.languageId(for: effectiveLanguage) else {
             print("Warning: Unknown language '\(effectiveLanguage)', defaulting to English")
             return synthesize(text: text, language: "english", speaker: speaker, sampling: sampling)
@@ -111,7 +118,7 @@ public class Qwen3TTSModel {
         // Stage 1: Prepare text tokens and codec prefix
         let textTokens = prepareTextTokens(text: text, tokenizer: tokenizer)
         let codecPrefixTokens = buildCodecPrefix(languageId: langId, speakerTokenId: speakerTokenId)
-        let instructTokens = instruct.map { prepareInstructTokens(instruct: $0, tokenizer: tokenizer) }
+        let instructTokens = effectiveInstruct.map { prepareInstructTokens(instruct: $0, tokenizer: tokenizer) }
 
         // Stage 2: Build input embeddings with element-wise text+codec overlay
         let (prefillEmbeds, trailingTextHidden, ttsPadEmbed) = buildPrefillEmbeddings(
@@ -212,6 +219,9 @@ public class Qwen3TTSModel {
 
         let (speakerTokenId, effectiveLanguage) = resolveSpeaker(speaker, language: language)
 
+        // Auto-apply default instruct for CustomVoice when none provided
+        let effectiveInstruct = instruct ?? (speakerConfig != nil ? Self.defaultInstruct : nil)
+
         guard let langId = CodecTokens.languageId(for: effectiveLanguage) else {
             throw TTSError.unknownLanguage(effectiveLanguage)
         }
@@ -223,7 +233,7 @@ public class Qwen3TTSModel {
         // Stage 1: Prepare embeddings (identical to synthesize)
         let textTokens = prepareTextTokens(text: text, tokenizer: tokenizer)
         let codecPrefixTokens = buildCodecPrefix(languageId: langId, speakerTokenId: speakerTokenId)
-        let instructTokens = instruct.map { prepareInstructTokens(instruct: $0, tokenizer: tokenizer) }
+        let instructTokens = effectiveInstruct.map { prepareInstructTokens(instruct: $0, tokenizer: tokenizer) }
         let (prefillEmbeds, trailingTextHidden, ttsPadEmbed) = buildPrefillEmbeddings(
             textTokens: textTokens, codecPrefixTokens: codecPrefixTokens, instructTokens: instructTokens)
         eval(prefillEmbeds, trailingTextHidden, ttsPadEmbed)
@@ -503,6 +513,9 @@ public class Qwen3TTSModel {
             fatalError("Tokenizer not loaded. Call setTokenizer() first.")
         }
 
+        // Auto-apply default instruct for CustomVoice when none provided
+        let effectiveInstruct = instruct ?? (speakerConfig != nil ? Self.defaultInstruct : nil)
+
         guard let langId = CodecTokens.languageId(for: language) else {
             print("Warning: Unknown language '\(language)', defaulting to English")
             return synthesizeBatch(texts: texts, language: "english", instruct: instruct, sampling: sampling, maxBatchSize: maxBatchSize)
@@ -515,7 +528,7 @@ public class Qwen3TTSModel {
         let sorted = indexed.sorted { $0.1.count < $1.1.count }
         let sortedTexts = sorted.map { $0.1 }
         let originalIndices = sorted.map { $0.0 }
-        let instructTokens = instruct.map { prepareInstructTokens(instruct: $0, tokenizer: tokenizer) }
+        let instructTokens = effectiveInstruct.map { prepareInstructTokens(instruct: $0, tokenizer: tokenizer) }
 
         // Process in chunks if exceeding maxBatchSize
         var sortedResults: [[Float]]

@@ -186,6 +186,11 @@ final class SpeakerConfigTests: XCTestCase {
         XCTAssertTrue(model.availableSpeakers.isEmpty)
         XCTAssertNil(model.speakerConfig)
     }
+
+    func testDefaultInstructConstant() {
+        XCTAssertFalse(Qwen3TTSModel.defaultInstruct.isEmpty, "Default instruct should be non-empty")
+        XCTAssertEqual(Qwen3TTSModel.defaultInstruct, "Speak naturally.")
+    }
 }
 
 // MARK: - Instruct Token Tests
@@ -362,6 +367,103 @@ final class CustomVoiceInstructE2ETests: XCTestCase {
         let duration = Double(audio.count) / 24000.0
         print("No instruct: \(fmt(duration))s")
         XCTAssertGreaterThan(duration, 0.3)
+    }
+
+    /// Default instruct should produce focused, short audio for short text (not 17s rambling).
+    /// Before this feature, CustomVoice + nil instruct produced ~17s of unfocused audio for "Hello world".
+    func testDefaultInstructProducesFocusedAudio() async throws {
+        let model = try await loadCustomVoiceModel()
+
+        let audio = model.synthesize(
+            text: "Hello world.",
+            language: "english",
+            speaker: "ryan")
+        // instruct is nil — default "Speak naturally." should auto-apply
+
+        XCTAssertGreaterThan(audio.count, 0, "Should produce audio")
+        let duration = Double(audio.count) / 24000.0
+        print("Default instruct audio: \(fmt(duration))s")
+
+        // With default instruct, "Hello world." should produce short focused audio (<10s),
+        // not the 17s rambling that occurred without any instruct
+        XCTAssertLessThan(duration, 10.0,
+            "Default instruct should keep 'Hello world.' under 10s (got \(fmt(duration))s)")
+        XCTAssertGreaterThan(duration, 0.3, "Should produce at least some audio")
+    }
+
+    /// Explicit instruct should override the default (not combine with it)
+    func testExplicitInstructOverridesDefault() async throws {
+        let model = try await loadCustomVoiceModel()
+        let asrModel = try await loadASRModel()
+
+        let text = "Good morning everyone."
+
+        // Explicit instruct — should use this, not the default
+        let audio = model.synthesize(
+            text: text,
+            language: "english",
+            speaker: "ryan",
+            instruct: "Speak clearly and slowly")
+
+        XCTAssertGreaterThan(audio.count, 0, "Should produce audio with explicit instruct")
+        let duration = Double(audio.count) / 24000.0
+        print("Explicit instruct audio: \(fmt(duration))s")
+        XCTAssertLessThan(duration, 20.0, "Should not produce excessively long audio")
+
+        // ASR round-trip to verify intelligibility
+        let transcription = asrModel.transcribe(audio: audio, sampleRate: 24000)
+        print("Input:  \"\(text)\"")
+        print("Output: \"\(transcription)\"")
+
+        let expectedWords = ["morning", "everyone"]
+        let matched = expectedWords.filter { transcription.lowercased().contains($0) }
+        XCTAssertGreaterThanOrEqual(matched.count, 1,
+            "Explicit instruct should produce intelligible speech")
+    }
+
+    /// Streaming with default instruct (nil) should produce focused audio chunks
+    func testStreamingWithDefaultInstruct() async throws {
+        let model = try await loadCustomVoiceModel()
+
+        var chunks: [TTSAudioChunk] = []
+        let stream = model.synthesizeStream(
+            text: "Good morning, how are you today?",
+            language: "english",
+            speaker: "ryan")
+        // instruct is nil — default "Speak naturally." should auto-apply
+
+        for try await chunk in stream {
+            chunks.append(chunk)
+        }
+
+        XCTAssertGreaterThan(chunks.count, 0, "Should produce at least 1 chunk")
+        XCTAssertTrue(chunks.last!.isFinal, "Last chunk should be final")
+
+        let allSamples = chunks.flatMap { $0.samples }
+        let duration = Double(allSamples.count) / 24000.0
+        print("Streaming default instruct: \(chunks.count) chunks, \(fmt(duration))s")
+
+        XCTAssertGreaterThan(duration, 0.5, "Should produce some audio")
+        XCTAssertLessThan(duration, 20.0,
+            "Default instruct should keep streaming output reasonable (got \(fmt(duration))s)")
+    }
+
+    /// Batch synthesis with default instruct should produce focused audio
+    func testBatchWithDefaultInstruct() async throws {
+        let model = try await loadCustomVoiceModel()
+
+        let texts = ["Hello.", "Good morning."]
+        // instruct is nil — default "Speak naturally." should auto-apply
+        let results = model.synthesizeBatch(texts: texts, language: "english")
+
+        XCTAssertEqual(results.count, 2)
+        for (i, audio) in results.enumerated() {
+            XCTAssertGreaterThan(audio.count, 0, "Item \(i) should produce audio")
+            let duration = Double(audio.count) / 24000.0
+            print("Batch item \(i): \(fmt(duration))s")
+            XCTAssertLessThan(duration, 10.0,
+                "Default instruct should keep batch item \(i) under 10s (got \(fmt(duration))s)")
+        }
     }
 
     /// Save instruct vs no-instruct audio for manual A/B comparison
@@ -597,6 +699,23 @@ final class TTSE2ETests: XCTestCase {
         }
         XCTAssertLessThan(maxError, 0.001, "16-bit PCM round-trip error should be minimal")
         print("WAV round-trip max error: \(maxError)")
+    }
+
+    // MARK: - Default Instruct (Base Model)
+
+    /// Base model (no speakerConfig) should NOT auto-apply default instruct.
+    /// Verify that synthesis still works and speakerConfig is nil.
+    func testBaseModelNoDefaultInstruct() async throws {
+        let ttsModel = try await loadTTSModel()
+
+        XCTAssertNil(ttsModel.speakerConfig, "Base model should have no speakerConfig")
+
+        let audio = ttsModel.synthesize(text: "Hello world.", language: "english")
+        XCTAssertGreaterThan(audio.count, 0, "Base model should produce audio without instruct")
+
+        let duration = Double(audio.count) / 24000.0
+        print("Base model (no default instruct): \(fmt(duration))s")
+        XCTAssertGreaterThan(duration, 0.3, "Should produce some audio")
     }
 
     // MARK: - Save for Manual Review

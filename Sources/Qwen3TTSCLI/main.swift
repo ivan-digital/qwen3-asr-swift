@@ -107,8 +107,22 @@ struct Qwen3TTSCLI: ParsableCommand {
                     topK: topK,
                     maxTokens: maxTokens)
 
+                // Resolve effective instruct for display purposes
+                let effectiveInstruct: String?
+                let instructIsDefault: Bool
+                if let explicit = instruct {
+                    effectiveInstruct = explicit
+                    instructIsDefault = false
+                } else if ttsModel.speakerConfig != nil {
+                    effectiveInstruct = Qwen3TTSModel.defaultInstruct
+                    instructIsDefault = true
+                } else {
+                    effectiveInstruct = nil
+                    instructIsDefault = false
+                }
+
                 if stream, let inputText = text {
-                    try await runStreaming(model: ttsModel, text: inputText, instruct: instruct, config: config)
+                    try await runStreaming(model: ttsModel, text: inputText, instruct: effectiveInstruct, instructIsDefault: instructIsDefault, config: config)
                 } else if let batchFile = batchFile {
                     // Batch mode: read texts from file
                     let content = try String(contentsOfFile: batchFile, encoding: .utf8)
@@ -146,7 +160,7 @@ struct Qwen3TTSCLI: ParsableCommand {
                         print("Saved item \(i): \(audio.count) samples (\(String(format: "%.2f", Double(audio.count) / 24000.0))s) to \(path)")
                     }
                 } else if let inputText = text {
-                    try runStandard(model: ttsModel, text: inputText, instruct: instruct, config: config)
+                    try runStandard(model: ttsModel, text: inputText, instruct: effectiveInstruct, instructIsDefault: instructIsDefault, config: config)
                 }
 
                 exitCode = 0
@@ -163,14 +177,14 @@ struct Qwen3TTSCLI: ParsableCommand {
         }
     }
 
-    private func runStreaming(model: Qwen3TTSModel, text: String, instruct: String?, config: SamplingConfig) async throws {
+    private func runStreaming(model: Qwen3TTSModel, text: String, instruct: String?, instructIsDefault: Bool = false, config: SamplingConfig) async throws {
         let streamingConfig = StreamingConfig(
             firstChunkFrames: firstChunkFrames,
             chunkFrames: chunkFrames)
 
         var info = "Streaming synthesis: \"\(text)\""
         if let spk = speaker { info += " [speaker: \(spk)]" }
-        if let inst = instruct { info += " [instruct: \(inst)]" }
+        if let inst = instruct { info += " [instruct: \(inst)\(instructIsDefault ? " (default)" : "")]" }
         print(info)
         print("  First chunk: \(firstChunkFrames) frames, subsequent: \(chunkFrames) frames")
 
@@ -216,10 +230,10 @@ struct Qwen3TTSCLI: ParsableCommand {
         print("Saved to \(output)")
     }
 
-    private func runStandard(model: Qwen3TTSModel, text: String, instruct: String?, config: SamplingConfig) throws {
+    private func runStandard(model: Qwen3TTSModel, text: String, instruct: String?, instructIsDefault: Bool = false, config: SamplingConfig) throws {
         var info = "Synthesizing: \"\(text)\""
         if let spk = speaker { info += " [speaker: \(spk)]" }
-        if let inst = instruct { info += " [instruct: \(inst)]" }
+        if let inst = instruct { info += " [instruct: \(inst)\(instructIsDefault ? " (default)" : "")]" }
         print(info)
         let audio = model.synthesize(
             text: text,
