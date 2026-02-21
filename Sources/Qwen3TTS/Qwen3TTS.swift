@@ -84,12 +84,14 @@ public class Qwen3TTSModel {
     ///   - text: Input text to synthesize
     ///   - language: Language tag (e.g., "english", "chinese")
     ///   - speaker: Speaker voice name (requires CustomVoice model, e.g., "vivian", "ryan")
+    ///   - instruct: Instruction text for style control (requires CustomVoice model, e.g., "Speak cheerfully")
     ///   - sampling: Sampling configuration
     /// - Returns: Audio samples at 24kHz
     public func synthesize(
         text: String,
         language: String = "english",
         speaker: String? = nil,
+        instruct: String? = nil,
         sampling: SamplingConfig = .default
     ) -> [Float] {
         guard let tokenizer = tokenizer else {
@@ -109,10 +111,11 @@ public class Qwen3TTSModel {
         // Stage 1: Prepare text tokens and codec prefix
         let textTokens = prepareTextTokens(text: text, tokenizer: tokenizer)
         let codecPrefixTokens = buildCodecPrefix(languageId: langId, speakerTokenId: speakerTokenId)
+        let instructTokens = instruct.map { prepareInstructTokens(instruct: $0, tokenizer: tokenizer) }
 
         // Stage 2: Build input embeddings with element-wise text+codec overlay
         let (prefillEmbeds, trailingTextHidden, ttsPadEmbed) = buildPrefillEmbeddings(
-            textTokens: textTokens, codecPrefixTokens: codecPrefixTokens)
+            textTokens: textTokens, codecPrefixTokens: codecPrefixTokens, instructTokens: instructTokens)
 
         eval(prefillEmbeds, trailingTextHidden, ttsPadEmbed)
         let t1 = CFAbsoluteTimeGetCurrent()
@@ -161,6 +164,7 @@ public class Qwen3TTSModel {
     ///   - text: Input text to synthesize
     ///   - language: Language tag (e.g., "english", "chinese")
     ///   - speaker: Speaker voice name (requires CustomVoice model)
+    ///   - instruct: Instruction text for style control (requires CustomVoice model)
     ///   - sampling: Sampling configuration
     ///   - streaming: Streaming configuration (chunk sizes, decoder context)
     /// - Returns: An async stream of `TTSAudioChunk` values
@@ -168,6 +172,7 @@ public class Qwen3TTSModel {
         text: String,
         language: String = "english",
         speaker: String? = nil,
+        instruct: String? = nil,
         sampling: SamplingConfig = .default,
         streaming: StreamingConfig = .default
     ) -> AsyncThrowingStream<TTSAudioChunk, Error> {
@@ -178,6 +183,7 @@ public class Qwen3TTSModel {
                         text: text,
                         language: language,
                         speaker: speaker,
+                        instruct: instruct,
                         sampling: sampling,
                         streaming: streaming,
                         continuation: continuation)
@@ -195,6 +201,7 @@ public class Qwen3TTSModel {
         text: String,
         language: String,
         speaker: String?,
+        instruct: String?,
         sampling: SamplingConfig,
         streaming: StreamingConfig,
         continuation: AsyncThrowingStream<TTSAudioChunk, Error>.Continuation
@@ -216,8 +223,9 @@ public class Qwen3TTSModel {
         // Stage 1: Prepare embeddings (identical to synthesize)
         let textTokens = prepareTextTokens(text: text, tokenizer: tokenizer)
         let codecPrefixTokens = buildCodecPrefix(languageId: langId, speakerTokenId: speakerTokenId)
+        let instructTokens = instruct.map { prepareInstructTokens(instruct: $0, tokenizer: tokenizer) }
         let (prefillEmbeds, trailingTextHidden, ttsPadEmbed) = buildPrefillEmbeddings(
-            textTokens: textTokens, codecPrefixTokens: codecPrefixTokens)
+            textTokens: textTokens, codecPrefixTokens: codecPrefixTokens, instructTokens: instructTokens)
         eval(prefillEmbeds, trailingTextHidden, ttsPadEmbed)
 
         // Stage 2: Autoregressive generation with chunked decode + emit
@@ -480,6 +488,7 @@ public class Qwen3TTSModel {
     public func synthesizeBatch(
         texts: [String],
         language: String = "english",
+        instruct: String? = nil,
         sampling: SamplingConfig = .default,
         maxBatchSize: Int = 4
     ) -> [[Float]] {
@@ -487,7 +496,7 @@ public class Qwen3TTSModel {
 
         // Single item: delegate to existing method for zero overhead
         if texts.count == 1 {
-            return [synthesize(text: texts[0], language: language, sampling: sampling)]
+            return [synthesize(text: texts[0], language: language, instruct: instruct, sampling: sampling)]
         }
 
         guard let tokenizer = tokenizer else {
@@ -496,7 +505,7 @@ public class Qwen3TTSModel {
 
         guard let langId = CodecTokens.languageId(for: language) else {
             print("Warning: Unknown language '\(language)', defaulting to English")
-            return synthesizeBatch(texts: texts, language: "english", sampling: sampling, maxBatchSize: maxBatchSize)
+            return synthesizeBatch(texts: texts, language: "english", instruct: instruct, sampling: sampling, maxBatchSize: maxBatchSize)
         }
 
         // Sort texts by length to group similar-length items together.
@@ -506,6 +515,7 @@ public class Qwen3TTSModel {
         let sorted = indexed.sorted { $0.1.count < $1.1.count }
         let sortedTexts = sorted.map { $0.1 }
         let originalIndices = sorted.map { $0.0 }
+        let instructTokens = instruct.map { prepareInstructTokens(instruct: $0, tokenizer: tokenizer) }
 
         // Process in chunks if exceeding maxBatchSize
         var sortedResults: [[Float]]
@@ -514,11 +524,11 @@ public class Qwen3TTSModel {
             for chunkStart in stride(from: 0, to: sortedTexts.count, by: maxBatchSize) {
                 let chunkEnd = min(chunkStart + maxBatchSize, sortedTexts.count)
                 let chunk = Array(sortedTexts[chunkStart..<chunkEnd])
-                let chunkResults = synthesizeBatchInternal(texts: chunk, langId: langId, tokenizer: tokenizer, sampling: sampling)
+                let chunkResults = synthesizeBatchInternal(texts: chunk, langId: langId, instructTokens: instructTokens, tokenizer: tokenizer, sampling: sampling)
                 sortedResults.append(contentsOf: chunkResults)
             }
         } else {
-            sortedResults = synthesizeBatchInternal(texts: sortedTexts, langId: langId, tokenizer: tokenizer, sampling: sampling)
+            sortedResults = synthesizeBatchInternal(texts: sortedTexts, langId: langId, instructTokens: instructTokens, tokenizer: tokenizer, sampling: sampling)
         }
 
         // Restore original order
@@ -533,6 +543,7 @@ public class Qwen3TTSModel {
     private func synthesizeBatchInternal(
         texts: [String],
         langId: Int,
+        instructTokens: [Int]?,
         tokenizer: Qwen3Tokenizer,
         sampling: SamplingConfig
     ) -> [[Float]] {
@@ -549,14 +560,14 @@ public class Qwen3TTSModel {
         for text in texts {
             let textTokens = prepareTextTokens(text: text, tokenizer: tokenizer)
             let (prefill, trailing, padEmbed) = buildPrefillEmbeddings(
-                textTokens: textTokens, codecPrefixTokens: codecPrefixTokens)
+                textTokens: textTokens, codecPrefixTokens: codecPrefixTokens, instructTokens: instructTokens)
             prefills.append(prefill)
             trailings.append(trailing)
             padEmbeds.append(padEmbed)
         }
 
-        // All prefills are length 9 — stack directly
-        let batchPrefill = concatenated(prefills, axis: 0)  // [B, 9, D]
+        // All prefills have the same length — stack directly
+        let batchPrefill = concatenated(prefills, axis: 0)  // [B, prefillLen, D]
         let ttsPadEmbed = padEmbeds[0]  // All pad embeds are the same — use first
 
         // Pre-pad trailing texts to max length
@@ -1050,6 +1061,23 @@ public class Qwen3TTSModel {
 
     // MARK: - Text Preparation
 
+    /// Prepare instruction tokens for CustomVoice instruct mode.
+    /// Format: `<|im_start|>user\n{instruct}<|im_end|>\n`
+    ///
+    /// The instruct tokens are embedded via `text_embedding → text_projection` and prepended
+    /// before the existing prefill sequence (role + codec overlay + first_text).
+    private func prepareInstructTokens(instruct: String, tokenizer: Qwen3Tokenizer) -> [Int] {
+        let imStartId = 151644
+        let imEndId = 151645
+        let newlineId = 198
+        let userId = 872
+
+        var tokens: [Int] = [imStartId, userId, newlineId]
+        tokens.append(contentsOf: tokenizer.encode(instruct))
+        tokens.append(contentsOf: [imEndId, newlineId])
+        return tokens
+    }
+
     /// Prepare text tokens using chat template.
     /// Template: <|im_start|>assistant\n{text}<|im_end|>\n<|im_start|>assistant\n
     private func prepareTextTokens(text: String, tokenizer: Qwen3Tokenizer) -> [Int] {
@@ -1123,7 +1151,7 @@ public class Qwen3TTSModel {
     /// trailing_text = concat([text_embed[:, 4:-5, :], tts_eos_embed], axis=1)
     /// ```
     private func buildPrefillEmbeddings(
-        textTokens: [Int], codecPrefixTokens: [Int32]
+        textTokens: [Int], codecPrefixTokens: [Int32], instructTokens: [Int]? = nil
     ) -> (prefillEmbeds: MLXArray, trailingTextHidden: MLXArray, ttsPadEmbed: MLXArray) {
         let hiddenSize = config.talker.hiddenSize
 
@@ -1165,8 +1193,15 @@ public class Qwen3TTSModel {
         let lastCodecEmbed = codecEmbeds[0..., (codecLen - 1)..<codecLen, 0...]  // [1, 1, hiddenSize]
         let firstTextPlusCodec = firstTextEmbed + lastCodecEmbed  // [1, 1, hiddenSize]
 
-        // Prefill: [role_embed, combined, first_text+codec_bos]
-        let prefillEmbeds = concatenated([roleEmbed, combined, firstTextPlusCodec], axis: 1)
+        // Prefill: [instruct? | role_embed, combined, first_text+codec_bos]
+        let prefillEmbeds: MLXArray
+        if let instructTokens = instructTokens {
+            let instructArray = MLXArray(instructTokens.map { Int32($0) }).expandedDimensions(axis: 0)
+            let instructEmbeds = talker.embedText(instructArray)  // [1, N, hiddenSize]
+            prefillEmbeds = concatenated([instructEmbeds, roleEmbed, combined, firstTextPlusCodec], axis: 1)
+        } else {
+            prefillEmbeds = concatenated([roleEmbed, combined, firstTextPlusCodec], axis: 1)
+        }
 
         // Trailing text: tokens[4:-5] + tts_eos
         // textTokens length includes: [im_start, assistant, \n, ...text..., im_end, \n, im_start, assistant, \n]
