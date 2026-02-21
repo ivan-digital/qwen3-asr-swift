@@ -9,15 +9,20 @@ public struct SamplingConfig: Sendable {
     public var minP: Float = 0.0
     public var repetitionPenalty: Float = 1.05
     public var maxTokens: Int = 4096
+    /// Additive bias to EOS logit (applied after temperature, before sampling).
+    /// Positive values make the model more likely to stop. Useful for CustomVoice
+    /// models that under-score EOS for certain languages.
+    public var eosLogitBias: Float = 0.0
 
     public init() {}
 
-    public init(temperature: Float, topK: Int = 50, topP: Float = 1.0, repetitionPenalty: Float = 1.05, maxTokens: Int = 4096) {
+    public init(temperature: Float, topK: Int = 50, topP: Float = 1.0, repetitionPenalty: Float = 1.05, maxTokens: Int = 4096, eosLogitBias: Float = 0.0) {
         self.temperature = temperature
         self.topK = topK
         self.topP = topP
         self.repetitionPenalty = repetitionPenalty
         self.maxTokens = maxTokens
+        self.eosLogitBias = eosLogitBias
     }
 
     public static var `default`: SamplingConfig { SamplingConfig() }
@@ -105,11 +110,14 @@ public func sampleToken(
         logits = filteredLogits[unsortIndices]
     }
 
-    // 8. Restore EOS logit after top-k/top-p
+    // 8. Restore EOS logit after top-k/top-p + apply EOS bias
     if let eos = eosTokenId, let eosLogit = savedEosLogit, eos >= 0, eos < vocabSize {
+        let biasedEos = config.eosLogitBias != 0
+            ? eosLogit + MLXArray(config.eosLogitBias)
+            : eosLogit
         let indices = MLXArray(0..<Int32(vocabSize))
         let eosMask = indices .== MLXArray(Int32(eos))
-        logits = MLX.where(eosMask, eosLogit, logits)
+        logits = MLX.where(eosMask, biasedEos, logits)
     }
 
     // 9. Multinomial sampling via Gumbel-max trick
@@ -233,11 +241,14 @@ public func sampleTokensBatch(
         logits2d = takeAlong(filteredSorted, unsortIndices, axis: 1)
     }
 
-    // 7. Restore EOS logit after filtering
+    // 7. Restore EOS logit after filtering + apply EOS bias
     if let eos = eosTokenId, let eosCol = savedEosCol, eos >= 0, eos < vocabSize {
+        let biasedEos = config.eosLogitBias != 0
+            ? eosCol + MLXArray(config.eosLogitBias)
+            : eosCol
         let indices = MLXArray(0..<Int32(vocabSize))
         let eosMask = indices .== MLXArray(Int32(eos))  // [vocab], broadcasts over [B, vocab]
-        logits2d = MLX.where(eosMask, eosCol, logits2d)
+        logits2d = MLX.where(eosMask, biasedEos, logits2d)
     }
 
     // 8. Gumbel-max sampling: argmax(logits + Gumbel) ~ Categorical(softmax(logits))
