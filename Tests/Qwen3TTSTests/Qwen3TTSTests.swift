@@ -186,6 +186,339 @@ final class SpeakerConfigTests: XCTestCase {
         XCTAssertTrue(model.availableSpeakers.isEmpty)
         XCTAssertNil(model.speakerConfig)
     }
+
+    func testDefaultInstructConstant() {
+        XCTAssertFalse(Qwen3TTSModel.defaultInstruct.isEmpty, "Default instruct should be non-empty")
+        XCTAssertEqual(Qwen3TTSModel.defaultInstruct, "Speak naturally.")
+    }
+}
+
+// MARK: - Instruct Token Tests
+
+final class InstructTokenTests: XCTestCase {
+
+    static let ttsModelId = "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit"
+    private static var _sharedModel: Qwen3TTSModel?
+
+    /// Verify instruct token format: <|im_start|>user\n{text}<|im_end|>\n
+    func testInstructTokenFormat() async throws {
+        let model = try await loadTTSModel()
+        let tokenizer = try getTokenizer(model)
+
+        let tokens = model.prepareInstructTokens(instruct: "Speak cheerfully", tokenizer: tokenizer)
+
+        // Structure: [imStart(151644), user(872), \n(198), ...encoded..., imEnd(151645), \n(198)]
+        XCTAssertGreaterThanOrEqual(tokens.count, 6, "Should have at least wrapper + 1 content token")
+        XCTAssertEqual(tokens[0], 151644, "First token should be <|im_start|>")
+        XCTAssertEqual(tokens[1], 872, "Second token should be 'user'")
+        XCTAssertEqual(tokens[2], 198, "Third token should be newline")
+        XCTAssertEqual(tokens[tokens.count - 2], 151645, "Second-to-last should be <|im_end|>")
+        XCTAssertEqual(tokens[tokens.count - 1], 198, "Last should be newline")
+
+        // Content tokens (between header and footer) should be non-empty
+        let contentTokens = Array(tokens[3..<(tokens.count - 2)])
+        XCTAssertGreaterThan(contentTokens.count, 0, "Should have content tokens for instruct text")
+        print("Instruct tokens for 'Speak cheerfully': \(tokens) (\(tokens.count) tokens)")
+    }
+
+    /// Empty instruct text should still produce valid wrapper
+    func testEmptyInstructText() async throws {
+        let model = try await loadTTSModel()
+        let tokenizer = try getTokenizer(model)
+
+        let tokens = model.prepareInstructTokens(instruct: "", tokenizer: tokenizer)
+
+        // Even empty text gets the wrapper: [imStart, user, \n, imEnd, \n]
+        XCTAssertEqual(tokens[0], 151644)
+        XCTAssertEqual(tokens[1], 872)
+        XCTAssertEqual(tokens[2], 198)
+        XCTAssertEqual(tokens[tokens.count - 2], 151645)
+        XCTAssertEqual(tokens[tokens.count - 1], 198)
+    }
+
+    /// Different instruct texts should produce different token sequences
+    func testDifferentInstructsProduceDifferentTokens() async throws {
+        let model = try await loadTTSModel()
+        let tokenizer = try getTokenizer(model)
+
+        let tokens1 = model.prepareInstructTokens(instruct: "Speak cheerfully", tokenizer: tokenizer)
+        let tokens2 = model.prepareInstructTokens(instruct: "Whisper this", tokenizer: tokenizer)
+
+        // Same header/footer but different content
+        XCTAssertEqual(tokens1[0...2], tokens2[0...2], "Headers should match")
+        XCTAssertNotEqual(tokens1, tokens2, "Different instructions should produce different tokens")
+    }
+
+    // MARK: - Helpers
+
+    private func loadTTSModel() async throws -> Qwen3TTSModel {
+        if let model = Self._sharedModel { return model }
+        let model = try await Qwen3TTSModel.fromPretrained(
+            modelId: Self.ttsModelId
+        ) { _, _ in }
+        Self._sharedModel = model
+        return model
+    }
+
+    private func getTokenizer(_ model: Qwen3TTSModel) throws -> Qwen3Tokenizer {
+        // Access tokenizer via reflection since it's private
+        let mirror = Mirror(reflecting: model)
+        for child in mirror.children {
+            if child.label == "tokenizer", let tokenizer = child.value as? Qwen3Tokenizer {
+                return tokenizer
+            }
+        }
+        throw NSError(domain: "Test", code: 1, userInfo: [NSLocalizedDescriptionKey: "Tokenizer not found"])
+    }
+}
+
+// MARK: - CustomVoice Instruct E2E Tests
+
+/// End-to-end tests for CustomVoice model with instruct-based style control.
+/// Requires CustomVoice model weights (~1 GB download).
+final class CustomVoiceInstructE2ETests: XCTestCase {
+
+    static let customVoiceModelId = "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-4bit"
+    static let ttsTokenizerModelId = "Qwen/Qwen3-TTS-Tokenizer-12Hz"
+    static let asrModelId = "mlx-community/Qwen3-ASR-0.6B-4bit"
+    private static var _sharedTTSModel: Qwen3TTSModel?
+    private static var _sharedASRModel: Qwen3ASRModel?
+
+    /// CustomVoice + instruct should produce valid audio
+    func testInstructSynthesisProducesAudio() async throws {
+        let model = try await loadCustomVoiceModel()
+
+        let audio = model.synthesize(
+            text: "Hello, how are you today?",
+            language: "english",
+            speaker: "ryan",
+            instruct: "Speak in a cheerful tone")
+
+        XCTAssertGreaterThan(audio.count, 0, "Should produce audio")
+        let duration = Double(audio.count) / 24000.0
+        print("Instruct synthesis: \(audio.count) samples (\(fmt(duration))s)")
+        XCTAssertGreaterThan(duration, 0.5, "Should be at least 0.5s")
+        XCTAssertLessThan(duration, 30.0, "Should not exceed 30s")
+
+        let maxAmp = audio.map { abs($0) }.max() ?? 0
+        XCTAssertGreaterThan(maxAmp, 0.001, "Should not be silent")
+    }
+
+    /// Instruct synthesis → ASR round-trip should produce intelligible speech
+    func testInstructASRRoundTrip() async throws {
+        let ttsModel = try await loadCustomVoiceModel()
+        let asrModel = try await loadASRModel()
+
+        let text = "The weather is beautiful today."
+        let audio = ttsModel.synthesize(
+            text: text,
+            language: "english",
+            speaker: "ryan",
+            instruct: "Speak clearly and slowly")
+
+        XCTAssertGreaterThan(audio.count, 0)
+
+        let transcription = asrModel.transcribe(audio: audio, sampleRate: 24000)
+        print("Input:  \"\(text)\"")
+        print("Output: \"\(transcription)\"")
+
+        let expectedWords = ["weather", "beautiful", "today"]
+        let matched = expectedWords.filter { transcription.lowercased().contains($0) }
+        print("Matched \(matched.count)/\(expectedWords.count): \(matched)")
+
+        XCTAssertGreaterThanOrEqual(matched.count, 1,
+            "ASR should recognize at least 1 word from instruct-conditioned speech")
+    }
+
+    /// Streaming + instruct should produce valid audio chunks
+    func testInstructStreamingSynthesis() async throws {
+        let model = try await loadCustomVoiceModel()
+
+        var chunks: [TTSAudioChunk] = []
+        let stream = model.synthesizeStream(
+            text: "Good morning everyone.",
+            language: "english",
+            speaker: "ryan",
+            instruct: "Speak cheerfully")
+
+        for try await chunk in stream {
+            chunks.append(chunk)
+        }
+
+        XCTAssertGreaterThan(chunks.count, 0, "Should produce at least 1 chunk")
+        XCTAssertTrue(chunks.last!.isFinal, "Last chunk should be final")
+
+        let allSamples = chunks.flatMap { $0.samples }
+        let duration = Double(allSamples.count) / 24000.0
+        print("Streaming instruct: \(chunks.count) chunks, \(fmt(duration))s")
+        XCTAssertGreaterThan(duration, 0.5)
+    }
+
+    /// Without instruct (nil) should still work on CustomVoice model (regression)
+    func testCustomVoiceWithoutInstruct() async throws {
+        let model = try await loadCustomVoiceModel()
+
+        let audio = model.synthesize(
+            text: "Hello world.",
+            language: "english",
+            speaker: "ryan")
+
+        XCTAssertGreaterThan(audio.count, 0, "Should produce audio without instruct")
+        let duration = Double(audio.count) / 24000.0
+        print("No instruct: \(fmt(duration))s")
+        XCTAssertGreaterThan(duration, 0.3)
+    }
+
+    /// Default instruct should produce focused, short audio for short text (not 17s rambling).
+    /// Before this feature, CustomVoice + nil instruct produced ~17s of unfocused audio for "Hello world".
+    func testDefaultInstructProducesFocusedAudio() async throws {
+        let model = try await loadCustomVoiceModel()
+
+        let audio = model.synthesize(
+            text: "Hello world.",
+            language: "english",
+            speaker: "ryan")
+        // instruct is nil — default "Speak naturally." should auto-apply
+
+        XCTAssertGreaterThan(audio.count, 0, "Should produce audio")
+        let duration = Double(audio.count) / 24000.0
+        print("Default instruct audio: \(fmt(duration))s")
+
+        // With default instruct, "Hello world." should produce short focused audio (<10s),
+        // not the 17s rambling that occurred without any instruct
+        XCTAssertLessThan(duration, 10.0,
+            "Default instruct should keep 'Hello world.' under 10s (got \(fmt(duration))s)")
+        XCTAssertGreaterThan(duration, 0.3, "Should produce at least some audio")
+    }
+
+    /// Explicit instruct should override the default (not combine with it)
+    func testExplicitInstructOverridesDefault() async throws {
+        let model = try await loadCustomVoiceModel()
+        let asrModel = try await loadASRModel()
+
+        let text = "Good morning everyone."
+
+        // Explicit instruct — should use this, not the default
+        let audio = model.synthesize(
+            text: text,
+            language: "english",
+            speaker: "ryan",
+            instruct: "Speak clearly and slowly")
+
+        XCTAssertGreaterThan(audio.count, 0, "Should produce audio with explicit instruct")
+        let duration = Double(audio.count) / 24000.0
+        print("Explicit instruct audio: \(fmt(duration))s")
+        XCTAssertLessThan(duration, 20.0, "Should not produce excessively long audio")
+
+        // ASR round-trip to verify intelligibility
+        let transcription = asrModel.transcribe(audio: audio, sampleRate: 24000)
+        print("Input:  \"\(text)\"")
+        print("Output: \"\(transcription)\"")
+
+        let expectedWords = ["morning", "everyone"]
+        let matched = expectedWords.filter { transcription.lowercased().contains($0) }
+        XCTAssertGreaterThanOrEqual(matched.count, 1,
+            "Explicit instruct should produce intelligible speech")
+    }
+
+    /// Streaming with default instruct (nil) should produce focused audio chunks
+    func testStreamingWithDefaultInstruct() async throws {
+        let model = try await loadCustomVoiceModel()
+
+        var chunks: [TTSAudioChunk] = []
+        let stream = model.synthesizeStream(
+            text: "Good morning, how are you today?",
+            language: "english",
+            speaker: "ryan")
+        // instruct is nil — default "Speak naturally." should auto-apply
+
+        for try await chunk in stream {
+            chunks.append(chunk)
+        }
+
+        XCTAssertGreaterThan(chunks.count, 0, "Should produce at least 1 chunk")
+        XCTAssertTrue(chunks.last!.isFinal, "Last chunk should be final")
+
+        let allSamples = chunks.flatMap { $0.samples }
+        let duration = Double(allSamples.count) / 24000.0
+        print("Streaming default instruct: \(chunks.count) chunks, \(fmt(duration))s")
+
+        XCTAssertGreaterThan(duration, 0.5, "Should produce some audio")
+        XCTAssertLessThan(duration, 20.0,
+            "Default instruct should keep streaming output reasonable (got \(fmt(duration))s)")
+    }
+
+    /// Batch synthesis with default instruct should produce focused audio
+    func testBatchWithDefaultInstruct() async throws {
+        let model = try await loadCustomVoiceModel()
+
+        let texts = ["Hello.", "Good morning."]
+        // instruct is nil — default "Speak naturally." should auto-apply
+        let results = model.synthesizeBatch(texts: texts, language: "english")
+
+        XCTAssertEqual(results.count, 2)
+        for (i, audio) in results.enumerated() {
+            XCTAssertGreaterThan(audio.count, 0, "Item \(i) should produce audio")
+            let duration = Double(audio.count) / 24000.0
+            print("Batch item \(i): \(fmt(duration))s")
+            XCTAssertLessThan(duration, 10.0,
+                "Default instruct should keep batch item \(i) under 10s (got \(fmt(duration))s)")
+        }
+    }
+
+    /// Save instruct vs no-instruct audio for manual A/B comparison
+    func testSaveInstructComparison() async throws {
+        let model = try await loadCustomVoiceModel()
+        let text = "Hello, this is a test of the instruct feature."
+
+        let withoutInstruct = model.synthesize(
+            text: text, language: "english", speaker: "ryan")
+        let withInstruct = model.synthesize(
+            text: text, language: "english", speaker: "ryan",
+            instruct: "Speak in a cheerful and excited tone")
+
+        let dir = URL(fileURLWithPath: "/tmp")
+        try WAVWriter.write(samples: withoutInstruct, sampleRate: 24000,
+                            to: dir.appendingPathComponent("tts_no_instruct.wav"))
+        try WAVWriter.write(samples: withInstruct, sampleRate: 24000,
+                            to: dir.appendingPathComponent("tts_with_instruct.wav"))
+
+        print("A/B comparison saved:")
+        print("  Without instruct: /tmp/tts_no_instruct.wav (\(fmt(Double(withoutInstruct.count) / 24000.0))s)")
+        print("  With instruct:    /tmp/tts_with_instruct.wav (\(fmt(Double(withInstruct.count) / 24000.0))s)")
+        print("Play: afplay /tmp/tts_no_instruct.wav && afplay /tmp/tts_with_instruct.wav")
+    }
+
+    // MARK: - Helpers
+
+    private func loadCustomVoiceModel() async throws -> Qwen3TTSModel {
+        if let model = Self._sharedTTSModel { return model }
+        print("Loading CustomVoice model...")
+        let model = try await Qwen3TTSModel.fromPretrained(
+            modelId: Self.customVoiceModelId,
+            tokenizerModelId: Self.ttsTokenizerModelId
+        ) { progress, status in
+            print("[CV \(Int(progress * 100))%] \(status)")
+        }
+        Self._sharedTTSModel = model
+        return model
+    }
+
+    private func loadASRModel() async throws -> Qwen3ASRModel {
+        if let model = Self._sharedASRModel { return model }
+        print("Loading ASR model...")
+        let model = try await Qwen3ASRModel.fromPretrained(
+            modelId: Self.asrModelId
+        ) { progress, status in
+            print("[ASR \(Int(progress * 100))%] \(status)")
+        }
+        Self._sharedASRModel = model
+        return model
+    }
+
+    private func fmt(_ value: Double) -> String {
+        String(format: "%.2f", value)
+    }
 }
 
 // MARK: - TTS E2E Tests
@@ -197,6 +530,8 @@ final class TTSE2ETests: XCTestCase {
     static let ttsModelId = "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit"
     static let ttsTokenizerModelId = "Qwen/Qwen3-TTS-Tokenizer-12Hz"
     static let asrModelId = "mlx-community/Qwen3-ASR-0.6B-4bit"
+    private static var _sharedTTSModel: Qwen3TTSModel?
+    private static var _sharedASRModel: Qwen3ASRModel?
 
     // MARK: - English Tests
 
@@ -366,6 +701,23 @@ final class TTSE2ETests: XCTestCase {
         print("WAV round-trip max error: \(maxError)")
     }
 
+    // MARK: - Default Instruct (Base Model)
+
+    /// Base model (no speakerConfig) should NOT auto-apply default instruct.
+    /// Verify that synthesis still works and speakerConfig is nil.
+    func testBaseModelNoDefaultInstruct() async throws {
+        let ttsModel = try await loadTTSModel()
+
+        XCTAssertNil(ttsModel.speakerConfig, "Base model should have no speakerConfig")
+
+        let audio = ttsModel.synthesize(text: "Hello world.", language: "english")
+        XCTAssertGreaterThan(audio.count, 0, "Base model should produce audio without instruct")
+
+        let duration = Double(audio.count) / 24000.0
+        print("Base model (no default instruct): \(fmt(duration))s")
+        XCTAssertGreaterThan(duration, 0.3, "Should produce some audio")
+    }
+
     // MARK: - Save for Manual Review
 
     /// Save English and German output to /tmp for manual listening
@@ -391,22 +743,28 @@ final class TTSE2ETests: XCTestCase {
     // MARK: - Helpers
 
     private func loadTTSModel() async throws -> Qwen3TTSModel {
+        if let model = Self._sharedTTSModel { return model }
         print("Loading TTS model...")
-        return try await Qwen3TTSModel.fromPretrained(
+        let model = try await Qwen3TTSModel.fromPretrained(
             modelId: Self.ttsModelId,
             tokenizerModelId: Self.ttsTokenizerModelId
         ) { progress, status in
             print("[TTS \(Int(progress * 100))%] \(status)")
         }
+        Self._sharedTTSModel = model
+        return model
     }
 
     private func loadASRModel() async throws -> Qwen3ASRModel {
+        if let model = Self._sharedASRModel { return model }
         print("Loading ASR model...")
-        return try await Qwen3ASRModel.fromPretrained(
+        let model = try await Qwen3ASRModel.fromPretrained(
             modelId: Self.asrModelId
         ) { progress, status in
             print("[ASR \(Int(progress * 100))%] \(status)")
         }
+        Self._sharedASRModel = model
+        return model
     }
 
     struct SynthesisResult {
@@ -468,6 +826,8 @@ final class TTSBatchTests: XCTestCase {
     static let ttsModelId = "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit"
     static let ttsTokenizerModelId = "Qwen/Qwen3-TTS-Tokenizer-12Hz"
     static let asrModelId = "mlx-community/Qwen3-ASR-0.6B-4bit"
+    private static var _sharedTTSModel: Qwen3TTSModel?
+    private static var _sharedASRModel: Qwen3ASRModel?
 
     // MARK: - Test 1: Build compiles cleanly (verified by running this test)
 
@@ -625,22 +985,28 @@ final class TTSBatchTests: XCTestCase {
     // MARK: - Helpers
 
     private func loadTTSModel() async throws -> Qwen3TTSModel {
+        if let model = Self._sharedTTSModel { return model }
         print("Loading TTS model...")
-        return try await Qwen3TTSModel.fromPretrained(
+        let model = try await Qwen3TTSModel.fromPretrained(
             modelId: Self.ttsModelId,
             tokenizerModelId: Self.ttsTokenizerModelId
         ) { progress, status in
             print("[TTS \(Int(progress * 100))%] \(status)")
         }
+        Self._sharedTTSModel = model
+        return model
     }
 
     private func loadASRModel() async throws -> Qwen3ASRModel {
+        if let model = Self._sharedASRModel { return model }
         print("Loading ASR model...")
-        return try await Qwen3ASRModel.fromPretrained(
+        let model = try await Qwen3ASRModel.fromPretrained(
             modelId: Self.asrModelId
         ) { progress, status in
             print("[ASR \(Int(progress * 100))%] \(status)")
         }
+        Self._sharedASRModel = model
+        return model
     }
 
     private func fmt(_ value: Double) -> String {
@@ -657,6 +1023,8 @@ final class TTSStreamingTests: XCTestCase {
     static let ttsModelId = "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit"
     static let ttsTokenizerModelId = "Qwen/Qwen3-TTS-Tokenizer-12Hz"
     static let asrModelId = "mlx-community/Qwen3-ASR-0.6B-4bit"
+    private static var _sharedTTSModel: Qwen3TTSModel?
+    private static var _sharedASRModel: Qwen3ASRModel?
 
     // MARK: - Test 1: Streaming produces valid audio
 
@@ -902,22 +1270,28 @@ final class TTSStreamingTests: XCTestCase {
     // MARK: - Helpers
 
     private func loadTTSModel() async throws -> Qwen3TTSModel {
+        if let model = Self._sharedTTSModel { return model }
         print("Loading TTS model...")
-        return try await Qwen3TTSModel.fromPretrained(
+        let model = try await Qwen3TTSModel.fromPretrained(
             modelId: Self.ttsModelId,
             tokenizerModelId: Self.ttsTokenizerModelId
         ) { progress, status in
             print("[TTS \(Int(progress * 100))%] \(status)")
         }
+        Self._sharedTTSModel = model
+        return model
     }
 
     private func loadASRModel() async throws -> Qwen3ASRModel {
+        if let model = Self._sharedASRModel { return model }
         print("Loading ASR model...")
-        return try await Qwen3ASRModel.fromPretrained(
+        let model = try await Qwen3ASRModel.fromPretrained(
             modelId: Self.asrModelId
         ) { progress, status in
             print("[ASR \(Int(progress * 100))%] \(status)")
         }
+        Self._sharedASRModel = model
+        return model
     }
 
     private func fmt(_ value: Double) -> String {

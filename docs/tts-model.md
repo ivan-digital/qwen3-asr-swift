@@ -68,9 +68,14 @@ The primary autoregressive transformer. Generates the first codebook of speech t
 | `codec_bos` | 2149 |
 | `codec_eos` | 2150 |
 | Language: English | 2050 |
-| Language: Chinese | 2055 |
 | Language: German | 2052 |
+| Language: Spanish | 2054 |
+| Language: Chinese | 2055 |
 | Language: Japanese | 2058 |
+| Language: French | 2061 |
+| Language: Korean | 2064 |
+| Language: Russian | 2069 |
+| Language: Italian | 2070 |
 
 **Transformer block (identical to ASR except RoPE):**
 ```
@@ -152,9 +157,75 @@ Audio (24kHz) -> SeanetEncoder (Conv1d downsampling, residual blocks)
 
 **SnakeBeta activation:** `x + (1/b) * sin^2(a * x)` — learnable periodic activation used in the decoder upsampling blocks for high-quality audio reconstruction.
 
+## Model Variants
+
+Qwen3-TTS ships in two variants with identical architecture (Talker + Code Predictor + Speech Tokenizer). The difference is fine-tuning and how speaker identity is provided.
+
+| Variant | HuggingFace ID (0.6B, 4-bit) | Speaker Selection |
+|---------|-------------------------------|-------------------|
+| **Base** | `mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit` | None (single default voice) |
+| **CustomVoice** | `mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-4bit` | 9 preset voices + instruction control |
+
+### CustomVoice Speakers
+
+The CustomVoice model includes 9 preset voices. Each speaker is selected by prepending a speaker token ID to the codec prefix.
+
+| Speaker | Language | Codec Token ID | Description |
+|---------|----------|---------------:|-------------|
+| Vivian | Chinese (Mandarin) | 3065 | Bright young female |
+| Serena | Chinese (Mandarin) | 3066 | Warm, gentle young female |
+| Uncle_Fu | Chinese (Mandarin) | 3010 | Seasoned male, mellow timbre |
+| Dylan | Chinese (Beijing dialect) | 2878 | Youthful Beijing male |
+| Eric | Chinese (Sichuan dialect) | 2875 | Lively Chengdu male |
+| Ryan | English | 3061 | Dynamic male with rhythm |
+| Aiden | English | 2861 | Sunny American male |
+| Ono_Anna | Japanese | 2873 | Playful female |
+| Sohee | Korean | 2864 | Warm female |
+
+**Dialect handling:** Dylan and Eric have dialect overrides in `spk_is_dialect` — when selected, the language ID is replaced with the corresponding dialect token instead of standard Chinese.
+
+### Supported Languages
+
+Both variants support these language IDs in the codec prefix:
+
+| Language | Codec Token ID |
+|----------|---------------:|
+| English | 2050 |
+| German | 2052 |
+| Spanish | 2054 |
+| Chinese | 2055 |
+| Japanese | 2058 |
+| French | 2061 |
+| Korean | 2064 |
+| Russian | 2069 |
+| Italian | 2070 |
+
+> **Note:** The CustomVoice preset speakers are each trained on specific languages (see table above). Using a speaker with a mismatched language (e.g., Ryan with Chinese text) will produce output but quality may degrade.
+
+### Instruction Control (CustomVoice only)
+
+CustomVoice accepts a natural language `instruct` string to control tone, emotion, and prosody. The instruction is prepended to the text input in ChatML format and interpreted by the Talker transformer.
+
+Examples:
+- `"Speak in a cheerful, upbeat tone"`
+- `"Read this slowly and solemnly"`
+- `"Whisper this softly"`
+
+### Codec Prefix Construction
+
+**Base model (6 tokens):**
+```
+[think, think_bos, language_id, think_eos, pad, bos]
+```
+
+**CustomVoice with speaker (7 tokens):**
+```
+[think, think_bos, language_id, think_eos, pad, bos, speaker_token]
+```
+
 ## Component D: Speaker Encoder (Not Yet Implemented)
 
-> The speaker encoder is used for voice cloning. It is not yet ported to Swift.
+> The speaker encoder is used for voice cloning in the Base model. It is not yet ported to Swift. The CustomVoice model does not need a speaker encoder — voices are selected by token ID.
 
 ECAPA-TDNN network extracting speaker embeddings from reference audio.
 
