@@ -41,9 +41,9 @@ Before autoregressive generation, a 6-token codec prefix is constructed:
 
 - `codec_think`: 2151, `codec_think_bos`: 2153, `codec_think_eos`: 2154
 - `codec_pad`: 2148, `codec_bos`: 2149
-- `language_id`: e.g. 2050 (English), 2052 (German), 2055 (Chinese), 2058 (Japanese)
+- `language_id`: e.g. 2050 (English), 2052 (German), 2054 (Spanish), 2055 (Chinese), 2058 (Japanese), 2061 (French), 2064 (Korean), 2069 (Russian), 2070 (Italian)
 
-> **Note:** Voice cloning mode adds a speaker embedding from ECAPA-TDNN. This is not yet implemented in the Swift port.
+> **CustomVoice model:** When a speaker is selected, a 7th token (the speaker token ID) is appended to the codec prefix. See `tts-model.md` → Model Variants for the full speaker list and language mappings.
 
 ## Stage 3: Talker Generation (First Codebook)
 
@@ -127,7 +127,7 @@ Audio waveform [1, T*1920, 1] at 24kHz
 | Latency (6s audio) | 3.9s | 0.17s |
 | Speech quality | Natural, expressive | Robotic, monotone |
 | Voice cloning | Planned | No |
-| Languages | EN/ZH/DE/JA | 60+ |
+| Languages | EN/ZH/DE/JA/ES/FR/KO/RU/IT | 60+ |
 | On-device | Yes (MLX) | Yes (AVFoundation) |
 | Model size | ~1.7 GB | Built-in |
 
