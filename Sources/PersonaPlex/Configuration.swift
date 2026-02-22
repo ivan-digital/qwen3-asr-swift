@@ -57,8 +57,8 @@ public struct TemporalTransformerConfig: Sendable {
     public var groupSize: Int       // Quantization group size
     public var bits: Int            // Quantization bits
 
-    /// FFN intermediate size: dim * hiddenScale
-    public var intermediateSize: Int { Int(Float(dim) * hiddenScale) }
+    /// FFN intermediate size: LLaMA-style formula dim * 2/3 * hiddenScale
+    public var intermediateSize: Int { Int(Float(dim) * 2.0 / 3.0 * hiddenScale) }
 
     /// Head dimension
     public var headDim: Int { dim / numHeads }
@@ -131,7 +131,7 @@ public struct DepformerConfig: Sendable {
         dim: Int = 1024,
         numLayers: Int = 6,
         numHeads: Int = 16,
-        dimFeedforward: Int = 4224,
+        dimFeedforward: Int = 2816,
         numSteps: Int = 16,     // PersonaPlex uses dep_q=16
         card: Int = 2048,
         textCard: Int = 32000,

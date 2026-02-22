@@ -15,7 +15,7 @@ final class PersonaPlexTests: XCTestCase {
         XCTAssertEqual(cfg.temporal.numLayers, 32)
         XCTAssertEqual(cfg.temporal.numHeads, 32)
         XCTAssertEqual(cfg.temporal.headDim, 128)
-        XCTAssertEqual(cfg.temporal.intermediateSize, 16896) // 4096 * 4.125
+        XCTAssertEqual(cfg.temporal.intermediateSize, 11264) // 4096 * 2/3 * 4.125
         XCTAssertEqual(cfg.temporal.nQ, 8)
         XCTAssertEqual(cfg.temporal.card, 2048)
         XCTAssertEqual(cfg.temporal.textCard, 32000)
@@ -31,7 +31,7 @@ final class PersonaPlexTests: XCTestCase {
         XCTAssertEqual(cfg.numLayers, 6)
         XCTAssertEqual(cfg.numHeads, 16)
         XCTAssertEqual(cfg.headDim, 64)
-        XCTAssertEqual(cfg.dimFeedforward, 4224)
+        XCTAssertEqual(cfg.dimFeedforward, 2816)
         XCTAssertEqual(cfg.numSteps, 16)
         XCTAssertEqual(cfg.context, 8)
         XCTAssertTrue(cfg.weightsPerStep)
@@ -93,16 +93,15 @@ final class PersonaPlexTests: XCTestCase {
 
     func testHiddenScaleCalculation() {
         let cfg = TemporalTransformerConfig.default
-        // dim=4096, hiddenScale=4.125
-        // intermediateSize = 4096 * 4.125 = 16896
-        XCTAssertEqual(cfg.intermediateSize, 16896)
+        // dim=4096, hiddenScale=4.125, LLaMA-style: dim * 2/3 * hiddenScale
+        // intermediateSize = 4096 * 2/3 * 4.125 = 11264
+        XCTAssertEqual(cfg.intermediateSize, 11264)
     }
 
     func testDepformerDimFeedforward() {
-        // Moshiko default: depformer_dim_feedforward = 4224
-        // This is NOT dim * hidden_scale (1024 * 4.125 = 4224), so it's specified directly
+        // Moshiko: dim=1024, dimFeedforward=2816 (= 1024 * 2/3 * 4.125)
         let cfg = DepformerConfig.default
-        XCTAssertEqual(cfg.dimFeedforward, 4224)
+        XCTAssertEqual(cfg.dimFeedforward, 2816)
     }
 
     // MARK: - Sampling Tests
@@ -203,7 +202,7 @@ final class PersonaPlexE2ETests: XCTestCase {
         guard Self._model == nil else { return }
 
         let modelId = ProcessInfo.processInfo.environment["PERSONAPLEX_MODEL_ID"]
-            ?? "ivan-digital/PersonaPlex-7B-MLX-4bit"
+            ?? "aufklarer/PersonaPlex-7B-MLX-4bit"
 
         do {
             let model = try await PersonaPlexModel.fromPretrained(

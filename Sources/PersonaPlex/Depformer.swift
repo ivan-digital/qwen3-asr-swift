@@ -161,8 +161,7 @@ public final class Depformer: Module {
     @ModuleInfo public var depformer_text_emb: Embedding
     @ModuleInfo public var depformer_emb: [Embedding]
 
-    // Per-codebook output norms and linear heads
-    @ModuleInfo public var depformer_norms: [RMSNormF32]
+    // Per-codebook output linear heads (no per-codebook norms in original model)
     @ModuleInfo public var linears: [Linear]
 
     public init(cfg: DepformerConfig, temporalDim: Int) {
@@ -189,14 +188,11 @@ public final class Depformer: Module {
         }
         self._depformer_emb = ModuleInfo(wrappedValue: audioEmbs)
 
-        // Per-codebook output norms and heads
-        var norms: [RMSNormF32] = []
+        // Per-codebook output heads (card outputs, no +1 — special token only in embedding)
         var heads: [Linear] = []
         for _ in 0..<cfg.numSteps {
-            norms.append(RMSNormF32(dimensions: cfg.dim, eps: cfg.rmsNormEps))
-            heads.append(Linear(cfg.dim, cfg.card + 1, bias: false))
+            heads.append(Linear(cfg.dim, cfg.card, bias: false))
         }
-        self._depformer_norms = ModuleInfo(wrappedValue: norms)
         self._linears = ModuleInfo(wrappedValue: heads)
     }
 
@@ -234,9 +230,8 @@ public final class Depformer: Module {
                 hidden = layer(hidden, step: k, cache: cache)
             }
 
-            // Output head
-            let normed = depformer_norms[k](hidden)
-            let logits = linears[k](normed)  // [B, 1, card+1]
+            // Output head (no per-codebook norm)
+            let logits = linears[k](hidden)  // [B, 1, card]
 
             // Sample
             let token = sampleFn(logits.squeezed(axis: 1))  // [B]

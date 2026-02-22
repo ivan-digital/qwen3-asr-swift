@@ -13,31 +13,39 @@ public enum PersonaPlexWeightLoader {
         from directory: URL,
         progressHandler: ((Double, String) -> Void)? = nil
     ) throws {
+        let numSteps = model.cfg.depformer.numSteps
+
         // Load temporal transformer weights (4-bit quantized)
         progressHandler?(0.1, "Loading temporal transformer...")
         let temporalFile = directory.appendingPathComponent("temporal.safetensors")
         if FileManager.default.fileExists(atPath: temporalFile.path) {
             let weights = try MLX.loadArrays(url: temporalFile)
-            let params = ModuleParameters.unflattened(weights)
+            let sanitized = sanitizeTemporalWeights(weights)
+            let params = ModuleParameters.unflattened(sanitized)
             try model.temporal.update(parameters: params, verify: .noUnusedKeys)
         }
 
-        // Load embeddings (text + audio embeddings, output heads)
+        // Load embeddings (mixed temporal + depformer keys)
         progressHandler?(0.3, "Loading embeddings...")
         let embFile = directory.appendingPathComponent("embeddings.safetensors")
         if FileManager.default.fileExists(atPath: embFile.path) {
             let weights = try MLX.loadArrays(url: embFile)
-            let remapped = remapEmbeddingKeys(weights)
-            let params = ModuleParameters.unflattened(remapped)
-            try model.temporal.update(parameters: params, verify: .noUnusedKeys)
+            let (temporalEmb, depformerEmb) = splitEmbeddingWeights(weights)
+
+            let tParams = ModuleParameters.unflattened(temporalEmb)
+            try model.temporal.update(parameters: tParams, verify: .noUnusedKeys)
+
+            let dParams = ModuleParameters.unflattened(depformerEmb)
+            try model.depformer.update(parameters: dParams, verify: .noUnusedKeys)
         }
 
-        // Load depformer weights (BF16, small)
+        // Load depformer weights (BF16)
         progressHandler?(0.5, "Loading depformer...")
         let depFile = directory.appendingPathComponent("depformer.safetensors")
         if FileManager.default.fileExists(atPath: depFile.path) {
             let weights = try MLX.loadArrays(url: depFile)
-            let params = ModuleParameters.unflattened(weights)
+            let sanitized = sanitizeDepformerWeights(weights, numSteps: numSteps)
+            let params = ModuleParameters.unflattened(sanitized)
             try model.depformer.update(parameters: params, verify: .noUnusedKeys)
         }
 
@@ -61,7 +69,9 @@ public enum PersonaPlexWeightLoader {
         weights = model.sanitize(weights: weights)
 
         let params = ModuleParameters.unflattened(weights)
-        try model.update(parameters: params, verify: .all)
+        // Use .noUnusedKeys (not .all) — some Mimi model parameters may not have
+        // corresponding weights (e.g. cache state, streaming buffers)
+        try model.update(parameters: params, verify: .noUnusedKeys)
 
         // Update codebooks
         func updateCodebooks(_ module: Module) {
@@ -98,18 +108,129 @@ public enum PersonaPlexWeightLoader {
         return embeddings
     }
 
-    // MARK: - Key Remapping
+    // MARK: - Temporal Weight Sanitization
 
-    /// Remap embedding weight keys from flat conversion format to model hierarchy
-    private static func remapEmbeddingKeys(_ weights: [String: MLXArray]) -> [String: MLXArray] {
+    /// Sanitize temporal transformer weights:
+    /// - Rename `*.alpha` (1,1,D) → `*.weight` (D)  (RMSNorm)
+    /// - Rename `*.in_proj_weight` → `*.in_proj.weight`  (packed QKV)
+    private static func sanitizeTemporalWeights(
+        _ weights: [String: MLXArray]
+    ) -> [String: MLXArray] {
         var out: [String: MLXArray] = [:]
         for (key, value) in weights {
-            // text_emb.weight -> text_emb.weight (no change)
-            // emb.{i}.weight -> emb.{i}.weight (no change)
-            // text_linear.weight -> text_linear.weight (no change)
-            out[key] = value
+            var newKey = key
+            var newValue = value
+
+            // RMSNorm: alpha (1,1,D) → weight (D)
+            if key.hasSuffix(".alpha") {
+                newKey = String(key.dropLast(6)) + ".weight"
+                if newValue.ndim == 3 {
+                    newValue = newValue.squeezed(axes: [0, 1])
+                }
+            }
+
+            // Attention in_proj: flat param → submodule
+            if key.hasSuffix(".in_proj_weight") {
+                newKey = String(key.dropLast("_weight".count)) + ".weight"
+            }
+
+            out[newKey] = newValue
         }
         return out
+    }
+
+    // MARK: - Depformer Weight Sanitization
+
+    /// Sanitize depformer weights:
+    /// - Rename `*.alpha` (1,1,D) → `*.weight` (D)
+    /// - Rename `*.in_proj_weight` → `*.in_proj.weight`
+    /// - Pack per-step FFN weights into MultiLinear format:
+    ///   `gating.{step}.linear_in.weight` → concatenated `gating.linear_in.weight`
+    private static func sanitizeDepformerWeights(
+        _ weights: [String: MLXArray],
+        numSteps: Int
+    ) -> [String: MLXArray] {
+        var out: [String: MLXArray] = [:]
+        var perStepWeights: [String: [(Int, MLXArray)]] = [:]
+
+        for (key, value) in weights {
+            var newKey = key
+            var newValue = value
+
+            // RMSNorm: alpha (1,1,D) → weight (D)
+            if key.hasSuffix(".alpha") {
+                newKey = String(key.dropLast(6)) + ".weight"
+                if newValue.ndim == 3 {
+                    newValue = newValue.squeezed(axes: [0, 1])
+                }
+                out[newKey] = newValue
+                continue
+            }
+
+            // Attention in_proj: flat param → submodule
+            if key.hasSuffix(".in_proj_weight") {
+                newKey = String(key.dropLast("_weight".count)) + ".weight"
+                out[newKey] = newValue
+                continue
+            }
+
+            // Per-step FFN: detect gating.{step}.linear_in/out.weight pattern
+            if let match = parsePerStepGatingKey(key) {
+                perStepWeights[match.packedKey, default: []].append((match.step, value))
+                continue
+            }
+
+            out[newKey] = newValue
+        }
+
+        // Pack per-step weights into MultiLinear format
+        for (packedKey, stepWeights) in perStepWeights {
+            let sorted = stepWeights.sorted { $0.0 < $1.0 }
+            let packed = concatenated(sorted.map { $0.1 }, axis: 0)
+            out[packedKey] = packed
+        }
+
+        return out
+    }
+
+    // MARK: - Embedding Weight Splitting
+
+    private static func splitEmbeddingWeights(
+        _ weights: [String: MLXArray]
+    ) -> (temporal: [String: MLXArray], depformer: [String: MLXArray]) {
+        var temporal: [String: MLXArray] = [:]
+        var depformer: [String: MLXArray] = [:]
+
+        for (key, value) in weights {
+            if key.hasPrefix("text_emb.") || key.hasPrefix("emb.") || key.hasPrefix("text_linear.") {
+                temporal[key] = value
+            } else if key.hasPrefix("depformer_emb.") || key.hasPrefix("depformer_text_emb.") || key.hasPrefix("linears.") {
+                depformer[key] = value
+            }
+        }
+
+        return (temporal, depformer)
+    }
+
+    // MARK: - Per-step Gating Key Parser
+
+    private struct PerStepGatingMatch {
+        let packedKey: String
+        let step: Int
+    }
+
+    private static func parsePerStepGatingKey(_ key: String) -> PerStepGatingMatch? {
+        let parts = key.split(separator: ".")
+        guard parts.count == 6,
+              parts[0] == "layers",
+              parts[2] == "gating",
+              let step = Int(parts[3]),
+              (parts[4] == "linear_in" || parts[4] == "linear_out"),
+              parts[5] == "weight"
+        else { return nil }
+
+        let packedKey = "\(parts[0]).\(parts[1]).\(parts[2]).\(parts[4]).\(parts[5])"
+        return PerStepGatingMatch(packedKey: packedKey, step: step)
     }
 }
 

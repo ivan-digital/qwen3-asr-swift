@@ -91,6 +91,7 @@ def tensors_to_numpy(tensors: dict) -> dict:
 # Temporal transformer weight prefixes
 TEMPORAL_PREFIXES = [
     "transformer.",
+    "out_norm.",     # Top-level output norm belongs to temporal transformer
 ]
 
 # Depformer weight prefixes
@@ -315,7 +316,7 @@ def make_config(voice_names: list):
             "dim": 4096,
             "num_layers": 32,
             "num_heads": 32,
-            "hidden_scale": 4.125,
+            "hidden_scale": 4.125,  # LLaMA-style: intermediate = dim * 2/3 * hidden_scale = 11264
             "n_q": 8,
             "card": 2048,
             "text_card": 32000,
@@ -327,7 +328,7 @@ def make_config(voice_names: list):
             "dim": 1024,
             "num_layers": 6,
             "num_heads": 16,
-            "dim_feedforward": 4224,
+            "dim_feedforward": 2816,  # = dim * 2/3 * hidden_scale (LLaMA-style SwiGLU)
             "num_steps": 16,
             "card": 2048,
             "text_card": 32000,
