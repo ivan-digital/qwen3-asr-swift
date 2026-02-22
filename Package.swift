@@ -130,7 +130,7 @@ let package = Package(
         ),
         .testTarget(
             name: "PersonaPlexTests",
-            dependencies: ["PersonaPlex", "Qwen3Common"]
+            dependencies: ["PersonaPlex", "Qwen3Common", "Qwen3ASR"]
         ),
         .testTarget(
             name: "Qwen3ASRTests",

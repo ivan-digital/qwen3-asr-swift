@@ -200,15 +200,19 @@ public final class Depformer: Module {
     /// - Parameters:
     ///   - temporalHidden: [B, 1, temporalDim] hidden state from temporal transformer
     ///   - textToken: [B] sampled text token (input to step 0)
-    ///   - sampleFn: sampling function (logits) -> token
+    ///   - sampleFn: sampling function (logits, codebookIndex) -> token
     /// - Returns: [B, numSteps] generated audio codebook tokens
     public func generate(
         temporalHidden: MLXArray,
         textToken: MLXArray,
-        sampleFn: (MLXArray) -> MLXArray
+        sampleFn: (MLXArray, Int) -> MLXArray
     ) -> MLXArray {
         var tokens: [MLXArray] = []
         var prevToken = textToken  // [B]
+
+        // Create KV caches ONCE for this temporal step — all codebook steps
+        // share the same caches so step k can attend to steps 0..k-1
+        let caches = (0..<cfg.numLayers).map { _ in KVCacheSimple() }
 
         for k in 0..<cfg.numSteps {
             // Project temporal hidden to depformer dim
@@ -221,10 +225,7 @@ public final class Depformer: Module {
                 input = input + depformer_emb[k - 1](prevToken.expandedDimensions(axis: 1))
             }
 
-            // Create fresh caches for this generation step (context = numSteps = 8)
-            let caches = (0..<cfg.numLayers).map { _ in KVCacheSimple() }
-
-            // Pass through depformer layers
+            // Pass through depformer layers (shared caches accumulate across steps)
             var hidden = input
             for (layer, cache) in zip(layers, caches) {
                 hidden = layer(hidden, step: k, cache: cache)
@@ -234,7 +235,7 @@ public final class Depformer: Module {
             let logits = linears[k](hidden)  // [B, 1, card]
 
             // Sample
-            let token = sampleFn(logits.squeezed(axis: 1))  // [B]
+            let token = sampleFn(logits.squeezed(axis: 1), k)  // [B]
             tokens.append(token)
             prevToken = token
         }

@@ -75,8 +75,21 @@ public struct TemporalTransformerConfig: Sendable {
     /// Initial token ID for text (= textCard)
     public var textInitialTokenId: Int { textCard }
 
-    /// Text padding token ID
+    /// Text padding token ID (existing_text_padding_id=3 in original model)
     public var textPaddingId: Int { 3 }
+
+    /// Constant sine wave tokens (440Hz reference tone, used for user audio during prompting)
+    public static let sineTokens: [Int32] = [430, 1268, 381, 1611, 1095, 1495, 56, 472]
+
+    /// Constant silence tokens (used for agent audio during silence/text prompt phases)
+    public static let silenceTokens: [Int32] = [948, 243, 1178, 546, 1736, 1030, 1978, 2008]
+
+    /// Default system prompt: "<system> You are a helpful assistant. Answer questions clearly and concisely. <system>"
+    /// Pre-tokenized with SentencePiece (tokenizer_spm_32k_3.model)
+    public static let defaultSystemPromptTokens: [Int32] = [
+        607, 4831, 578, 493, 298, 272, 3850, 5019, 263,
+        506, 1292, 2366, 267, 22876, 362, 263, 607, 4831, 578
+    ]
 
     public init(
         dim: Int = 4096,
@@ -249,17 +262,23 @@ public struct PersonaPlexSamplingConfig: Sendable {
     public var audioTopK: Int
     public var textTemp: Float
     public var textTopK: Int
+    public var audioRepetitionPenalty: Float
+    public var repetitionWindow: Int
 
     public init(
         audioTemp: Float = 0.8,
         audioTopK: Int = 250,
         textTemp: Float = 0.7,
-        textTopK: Int = 25
+        textTopK: Int = 25,
+        audioRepetitionPenalty: Float = 1.2,
+        repetitionWindow: Int = 30
     ) {
         self.audioTemp = audioTemp
         self.audioTopK = audioTopK
         self.textTemp = textTemp
         self.textTopK = textTopK
+        self.audioRepetitionPenalty = audioRepetitionPenalty
+        self.repetitionWindow = repetitionWindow
     }
 
     public static var `default`: PersonaPlexSamplingConfig { PersonaPlexSamplingConfig() }

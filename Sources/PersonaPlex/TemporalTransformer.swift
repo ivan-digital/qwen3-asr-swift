@@ -183,6 +183,16 @@ public final class TemporalTransformer: Module {
         for c in cache { c.trim(c.offset) }
     }
 
+    /// Forward pass with pre-computed embedding (for voice prompt replay).
+    /// Feeds the embedding through all layers to populate KV caches.
+    public func forwardEmbedding(_ embedding: MLXArray, offset: Int) {
+        var hidden = embedding  // [B, 1, dim]
+        for (layer, c) in zip(layers, cache) {
+            hidden = layer(hidden, cache: c, offset: offset)
+        }
+        eval(hidden)  // force evaluation to populate caches
+    }
+
     /// Forward pass: takes per-stream token IDs, returns hidden states + text logits
     /// - Parameters:
     ///   - textTokens: [B, T] text token IDs

@@ -2,6 +2,7 @@ import XCTest
 import MLX
 @testable import PersonaPlex
 import Qwen3Common
+import Qwen3ASR
 
 final class PersonaPlexTests: XCTestCase {
 
@@ -298,6 +299,82 @@ final class PersonaPlexE2ETests: XCTestCase {
         XCTAssertLessThan(duration, 10.0, "Response should be less than 10s")
     }
 
+    func testMimiRoundTrip() throws {
+        let model = try self.model
+
+        // Generate a 1s test tone
+        let numSamples = 24000
+        var testAudio = [Float](repeating: 0, count: numSamples)
+        for i in 0..<numSamples {
+            testAudio[i] = sin(2 * .pi * 440 * Float(i) / 24000.0) * 0.5
+        }
+
+        // Encode
+        let audioArray = MLXArray(testAudio).reshaped([1, 1, numSamples])
+        let codes = model.mimi.encode(audioArray)
+        eval(codes)
+        print("Mimi encode: \(codes.shape)")  // [1, 16, T]
+
+        let T = codes.shape[2]
+        let codesInt = codes.asType(.int32)
+        eval(codesInt)
+
+        // Print codebook statistics
+        for cb in 0..<min(4, codes.shape[1]) {
+            var vals: [Int32] = []
+            for t in 0..<min(8, T) {
+                vals.append(codesInt[0, cb, t].item(Int32.self))
+            }
+            let minVal = vals.min() ?? 0
+            let maxVal = vals.max() ?? 0
+            print("  CB\(cb): \(vals) range=[\(minVal),\(maxVal)]")
+        }
+
+        // Decode back
+        let decoded = model.mimi.decode(codes)
+        eval(decoded)
+        print("Mimi decode: \(decoded.shape)")
+
+        let roundTripSamples = decoded.shape[2]
+        let maxAmp = MLX.abs(decoded).max().item(Float.self)
+        let rms = sqrt(MLX.sum(decoded * decoded).item(Float.self) / Float(roundTripSamples))
+        print("Round-trip: \(roundTripSamples) samples, maxAmp=\(String(format: "%.4f", maxAmp)), RMS=\(String(format: "%.6f", rms))")
+
+        XCTAssertGreaterThan(maxAmp, 0.01, "Mimi round-trip should produce audible audio")
+        XCTAssertGreaterThan(roundTripSamples, 0, "Should produce samples")
+    }
+
+    func testRespondDiagnostic() throws {
+        let model = try self.model
+
+        // 1s test tone
+        let numSamples = 24000
+        var testAudio = [Float](repeating: 0, count: numSamples)
+        for i in 0..<numSamples {
+            testAudio[i] = sin(2 * .pi * 440 * Float(i) / 24000.0) * 0.5
+        }
+
+        let response = model.respond(
+            userAudio: testAudio,
+            voice: .NATM0,
+            maxSteps: 10,
+            verbose: true
+        )
+
+        // Analyze output
+        if response.isEmpty {
+            print("DIAGNOSTIC: Response is empty!")
+            return
+        }
+
+        let maxAmp = response.map { abs($0) }.max() ?? 0
+        let rms = sqrt(response.map { $0 * $0 }.reduce(0, +) / Float(response.count))
+        print("DIAGNOSTIC Response: \(response.count) samples")
+        print("  maxAmp=\(String(format: "%.4f", maxAmp))")
+        print("  RMS=\(String(format: "%.6f", rms))")
+        print("  First 10 samples: \(response.prefix(10).map { String(format: "%.4f", $0) })")
+    }
+
     func testRespondWithRealAudio() throws {
         let model = try self.model
 
@@ -359,4 +436,85 @@ final class PersonaPlexE2ETests: XCTestCase {
             print("Voice \(voice.rawValue): \(response.count) samples")
         }
     }
+
+    /// Round-trip test: real audio → PersonaPlex → response audio → ASR transcription.
+    /// Checks that the response contains recognizable English speech.
+    func testRoundTripASR() async throws {
+        let ppModel = try self.model
+
+        // Load real test audio
+        let testAudioPath = ProcessInfo.processInfo.environment["PERSONAPLEX_TEST_AUDIO"]
+        guard let audioPath = testAudioPath else {
+            throw XCTSkip("Set PERSONAPLEX_TEST_AUDIO=/path/to/audio.wav to run round-trip test")
+        }
+
+        let url = URL(fileURLWithPath: audioPath)
+        let userAudio = try AudioFileLoader.load(url: url, targetSampleRate: 24000)
+        let inputDuration = Double(userAudio.count) / 24000.0
+        print("Input audio: \(String(format: "%.2f", inputDuration))s")
+
+        // Generate response
+        let response = ppModel.respond(
+            userAudio: userAudio,
+            voice: .NATM0,
+            maxSteps: 200,
+            verbose: true
+        )
+
+        XCTAssertFalse(response.isEmpty, "Should produce response audio")
+        let responseDuration = Double(response.count) / 24000.0
+        print("Response: \(String(format: "%.2f", responseDuration))s (\(response.count) samples)")
+
+        // Save response for manual inspection
+        let outputPath = audioPath.replacingOccurrences(of: ".wav", with: "_roundtrip.wav")
+        try WAVWriter.write(samples: response, sampleRate: 24000, to: URL(fileURLWithPath: outputPath))
+        print("Saved response to \(outputPath)")
+
+        // Load ASR model and transcribe the response
+        let asrModel = try await Qwen3ASRModel.fromPretrained()
+        // ASR expects 16kHz — resample from 24kHz
+        let resampledResponse = resampleLinear(response, fromRate: 24000, toRate: 16000)
+        let transcript = asrModel.transcribe(audio: resampledResponse, sampleRate: 16000)
+        print("ASR transcript: \"\(transcript)\"")
+
+        // Basic checks: transcript should be non-empty English text
+        XCTAssertFalse(transcript.isEmpty, "Transcript should not be empty")
+        XCTAssertGreaterThan(transcript.count, 3, "Transcript should contain recognizable words")
+
+        // Check for excessive repetition (same word >5 times in a row)
+        let words = transcript.lowercased().split(separator: " ").map(String.init)
+        var maxConsecutive = 1
+        var currentRun = 1
+        for i in 1..<words.count {
+            if words[i] == words[i-1] {
+                currentRun += 1
+                maxConsecutive = max(maxConsecutive, currentRun)
+            } else {
+                currentRun = 1
+            }
+        }
+        print("Max consecutive repeated word: \(maxConsecutive)")
+        XCTAssertLessThan(maxConsecutive, 6, "Response should not have excessive word repetition (>5 consecutive)")
+    }
+}
+
+// MARK: - Utility
+
+/// Simple linear resampling (for ASR which expects 16kHz from PersonaPlex's 24kHz output).
+private func resampleLinear(_ samples: [Float], fromRate: Int, toRate: Int) -> [Float] {
+    guard fromRate != toRate, !samples.isEmpty else { return samples }
+    let ratio = Double(fromRate) / Double(toRate)
+    let outputCount = Int(Double(samples.count) / ratio)
+    var output = [Float](repeating: 0, count: outputCount)
+    for i in 0..<outputCount {
+        let srcPos = Double(i) * ratio
+        let srcIdx = Int(srcPos)
+        let frac = Float(srcPos - Double(srcIdx))
+        if srcIdx + 1 < samples.count {
+            output[i] = samples[srcIdx] * (1 - frac) + samples[srcIdx + 1] * frac
+        } else if srcIdx < samples.count {
+            output[i] = samples[srcIdx]
+        }
+    }
+    return output
 }

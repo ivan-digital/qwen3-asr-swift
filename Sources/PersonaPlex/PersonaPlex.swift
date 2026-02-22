@@ -22,15 +22,30 @@ public final class PersonaPlexModel: Module {
     // MARK: - Offline Inference
 
     /// Process user audio and generate response audio.
+    ///
+    /// Stream layout (17 streams):
+    ///   - Stream 0:    text (agent inner monologue)
+    ///   - Streams 1-8: agent audio (8 codebooks, predicted by depformer)
+    ///   - Streams 9-16: user audio (8 codebooks from Mimi encoder)
+    ///
+    /// Prompt sequence before user audio:
+    ///   1. Voice prompt (pre-computed embeddings fed through temporal transformer)
+    ///   2. 0.5s silence spacer
+    ///   3. Text system prompt (SentencePiece tokens, one per frame)
+    ///   4. 0.5s silence spacer
+    ///   5. User audio frames, then autoregressive generation
+    ///
     /// - Parameters:
     ///   - userAudio: [numSamples] float array of 24kHz mono audio
     ///   - voice: voice preset for the agent
+    ///   - systemPromptTokens: SentencePiece-tokenized system prompt (nil = default)
     ///   - maxSteps: maximum generation steps (at 12.5 Hz)
     ///   - verbose: print timing info
     /// - Returns: [numSamples] float array of 24kHz response audio
     public func respond(
         userAudio: [Float],
         voice: PersonaPlexVoice = .NATM0,
+        systemPromptTokens: [Int32]? = nil,
         maxSteps: Int = 500,
         verbose: Bool = false
     ) -> [Float] {
@@ -41,57 +56,160 @@ public final class PersonaPlexModel: Module {
         let userCodes = mimi.encode(audioArray)  // [1, numCodebooks, T]
         eval(userCodes)
 
-        let prefillLen = userCodes.shape[2]
+        let userFrameCount = userCodes.shape[2]
         if verbose {
             let encTime = CFAbsoluteTimeGetCurrent() - startTime
-            print("  Mimi encode: \(String(format: "%.2f", encTime))s, \(prefillLen) frames")
+            print("  Mimi encode: \(String(format: "%.2f", encTime))s, \(userFrameCount) frames")
         }
 
-        // 2. Reset caches
+        // 2. Load voice prompt embeddings
+        let voiceStart = CFAbsoluteTimeGetCurrent()
+        let voiceEmbeddings: MLXArray?
+        let voiceCache: MLXArray?
+        do {
+            let modelDir = try HuggingFaceDownloader.getCacheDirectory(for: "aufklarer/PersonaPlex-7B-MLX-4bit")
+            let voiceDir = modelDir.appendingPathComponent("voices")
+            let voiceFile = voiceDir.appendingPathComponent("\(voice.rawValue).safetensors")
+            if FileManager.default.fileExists(atPath: voiceFile.path) {
+                let weights = try MLX.loadArrays(url: voiceFile)
+                voiceEmbeddings = weights["embeddings"]  // [T, 1, 1, dim]
+                voiceCache = weights["cache"]            // [1, 17, 4]
+            } else {
+                voiceEmbeddings = nil
+                voiceCache = nil
+            }
+        } catch {
+            voiceEmbeddings = nil
+            voiceCache = nil
+        }
+
+        let voiceFrameCount = voiceEmbeddings?.shape[0] ?? 0
+        let silenceFrameCount = Int(0.5 * cfg.mimi.frameRate)  // 0.5s silence = ~6 frames
+        let textPromptTokens = systemPromptTokens ?? TemporalTransformerConfig.defaultSystemPromptTokens
+        let textPromptLen = textPromptTokens.count
+
+        if verbose {
+            let voiceTime = CFAbsoluteTimeGetCurrent() - voiceStart
+            print("  Voice prompt: \(voiceFrameCount) frames, text prompt: \(textPromptLen) tokens (\(String(format: "%.2f", voiceTime))s)")
+        }
+
+        // 3. Reset caches
         temporal.resetCache()
         mimi.resetState()
 
-        // 3. Initialize delay buffer
+        // Total steps: voice + silence1 + text_prompt + silence2 + user audio + generation
+        let promptLen = voiceFrameCount + silenceFrameCount + textPromptLen + silenceFrameCount
+        let prefillLen = promptLen + userFrameCount
         let delays = cfg.delays
         let maxDelay = cfg.maxDelay
         let numStreams = cfg.numStreams
-
-        // Token cache: [numStreams, maxLen]
-        // Stream 0 = text, streams 1-8 = user audio, streams 9-16 = agent audio
+        let nQ = cfg.temporal.nQ
         let totalLen = prefillLen + maxSteps + maxDelay + 3
+
+        // 4. Initialize token cache
+        // Stream 0 = text, streams 1-8 = agent audio, streams 9-16 = user audio
         var tokenCache = [[Int32]](repeating: [Int32](repeating: -1, count: totalLen), count: numStreams)
 
-        // Fill user audio tokens into cache
+        // --- Phase 1: Voice prompt tokens ---
+        // During voice prompt: text=PAD, agent audio=silence tokens, user audio=sine tokens
+        for t in 0..<voiceFrameCount {
+            // Text: padding token
+            tokenCache[0][t + delays[0]] = Int32(cfg.temporal.textPaddingId)
+            // Agent audio: silence tokens (streams 1-8)
+            for cb in 0..<nQ {
+                let streamIdx = 1 + cb
+                tokenCache[streamIdx][t + delays[streamIdx]] = TemporalTransformerConfig.silenceTokens[cb]
+            }
+            // User audio: sine tokens (streams 9-16)
+            for cb in 0..<nQ {
+                let streamIdx = 1 + nQ + cb
+                tokenCache[streamIdx][t + delays[streamIdx]] = TemporalTransformerConfig.sineTokens[cb]
+            }
+        }
+
+        // --- Phase 2: Silence spacer 1 ---
+        var pos = voiceFrameCount
+        for t in 0..<silenceFrameCount {
+            tokenCache[0][pos + delays[0]] = Int32(cfg.temporal.textPaddingId)
+            for cb in 0..<nQ {
+                let agentIdx = 1 + cb
+                tokenCache[agentIdx][pos + delays[agentIdx]] = TemporalTransformerConfig.silenceTokens[cb]
+            }
+            for cb in 0..<nQ {
+                let userIdx = 1 + nQ + cb
+                tokenCache[userIdx][pos + delays[userIdx]] = TemporalTransformerConfig.sineTokens[cb]
+            }
+            pos += 1
+        }
+
+        // --- Phase 3: Text prompt ---
+        // Text stream gets the actual system prompt tokens (one per frame)
+        // Agent audio = silence tokens, user audio = sine tokens
+        for t in 0..<textPromptLen {
+            tokenCache[0][pos + delays[0]] = textPromptTokens[t]
+            for cb in 0..<nQ {
+                let agentIdx = 1 + cb
+                tokenCache[agentIdx][pos + delays[agentIdx]] = TemporalTransformerConfig.silenceTokens[cb]
+            }
+            for cb in 0..<nQ {
+                let userIdx = 1 + nQ + cb
+                tokenCache[userIdx][pos + delays[userIdx]] = TemporalTransformerConfig.sineTokens[cb]
+            }
+            pos += 1
+        }
+
+        // --- Phase 4: Silence spacer 2 ---
+        for _ in 0..<silenceFrameCount {
+            tokenCache[0][pos + delays[0]] = Int32(cfg.temporal.textPaddingId)
+            for cb in 0..<nQ {
+                let agentIdx = 1 + cb
+                tokenCache[agentIdx][pos + delays[agentIdx]] = TemporalTransformerConfig.silenceTokens[cb]
+            }
+            for cb in 0..<nQ {
+                let userIdx = 1 + nQ + cb
+                tokenCache[userIdx][pos + delays[userIdx]] = TemporalTransformerConfig.sineTokens[cb]
+            }
+            pos += 1
+        }
+
+        // --- Phase 5: User audio ---
+        // Fill user audio into streams 9-16, agent audio = silence, text = PAD
         let userCodesArr = userCodes.asType(.int32)
         eval(userCodesArr)
-        for cb in 0..<min(cfg.temporal.nQ, userCodes.shape[1]) {
-            let row = userCodesArr[0, cb]  // [T]
-            let rowValues: [Int32] = (0..<prefillLen).map { t in
-                row[t].item(Int32.self)
+        for t in 0..<userFrameCount {
+            tokenCache[0][pos + delays[0]] = Int32(cfg.temporal.textPaddingId)
+            // Agent audio: silence during user turn
+            for cb in 0..<nQ {
+                let agentIdx = 1 + cb
+                tokenCache[agentIdx][pos + delays[agentIdx]] = TemporalTransformerConfig.silenceTokens[cb]
             }
-            for t in 0..<prefillLen {
-                tokenCache[1 + cb][t + delays[1 + cb]] = rowValues[t]
+            // User audio from Mimi encoder
+            for cb in 0..<min(nQ, userCodes.shape[1]) {
+                let userIdx = 1 + nQ + cb
+                tokenCache[userIdx][pos + delays[userIdx]] = userCodesArr[0, cb, t].item(Int32.self)
             }
+            pos += 1
         }
 
-        // Initialize text stream with padding
-        for t in 0..<prefillLen {
-            tokenCache[0][t + delays[0]] = Int32(cfg.temporal.textPaddingId)
-        }
-
-        // Initialize agent audio streams with initial tokens
-        for cb in 0..<cfg.temporal.nQ {
-            let streamIdx = 1 + cfg.temporal.nQ + cb  // 9-16
-            for t in 0..<prefillLen {
-                tokenCache[streamIdx][t + delays[streamIdx]] = Int32(cfg.temporal.initialTokenId)
-            }
-        }
-
-        // 4. Autoregressive generation
+        // 5. Autoregressive generation (full-duplex: agent generates while user speaks)
+        //
+        // Phase layout:
+        //   steps 0..<voiceFrameCount:    voice prompt (embeddings only, no generation)
+        //   steps voiceFrameCount..<promptLen: silence + text prompt + silence (forward, no generation)
+        //   steps promptLen..<prefillLen:  user audio + simultaneous agent generation
+        //   steps prefillLen..<prefillLen+maxSteps: post-user generation (user=sine)
         var agentTokens: [[Int32]] = Array(repeating: [], count: cfg.depformer.numSteps)
         let genStart = CFAbsoluteTimeGetCurrent()
+        let generationStartStep = promptLen  // Start generating when user audio begins
 
         for step in 0..<(prefillLen + maxSteps) {
+            // --- Voice prompt: use pre-computed embeddings ---
+            if step < voiceFrameCount, let voiceEmb = voiceEmbeddings {
+                let emb = voiceEmb[step].reshaped([1, 1, cfg.temporal.dim])
+                temporal.forwardEmbedding(emb, offset: step)
+                continue
+            }
+
             // Build input tokens for this step
             let textTokenArr = MLXArray([tokenCache[0][step]]).reshaped([1, 1])
             var audioTokenArrs: [MLXArray] = []
@@ -110,6 +228,11 @@ public final class PersonaPlexModel: Module {
             )
             eval(hidden, textLogits)
 
+            // During silence/text prompt, skip sampling
+            if step < generationStartStep {
+                continue
+            }
+
             // Sample text token
             let textToken = sampleTopK(
                 logits: textLogits.squeezed(axis: 1),
@@ -118,15 +241,19 @@ public final class PersonaPlexModel: Module {
             )
             eval(textToken)
 
-            // Generate agent audio tokens via depformer
+            // Generate agent audio tokens via depformer (with per-codebook repetition penalty)
             let agentCodes = depformer.generate(
                 temporalHidden: hidden,
                 textToken: textToken
-            ) { logits in
-                sampleTopK(
+            ) { logits, cbIdx in
+                let windowSize = cfg.sampling.repetitionWindow
+                let history = Array(agentTokens[cbIdx].suffix(windowSize))
+                return sampleTopKWithPenalty(
                     logits: logits,
                     temperature: cfg.sampling.audioTemp,
-                    topK: cfg.sampling.audioTopK
+                    topK: cfg.sampling.audioTopK,
+                    pastTokens: history,
+                    penalty: cfg.sampling.audioRepetitionPenalty
                 )
             }
             eval(agentCodes)
@@ -138,21 +265,28 @@ public final class PersonaPlexModel: Module {
                 let textVal = textToken[0].item(Int32.self)
                 tokenCache[0][nextStep + delays[0]] = textVal
 
-                // Agent audio tokens
+                // Agent audio tokens → streams 1-8 (first nQ codebooks feed back)
                 let agentArr = agentCodes[0]  // [numSteps]
                 for cb in 0..<cfg.depformer.numSteps {
-                    let agentStreamIdx = 1 + cfg.temporal.nQ + cb
-                    if agentStreamIdx < numStreams {
-                        let tok = agentArr[cb].item(Int32.self)
+                    let tok = agentArr[cb].item(Int32.self)
+                    if cb < nQ {
+                        let agentStreamIdx = 1 + cb
                         let delayedPos = nextStep + delays[agentStreamIdx]
                         if delayedPos < totalLen {
                             tokenCache[agentStreamIdx][delayedPos] = tok
                         }
                     }
-                    // Only collect agent tokens after prefill
-                    if step >= prefillLen {
-                        let tok = agentArr[cb].item(Int32.self)
-                        agentTokens[cb].append(tok)
+                    agentTokens[cb].append(tok)
+                }
+
+                // User audio: fill with sine tokens after user audio ends
+                if step >= prefillLen {
+                    for cb in 0..<nQ {
+                        let userIdx = 1 + nQ + cb
+                        let delayedPos = nextStep + delays[userIdx]
+                        if delayedPos < totalLen {
+                            tokenCache[userIdx][delayedPos] = TemporalTransformerConfig.sineTokens[cb]
+                        }
                     }
                 }
             }
@@ -160,19 +294,17 @@ public final class PersonaPlexModel: Module {
 
         if verbose {
             let genTime = CFAbsoluteTimeGetCurrent() - genStart
-            let genSteps = prefillLen + maxSteps
-            let msPerStep = genTime / Double(genSteps) * 1000
-            print("  Generation: \(String(format: "%.2f", genTime))s, \(String(format: "%.1f", msPerStep))ms/step")
+            let totalSteps = prefillLen + maxSteps
+            let msPerStep = genTime / Double(totalSteps) * 1000
+            print("  Generation: \(String(format: "%.2f", genTime))s, \(String(format: "%.1f", msPerStep))ms/step (\(totalSteps) steps, \(maxSteps) gen)")
         }
 
-        // 5. Decode agent tokens with Mimi
+        // 6. Decode agent tokens with Mimi
         let decStart = CFAbsoluteTimeGetCurrent()
         let numAgentFrames = agentTokens[0].count
         guard numAgentFrames > 0 else { return [] }
 
         // Build [1, numCodebooks, T] tensor for Mimi decoder
-        // Use only the first 8 codebooks (Mimi uses 16, but agent only generates 8)
-        // Pad remaining codebooks with zeros
         var codeMatrix = [[Int32]](repeating: [Int32](repeating: 0, count: numAgentFrames),
                                    count: cfg.mimi.numCodebooks)
         for cb in 0..<min(cfg.depformer.numSteps, cfg.mimi.numCodebooks) {
