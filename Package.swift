@@ -35,6 +35,14 @@ let package = Package(
         .executable(
             name: "cosyvoice-tts-cli",
             targets: ["CosyVoiceTTSCLI"]
+        ),
+        .library(
+            name: "PersonaPlex",
+            targets: ["PersonaPlex"]
+        ),
+        .executable(
+            name: "personaplex-cli",
+            targets: ["PersonaPlexCLI"]
         )
     ],
     dependencies: [
@@ -101,6 +109,28 @@ let package = Package(
                 .product(name: "MLX", package: "mlx-swift"),
                 .product(name: "ArgumentParser", package: "swift-argument-parser")
             ]
+        ),
+        .target(
+            name: "PersonaPlex",
+            dependencies: [
+                "Qwen3Common",
+                .product(name: "MLX", package: "mlx-swift"),
+                .product(name: "MLXNN", package: "mlx-swift"),
+                .product(name: "MLXFast", package: "mlx-swift")
+            ]
+        ),
+        .executableTarget(
+            name: "PersonaPlexCLI",
+            dependencies: [
+                "PersonaPlex",
+                "Qwen3Common",
+                .product(name: "MLX", package: "mlx-swift"),
+                .product(name: "ArgumentParser", package: "swift-argument-parser")
+            ]
+        ),
+        .testTarget(
+            name: "PersonaPlexTests",
+            dependencies: ["PersonaPlex", "Qwen3Common"]
         ),
         .testTarget(
             name: "Qwen3ASRTests",
