@@ -5,8 +5,9 @@ AI speech models for Apple Silicon, powered by [MLX Swift](https://github.com/ml
 - **Qwen3-ASR** — Speech-to-text (automatic speech recognition)
 - **Qwen3-TTS** — Text-to-speech synthesis (highest quality, custom speakers)
 - **CosyVoice TTS** — Text-to-speech with streaming (9 languages, DiT flow matching)
+- **PersonaPlex** — Full-duplex speech-to-speech (7B, audio in → audio out)
 
-Papers: [Qwen3-ASR](https://arxiv.org/abs/2601.21337), [Qwen3-TTS](https://arxiv.org/abs/2601.15621), [CosyVoice 3](https://arxiv.org/abs/2505.17589), [Mimi](https://arxiv.org/abs/2410.00037) (audio codec used by Qwen3-TTS)
+Papers: [Qwen3-ASR](https://arxiv.org/abs/2601.21337), [Qwen3-TTS](https://arxiv.org/abs/2601.15621), [CosyVoice 3](https://arxiv.org/abs/2505.17589), [PersonaPlex](https://arxiv.org/abs/2602.06053), [Mimi](https://arxiv.org/abs/2410.00037) (audio codec)
 
 ## Models
 
@@ -17,11 +18,13 @@ Papers: [Qwen3-ASR](https://arxiv.org/abs/2601.21337), [Qwen3-TTS](https://arxiv
 | Qwen3-TTS-0.6B Base (4-bit) | Text → Speech | Yes (~120ms) | 10 languages | ~1.7 GB |
 | Qwen3-TTS-0.6B CustomVoice (4-bit) | Text → Speech | Yes (~120ms) | 10 languages | ~1.7 GB |
 | CosyVoice3-0.5B (4-bit) | Text → Speech | Yes (~150ms) | 9 languages | ~1.9 GB |
+| PersonaPlex-7B (4-bit) | Speech → Speech | No | EN | ~5.5 GB |
 
 ### When to Use Which TTS
 
 - **Qwen3-TTS**: Best quality, streaming (~120ms), 9 built-in speakers, 10 languages, batch synthesis
 - **CosyVoice TTS**: Streaming (~150ms), 9 languages, DiT flow matching + HiFi-GAN vocoder
+- **PersonaPlex**: Full-duplex speech-to-speech (audio in → audio out), 18 voice presets, based on Moshi architecture
 
 ## Installation
 
@@ -38,10 +41,11 @@ dependencies: [
 Import the module you need:
 
 ```swift
-import Qwen3ASR    // Speech recognition
-import Qwen3TTS    // Text-to-speech (Qwen3)
-import CosyVoiceTTS // Text-to-speech (streaming)
-import Qwen3Common // Shared utilities
+import Qwen3ASR     // Speech recognition
+import Qwen3TTS     // Text-to-speech (Qwen3)
+import CosyVoiceTTS  // Text-to-speech (streaming)
+import PersonaPlex   // Speech-to-speech (full-duplex)
+import Qwen3Common   // Shared utilities
 ```
 
 ### Requirements
@@ -194,6 +198,46 @@ CLI:
 .build/release/qwen3-tts-cli "Hello world" --stream --first-chunk-frames 1
 ```
 
+## PersonaPlex Usage
+
+### Speech-to-Speech
+
+```swift
+import PersonaPlex
+import Qwen3Common  // for WAVWriter, AudioFileLoader
+
+let model = try await PersonaPlexModel.fromPretrained()
+// Downloads ~5.5 GB on first run (temporal 4-bit + depformer + Mimi codec + voice presets)
+
+let audio = try AudioFileLoader.load(url: inputURL, targetSampleRate: 24000)
+let response = model.respond(userAudio: audio, voice: .NATM0)
+// Output is 24kHz mono float samples
+try WAVWriter.write(samples: response, sampleRate: 24000, to: outputURL)
+```
+
+### Voice Selection
+
+18 voice presets available:
+- **Natural Female**: NATF0, NATF1, NATF2, NATF3
+- **Natural Male**: NATM0, NATM1, NATM2, NATM3
+- **Variety Female**: VARF0, VARF1, VARF2, VARF3, VARF4
+- **Variety Male**: VARM0, VARM1, VARM2, VARM3, VARM4
+
+### PersonaPlex CLI
+
+```bash
+swift build -c release
+
+# Basic speech-to-speech
+.build/release/personaplex-cli --input question.wav --output response.wav
+
+# Choose a voice
+.build/release/personaplex-cli --input question.wav --voice NATF1 --output response.wav
+
+# List available voices
+.build/release/personaplex-cli --list-voices
+```
+
 ## CosyVoice TTS Usage
 
 ### Basic Synthesis
@@ -256,7 +300,7 @@ RTF = Real-Time Factor (lower is better, < 1.0 = faster than real-time).
 
 ## Architecture
 
-See [ASR Inference](docs/asr-inference.md), [ASR Model](docs/asr-model.md), [Qwen3-TTS Inference](docs/qwen3-tts-inference.md), [TTS Model](docs/tts-model.md), [CosyVoice TTS](docs/cosyvoice-tts.md) for detailed architecture docs.
+See [ASR Inference](docs/asr-inference.md), [ASR Model](docs/asr-model.md), [Qwen3-TTS Inference](docs/qwen3-tts-inference.md), [TTS Model](docs/tts-model.md), [CosyVoice TTS](docs/cosyvoice-tts.md), [PersonaPlex](docs/personaplex.md) for detailed architecture docs.
 
 ## Cache Configuration
 
@@ -281,7 +325,7 @@ swift build -c release --disable-sandbox
 Unit tests (config, sampling) run without model downloads:
 
 ```bash
-swift test --filter "Qwen3TTSConfigTests|SamplingTests|CosyVoiceTTSConfigTests"
+swift test --filter "Qwen3TTSConfigTests|SamplingTests|CosyVoiceTTSConfigTests|PersonaPlexTests"
 ```
 
 Integration tests require model weights (downloaded automatically on first run):
@@ -292,6 +336,9 @@ swift test --filter TTSASRRoundTripTests
 
 # ASR only: transcribe test audio
 swift test --filter Qwen3ASRIntegrationTests
+
+# PersonaPlex E2E: speech-to-speech pipeline (~5.5 GB download)
+PERSONAPLEX_E2E=1 swift test --filter PersonaPlexE2ETests
 ```
 
 > **Note:** MLX Metal library must be built before running tests that use MLX operations.
@@ -304,6 +351,7 @@ swift test --filter Qwen3ASRIntegrationTests
 | Qwen3-ASR | 52 languages (CN, EN, Cantonese, DE, FR, ES, JA, KO, RU, + 22 Chinese dialects, ...) |
 | Qwen3-TTS | EN, CN, DE, JA, ES, FR, KO, RU, IT, PT (+ Beijing/Sichuan dialects via CustomVoice) |
 | CosyVoice TTS | CN, EN, JA, KO, DE, ES, FR, IT, RU |
+| PersonaPlex | EN |
 
 ## License
 
