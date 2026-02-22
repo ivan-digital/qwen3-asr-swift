@@ -23,7 +23,7 @@ struct PersonaPlexCLI: ParsableCommand {
     var maxSteps: Int = 500
 
     @Option(name: .long, help: "Model ID on HuggingFace")
-    var modelId: String = "ivan-digital/PersonaPlex-7B-MLX-4bit"
+    var modelId: String = "aufklarer/PersonaPlex-7B-MLX-4bit"
 
     @Flag(name: .long, help: "List available voices and exit")
     var listVoices: Bool = false

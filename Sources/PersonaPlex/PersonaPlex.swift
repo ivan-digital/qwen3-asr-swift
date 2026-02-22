@@ -210,7 +210,7 @@ public final class PersonaPlexModel: Module {
     // MARK: - Model Loading
 
     public static func fromPretrained(
-        modelId: String = "ivan-digital/PersonaPlex-7B-MLX-4bit",
+        modelId: String = "aufklarer/PersonaPlex-7B-MLX-4bit",
         progressHandler: ((Double, String) -> Void)? = nil
     ) async throws -> PersonaPlexModel {
         let cfg = PersonaPlexConfig.default
