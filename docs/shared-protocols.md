@@ -180,19 +180,17 @@ Sources/
 │   ├── PersonaPlex.swift      PersonaPlexModel: SpeechToSpeechModel
 │   └── PersonaPlex+Protocols.swift
 │
-├── Qwen3ASRCLI/               CLI for ASR + forced alignment
-├── Qwen3TTSCLI/               CLI for Qwen3-TTS
-├── CosyVoiceTTSCLI/           CLI for CosyVoice TTS
-└── PersonaPlexCLI/            CLI for PersonaPlex
+├── AudioCLILib/               CLI commands and utilities (library)
+└── AudioCLI/                  Thin launcher (main.swift → AudioCLILib)
 ```
 
 ### Dependencies
 
 ```
-AudioCommon  ← Qwen3ASR  ← Qwen3ASRCLI
-             ← Qwen3TTS  ← Qwen3TTSCLI
-             ← CosyVoiceTTS ← CosyVoiceTTSCLI
-             ← PersonaPlex ← PersonaPlexCLI
+AudioCommon  ← Qwen3ASR      ─┐
+             ← Qwen3TTS      ├── AudioCLILib ── AudioCLI (executable)
+             ← CosyVoiceTTS  │
+             ← PersonaPlex  ─┘
 ```
 
 Each model target depends only on `AudioCommon` and MLX. No cross-dependencies between model targets.

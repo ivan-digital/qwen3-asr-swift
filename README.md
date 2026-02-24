@@ -35,6 +35,22 @@ Papers: [Qwen3-ASR](https://arxiv.org/abs/2601.21337), [Qwen3-TTS](https://arxiv
 
 ## Installation
 
+### Homebrew
+
+```bash
+brew tap ivan-digital/speech https://github.com/ivan-digital/qwen3-asr-swift
+brew install speech
+```
+
+Then use:
+
+```bash
+audio transcribe recording.wav
+audio speak "Hello world"
+audio speak "Hallo Welt" --engine cosyvoice --language german
+audio respond --input question.wav
+```
+
 ### Swift Package Manager
 
 Add to your `Package.swift`:
@@ -88,10 +104,10 @@ print(transcription)
 swift build -c release
 
 # Default (0.6B)
-.build/release/qwen3-asr-cli audio.wav
+.build/release/audio transcribe audio.wav
 
 # Use 1.7B model
-.build/release/qwen3-asr-cli --model 1.7B audio.wav
+.build/release/audio transcribe audio.wav --model 1.7B
 ```
 
 ## Forced Alignment
@@ -121,10 +137,10 @@ for word in aligned {
 swift build -c release
 
 # Align with provided text
-.build/release/qwen3-asr-cli --align --text "Hello world" audio.wav
+.build/release/audio align audio.wav --text "Hello world"
 
 # Transcribe first, then align
-.build/release/qwen3-asr-cli --align audio.wav
+.build/release/audio align audio.wav
 ```
 
 Output:
@@ -156,7 +172,7 @@ try WAVWriter.write(samples: audio, sampleRate: 24000, to: outputURL)
 
 ```bash
 swift build -c release
-.build/release/qwen3-tts-cli "Hello world" --output output.wav --language english
+.build/release/audio speak "Hello world" --output output.wav --language english
 ```
 
 ### Custom Voice / Speaker Selection
@@ -182,10 +198,10 @@ CLI:
 
 ```bash
 # Use CustomVoice model with a speaker
-.build/release/qwen3-tts-cli "Hello world" --model customVoice --speaker vivian --output vivian.wav
+.build/release/audio speak "Hello world" --model customVoice --speaker vivian --output vivian.wav
 
 # List available speakers
-.build/release/qwen3-tts-cli --model customVoice --list-speakers
+.build/release/audio speak --model customVoice --list-speakers
 ```
 
 ### Tone / Style Instructions (CustomVoice only)
@@ -222,11 +238,11 @@ CLI:
 
 ```bash
 # With style instruction
-.build/release/qwen3-tts-cli "Good morning!" --model customVoice --speaker ryan \
+.build/release/audio speak "Good morning!" --model customVoice --speaker ryan \
     --instruct "Speak in a cheerful, upbeat tone" --output cheerful.wav
 
 # Default instruct ("Speak naturally.") is applied automatically when using CustomVoice
-.build/release/qwen3-tts-cli "Hello world" --model customVoice --speaker ryan --output natural.wav
+.build/release/audio speak "Hello world" --model customVoice --speaker ryan --output natural.wav
 ```
 
 When no `--instruct` is provided with the CustomVoice model, `"Speak naturally."` is applied automatically to prevent rambling output. The Base model does not support instruct.
@@ -249,7 +265,7 @@ for (i, audio) in audioList.enumerated() {
 ```bash
 # Create a file with one text per line
 echo "Hello world.\nGoodbye world." > texts.txt
-.build/release/qwen3-tts-cli --batch-file texts.txt --output output.wav --batch-size 4
+.build/release/audio speak --batch-file texts.txt --output output.wav --batch-size 4
 # Produces output_0.wav, output_1.wav, ...
 ```
 
@@ -284,10 +300,10 @@ CLI:
 
 ```bash
 # Default streaming (3-frame first chunk, ~225ms latency)
-.build/release/qwen3-tts-cli "Hello world" --stream
+.build/release/audio speak "Hello world" --stream
 
 # Low-latency (1-frame first chunk, ~120ms latency)
-.build/release/qwen3-tts-cli "Hello world" --stream --first-chunk-frames 1
+.build/release/audio speak "Hello world" --stream --first-chunk-frames 1
 ```
 
 ## PersonaPlex Usage
@@ -347,14 +363,14 @@ Available presets: `focused` (default), `assistant`, `customerService`, `teacher
 swift build -c release
 
 # Basic speech-to-speech
-.build/release/personaplex-cli --input question.wav --output response.wav
+.build/release/audio respond --input question.wav --output response.wav
 
 # Choose a voice and system prompt preset
-.build/release/personaplex-cli --input question.wav --voice NATF1 --system-prompt focused --output response.wav
+.build/release/audio respond --input question.wav --voice NATF1 --system-prompt focused --output response.wav
 
 # List available voices and prompts
-.build/release/personaplex-cli --list-voices
-.build/release/personaplex-cli --list-prompts
+.build/release/audio respond --list-voices
+.build/release/audio respond --list-prompts
 ```
 
 ## CosyVoice TTS Usage
@@ -389,10 +405,10 @@ for try await chunk in model.synthesizeStream(text: "Hello, how are you today?",
 swift build -c release
 
 # Basic synthesis
-.build/release/cosyvoice-tts-cli "Hello world" --language english --output output.wav
+.build/release/audio speak "Hello world" --engine cosyvoice --language english --output output.wav
 
 # Streaming synthesis
-.build/release/cosyvoice-tts-cli "Hello world" --language english --stream --output output.wav
+.build/release/audio speak "Hello world" --engine cosyvoice --language english --stream --output output.wav
 ```
 
 ## Latency (M2 Max, 64 GB)

@@ -24,25 +24,13 @@ let package = Package(
             name: "CosyVoiceTTS",
             targets: ["CosyVoiceTTS"]
         ),
-        .executable(
-            name: "qwen3-asr-cli",
-            targets: ["Qwen3ASRCLI"]
-        ),
-        .executable(
-            name: "qwen3-tts-cli",
-            targets: ["Qwen3TTSCLI"]
-        ),
-        .executable(
-            name: "cosyvoice-tts-cli",
-            targets: ["CosyVoiceTTSCLI"]
-        ),
         .library(
             name: "PersonaPlex",
             targets: ["PersonaPlex"]
         ),
         .executable(
-            name: "personaplex-cli",
-            targets: ["PersonaPlexCLI"]
+            name: "audio",
+            targets: ["AudioCLI"]
         )
     ],
     dependencies: [
@@ -87,29 +75,6 @@ let package = Package(
                 .product(name: "Transformers", package: "swift-transformers")
             ]
         ),
-        .executableTarget(
-            name: "Qwen3ASRCLI",
-            dependencies: [
-                "Qwen3ASR",
-                .product(name: "ArgumentParser", package: "swift-argument-parser")
-            ]
-        ),
-        .executableTarget(
-            name: "Qwen3TTSCLI",
-            dependencies: [
-                "Qwen3TTS",
-                .product(name: "ArgumentParser", package: "swift-argument-parser")
-            ]
-        ),
-        .executableTarget(
-            name: "CosyVoiceTTSCLI",
-            dependencies: [
-                "CosyVoiceTTS",
-                "AudioCommon",
-                .product(name: "MLX", package: "mlx-swift"),
-                .product(name: "ArgumentParser", package: "swift-argument-parser")
-            ]
-        ),
         .target(
             name: "PersonaPlex",
             dependencies: [
@@ -119,14 +84,21 @@ let package = Package(
                 .product(name: "MLXFast", package: "mlx-swift")
             ]
         ),
-        .executableTarget(
-            name: "PersonaPlexCLI",
+        .target(
+            name: "AudioCLILib",
             dependencies: [
+                "Qwen3ASR",
+                "Qwen3TTS",
+                "CosyVoiceTTS",
                 "PersonaPlex",
                 "AudioCommon",
                 .product(name: "MLX", package: "mlx-swift"),
                 .product(name: "ArgumentParser", package: "swift-argument-parser")
             ]
+        ),
+        .executableTarget(
+            name: "AudioCLI",
+            dependencies: ["AudioCLILib"]
         ),
         .testTarget(
             name: "PersonaPlexTests",
@@ -146,6 +118,13 @@ let package = Package(
         .testTarget(
             name: "CosyVoiceTTSTests",
             dependencies: ["CosyVoiceTTS", "AudioCommon"]
+        ),
+        .testTarget(
+            name: "AudioCLITests",
+            dependencies: [
+                "AudioCLILib",
+                .product(name: "ArgumentParser", package: "swift-argument-parser")
+            ]
         )
     ]
 )

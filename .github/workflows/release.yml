@@ -1,0 +1,53 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Build release binary
+        run: swift build -c release --disable-sandbox
+
+      - name: Build MLX metallib
+        run: ./scripts/build_mlx_metallib.sh release
+
+      - name: Package
+        run: |
+          mkdir -p dist
+          cp .build/release/audio dist/
+          cp .build/release/mlx.metallib dist/
+          cd dist
+          tar czf audio-macos-arm64.tar.gz audio mlx.metallib
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/audio-macos-arm64.tar.gz
+
+      - name: Update Homebrew formula
+        run: |
+          SHA=$(shasum -a 256 dist/audio-macos-arm64.tar.gz | awk '{print $1}')
+          TAG="${GITHUB_REF_NAME}"
+          URL="https://github.com/${{ github.repository }}/releases/download/${TAG}/audio-macos-arm64.tar.gz"
+
+          git fetch origin main
+          git checkout main
+
+          sed -i '' "s|url \".*\"|url \"${URL}\"|" Formula/speech.rb
+          sed -i '' "s|sha256 \".*\"|sha256 \"${SHA}\"|" Formula/speech.rb
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/speech.rb
+          git diff --cached --quiet || git commit -m "brew: update formula for ${TAG}"
+          git push origin main

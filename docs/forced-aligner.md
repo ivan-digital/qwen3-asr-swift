@@ -138,13 +138,13 @@ Weights use a `thinker.` prefix:
 
 ```bash
 # Align with provided text
-qwen3-asr-cli --align --text "Can you guarantee that the replacement part will be shipped tomorrow?" audio.wav
+audio align audio.wav --text "Can you guarantee that the replacement part will be shipped tomorrow?"
 
 # Transcribe first, then align
-qwen3-asr-cli --align audio.wav
+audio align audio.wav
 
 # Custom aligner model
-qwen3-asr-cli --align --aligner-model mlx-community/Qwen3-ForcedAligner-0.6B-bf16 audio.wav
+audio align audio.wav --aligner-model mlx-community/Qwen3-ForcedAligner-0.6B-bf16
 ```
 
 Output format:

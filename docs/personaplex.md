@@ -214,7 +214,7 @@ model.warmUp()  // compile + warmup pass
 // Subsequent respond() / respondStream() calls use compiled path
 ```
 
-CLI: `personaplex-cli --input audio.wav --compile --output response.wav`
+CLI: `audio respond --input audio.wav --compile --output response.wav`
 
 ## References
 

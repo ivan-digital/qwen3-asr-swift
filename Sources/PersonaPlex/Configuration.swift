@@ -175,7 +175,7 @@ public struct DepformerConfig: Sendable {
     public static var `default`: DepformerConfig { DepformerConfig() }
 }
 
-// MARK: - Mimi Codec Config (reused from MarvisTTS pattern)
+// MARK: - Mimi Codec Config
 
 public struct MimiConfig: Sendable {
     public let channels: Int
