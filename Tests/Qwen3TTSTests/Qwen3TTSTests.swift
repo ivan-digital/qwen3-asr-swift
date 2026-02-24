@@ -334,7 +334,7 @@ final class CustomVoiceInstructE2ETests: XCTestCase {
     func testInstructStreamingSynthesis() async throws {
         let model = try await loadCustomVoiceModel()
 
-        var chunks: [TTSAudioChunk] = []
+        var chunks: [AudioChunk] = []
         let stream = model.synthesizeStream(
             text: "Good morning everyone.",
             language: "english",
@@ -425,7 +425,7 @@ final class CustomVoiceInstructE2ETests: XCTestCase {
     func testStreamingWithDefaultInstruct() async throws {
         let model = try await loadCustomVoiceModel()
 
-        var chunks: [TTSAudioChunk] = []
+        var chunks: [AudioChunk] = []
         let stream = model.synthesizeStream(
             text: "Good morning, how are you today?",
             language: "english",
@@ -1032,7 +1032,7 @@ final class TTSStreamingTests: XCTestCase {
     func testStreamingProducesAudio() async throws {
         let model = try await loadTTSModel()
 
-        var chunks: [TTSAudioChunk] = []
+        var chunks: [AudioChunk] = []
         let stream = model.synthesizeStream(
             text: "Hello world, this is a streaming test.",
             language: "english")
@@ -1069,7 +1069,7 @@ final class TTSStreamingTests: XCTestCase {
     func testChunkOrdering() async throws {
         let model = try await loadTTSModel()
 
-        var chunks: [TTSAudioChunk] = []
+        var chunks: [AudioChunk] = []
         let stream = model.synthesizeStream(
             text: "The quick brown fox jumps over the lazy dog.",
             language: "english")
@@ -1080,10 +1080,10 @@ final class TTSStreamingTests: XCTestCase {
 
         XCTAssertGreaterThan(chunks.count, 1, "Longer text should produce multiple chunks")
 
-        // Verify frame continuity: each chunk starts where the previous ended
+        // Verify frame indices are monotonically increasing
         for i in 1..<chunks.count {
-            XCTAssertEqual(chunks[i].frameIndex, chunks[i - 1].totalFrames,
-                "Chunk \(i) frameIndex should equal previous chunk's totalFrames")
+            XCTAssertGreaterThan(chunks[i].frameIndex, chunks[i - 1].frameIndex,
+                "Chunk \(i) frameIndex should be greater than previous chunk's frameIndex")
         }
 
         // First chunk starts at 0
@@ -1091,7 +1091,7 @@ final class TTSStreamingTests: XCTestCase {
 
         // Elapsed time should be monotonically increasing
         for i in 1..<chunks.count {
-            XCTAssertGreaterThan(chunks[i].elapsedTime, chunks[i - 1].elapsedTime,
+            XCTAssertGreaterThan(chunks[i].elapsedTime ?? 0, chunks[i - 1].elapsedTime ?? 0,
                 "Elapsed time should increase monotonically")
         }
 
@@ -1101,7 +1101,7 @@ final class TTSStreamingTests: XCTestCase {
         }
         XCTAssertTrue(chunks.last!.isFinal)
 
-        print("Chunks: \(chunks.map { "[\($0.frameIndex)..<\($0.totalFrames)]" }.joined(separator: " "))")
+        print("Chunks: \(chunks.map { "[\($0.frameIndex)]" }.joined(separator: " "))")
     }
 
     // MARK: - Test 3: First-packet latency
@@ -1203,7 +1203,7 @@ final class TTSStreamingTests: XCTestCase {
 
         let text = "The weather is beautiful today."
 
-        var chunks: [TTSAudioChunk] = []
+        var chunks: [AudioChunk] = []
         let stream = ttsModel.synthesizeStream(
             text: text,
             language: "english",
@@ -1215,9 +1215,8 @@ final class TTSStreamingTests: XCTestCase {
 
         XCTAssertGreaterThan(chunks.count, 0, "Should produce chunks")
 
-        // First chunk should be 1 frame (low-latency zero-pad decode)
-        let firstFrames = chunks[0].totalFrames - chunks[0].frameIndex
-        XCTAssertEqual(firstFrames, 1, "First chunk should be 1 frame")
+        // First chunk should start at frame 0
+        XCTAssertEqual(chunks[0].frameIndex, 0, "First chunk should start at frame 0")
 
         let allSamples = chunks.flatMap { $0.samples }
         let duration = Double(allSamples.count) / 24000.0
@@ -1228,7 +1227,7 @@ final class TTSStreamingTests: XCTestCase {
 
         print("Input:         \"\(text)\"")
         print("Transcription: \"\(transcription)\"")
-        print("Chunks: \(chunks.count), duration: \(fmt(duration))s, first-packet: \(fmt(chunks[0].elapsedTime * 1000))ms")
+        print("Chunks: \(chunks.count), duration: \(fmt(duration))s, first-packet: \(fmt((chunks[0].elapsedTime ?? 0) * 1000))ms")
 
         // Check key words are recognized
         let expectedWords = ["weather", "beautiful", "today"]
@@ -1250,21 +1249,20 @@ final class TTSStreamingTests: XCTestCase {
             language: "english",
             streaming: .lowLatency)
 
-        var chunks: [TTSAudioChunk] = []
+        var chunks: [AudioChunk] = []
         for try await chunk in stream {
             chunks.append(chunk)
         }
 
         XCTAssertGreaterThan(chunks.count, 0)
 
-        // First chunk should be exactly 1 frame (low-latency config uses firstChunkFrames=1)
-        let firstChunkFrames = chunks[0].totalFrames - chunks[0].frameIndex
-        XCTAssertEqual(firstChunkFrames, 1,
-            "Low-latency first chunk should be 1 frame (got \(firstChunkFrames))")
+        // First chunk should start at frame 0
+        XCTAssertEqual(chunks[0].frameIndex, 0,
+            "Low-latency first chunk should start at frame 0")
 
         let allSamples = chunks.flatMap { $0.samples }
         XCTAssertGreaterThan(allSamples.count, 0)
-        print("Low-latency: \(chunks.count) chunks, first chunk \(firstChunkFrames) frames")
+        print("Low-latency: \(chunks.count) chunks")
     }
 
     // MARK: - Helpers

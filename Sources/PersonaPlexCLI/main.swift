@@ -133,7 +133,7 @@ struct PersonaPlexCLI: ParsableCommand {
                         chunkCount += 1
                         if verbose {
                             let chunkDuration = Double(chunk.samples.count) / 24000.0
-                            print("  Chunk \(chunkCount): \(chunk.samples.count) samples (\(String(format: "%.2f", chunkDuration))s) at \(String(format: "%.2f", chunk.elapsedTime))s")
+                            print("  Chunk \(chunkCount): \(chunk.samples.count) samples (\(String(format: "%.2f", chunkDuration))s) at \(String(format: "%.2f", chunk.elapsedTime ?? 0))s")
                         }
                     }
 

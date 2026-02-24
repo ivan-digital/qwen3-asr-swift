@@ -435,7 +435,7 @@ RTF = Real-Time Factor (lower is better, < 1.0 = faster than real-time).
 
 ## Architecture
 
-See [ASR Inference](docs/asr-inference.md), [ASR Model](docs/asr-model.md), [Forced Aligner](docs/forced-aligner.md), [Qwen3-TTS Inference](docs/qwen3-tts-inference.md), [TTS Model](docs/tts-model.md), [CosyVoice TTS](docs/cosyvoice-tts.md), [PersonaPlex](docs/personaplex.md) for detailed architecture docs.
+See [ASR Inference](docs/asr-inference.md), [ASR Model](docs/asr-model.md), [Forced Aligner](docs/forced-aligner.md), [Qwen3-TTS Inference](docs/qwen3-tts-inference.md), [TTS Model](docs/tts-model.md), [CosyVoice TTS](docs/cosyvoice-tts.md), [PersonaPlex](docs/personaplex.md), [Shared Protocols](docs/shared-protocols.md) for detailed architecture docs.
 
 ## Cache Configuration
 

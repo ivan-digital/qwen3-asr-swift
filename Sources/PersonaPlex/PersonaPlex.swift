@@ -455,19 +455,7 @@ public final class PersonaPlexModel: Module {
 
     // MARK: - Streaming Inference
 
-    /// Audio chunk emitted during streaming generation.
-    public struct PersonaPlexAudioChunk: Sendable {
-        /// PCM samples at 24kHz mono
-        public let samples: [Float]
-        /// Sample rate (always 24000)
-        public let sampleRate: Int
-        /// Frame index of the first frame in this chunk
-        public let frameIndex: Int
-        /// True if this is the last chunk
-        public let isFinal: Bool
-        /// Elapsed time since generation started
-        public let elapsedTime: Double
-    }
+    // AudioChunk is defined in Qwen3Common/Protocols.swift
 
     /// Streaming configuration.
     public struct PersonaPlexStreamingConfig: Sendable {
@@ -504,7 +492,7 @@ public final class PersonaPlexModel: Module {
         maxSteps: Int = 500,
         streaming: PersonaPlexStreamingConfig = .default,
         verbose: Bool = false
-    ) -> AsyncThrowingStream<PersonaPlexAudioChunk, Error> {
+    ) -> AsyncThrowingStream<AudioChunk, Error> {
         AsyncThrowingStream { continuation in
             Task {
                 do {
@@ -767,7 +755,7 @@ public final class PersonaPlexModel: Module {
                             let samples = flat.asArray(Float.self)
 
                             let elapsed = CFAbsoluteTimeGetCurrent() - genStart
-                            continuation.yield(PersonaPlexAudioChunk(
+                            continuation.yield(AudioChunk(
                                 samples: samples,
                                 sampleRate: cfg.sampleRate,
                                 frameIndex: totalEmittedFrames,
@@ -794,7 +782,7 @@ public final class PersonaPlexModel: Module {
                         let samples = flat.asArray(Float.self)
 
                         let elapsed = CFAbsoluteTimeGetCurrent() - genStart
-                        continuation.yield(PersonaPlexAudioChunk(
+                        continuation.yield(AudioChunk(
                             samples: samples,
                             sampleRate: cfg.sampleRate,
                             frameIndex: totalEmittedFrames,

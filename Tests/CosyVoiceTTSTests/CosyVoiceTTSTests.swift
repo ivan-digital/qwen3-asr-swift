@@ -462,7 +462,7 @@ final class CosyVoiceTTSE2ETests: XCTestCase {
     func testStreamingSynthesis() async throws {
         let model = try await CosyVoiceTTSModel.fromPretrained()
 
-        var chunks: [CosyVoiceAudioChunk] = []
+        var chunks: [AudioChunk] = []
         for try await chunk in model.synthesizeStream(text: "Hello world") {
             chunks.append(chunk)
         }

@@ -212,8 +212,8 @@ struct Qwen3TTSCLI: ParsableCommand {
             let marker = chunk.isFinal ? " [FINAL]" : ""
             print("  Chunk \(chunkCount): \(chunk.samples.count) samples " +
                   "(\(String(format: "%.3f", chunkDuration))s) | " +
-                  "frames \(chunk.frameIndex)..<\(chunk.totalFrames) | " +
-                  "elapsed \(String(format: "%.3f", chunk.elapsedTime))s\(marker)")
+                  "frame \(chunk.frameIndex) | " +
+                  "elapsed \(String(format: "%.3f", chunk.elapsedTime ?? 0))s\(marker)")
         }
 
         guard !allSamples.isEmpty else {

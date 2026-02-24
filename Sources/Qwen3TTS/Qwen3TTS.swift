@@ -19,22 +19,6 @@ public enum TTSError: Error, LocalizedError {
     }
 }
 
-/// A chunk of audio produced during streaming synthesis.
-public struct TTSAudioChunk: Sendable {
-    /// PCM audio samples at 24 kHz, Float32
-    public let samples: [Float]
-    /// Sample rate (always 24000)
-    public let sampleRate: Int
-    /// Index of the first codec frame in this chunk
-    public let frameIndex: Int
-    /// Cumulative number of codec frames decoded so far
-    public let totalFrames: Int
-    /// True if this is the last chunk (EOS or max tokens reached)
-    public let isFinal: Bool
-    /// Wall-clock seconds since synthesis started
-    public let elapsedTime: Double
-}
-
 /// Main Qwen3-TTS model for text-to-speech synthesis
 public class Qwen3TTSModel {
     /// Default instruct text applied automatically for CustomVoice models when no explicit
@@ -174,7 +158,7 @@ public class Qwen3TTSModel {
     ///   - instruct: Instruction text for style control (requires CustomVoice model)
     ///   - sampling: Sampling configuration
     ///   - streaming: Streaming configuration (chunk sizes, decoder context)
-    /// - Returns: An async stream of `TTSAudioChunk` values
+    /// - Returns: An async stream of `AudioChunk` values
     public func synthesizeStream(
         text: String,
         language: String = "english",
@@ -182,7 +166,7 @@ public class Qwen3TTSModel {
         instruct: String? = nil,
         sampling: SamplingConfig = .default,
         streaming: StreamingConfig = .default
-    ) -> AsyncThrowingStream<TTSAudioChunk, Error> {
+    ) -> AsyncThrowingStream<AudioChunk, Error> {
         AsyncThrowingStream { continuation in
             Task {
                 do {
@@ -211,7 +195,7 @@ public class Qwen3TTSModel {
         instruct: String?,
         sampling: SamplingConfig,
         streaming: StreamingConfig,
-        continuation: AsyncThrowingStream<TTSAudioChunk, Error>.Continuation
+        continuation: AsyncThrowingStream<AudioChunk, Error>.Continuation
     ) throws {
         guard let tokenizer = tokenizer else {
             throw TTSError.tokenizerNotLoaded
@@ -259,9 +243,9 @@ public class Qwen3TTSModel {
             eosTokenId: CodecTokens.codecEos)
 
         if nextToken == Int32(CodecTokens.codecEos) {
-            let chunk = TTSAudioChunk(
+            let chunk = AudioChunk(
                 samples: [], sampleRate: 24000, frameIndex: 0,
-                totalFrames: 0, isFinal: true,
+                isFinal: true,
                 elapsedTime: CFAbsoluteTimeGetCurrent() - t0)
             continuation.yield(chunk)
             return
@@ -295,11 +279,10 @@ public class Qwen3TTSModel {
                 chunkEnd: generatedFirstCodebook.count,
                 decoderLeftContext: streaming.decoderLeftContext,
                 samplesPerFrame: samplesPerFrame)
-            let audioChunk = TTSAudioChunk(
+            let audioChunk = AudioChunk(
                 samples: chunk,
                 sampleRate: 24000,
                 frameIndex: 0,
-                totalFrames: generatedFirstCodebook.count,
                 isFinal: false,
                 elapsedTime: CFAbsoluteTimeGetCurrent() - t0)
             continuation.yield(audioChunk)
@@ -369,11 +352,10 @@ public class Qwen3TTSModel {
                     decoderLeftContext: streaming.decoderLeftContext,
                     samplesPerFrame: samplesPerFrame)
 
-                let audioChunk = TTSAudioChunk(
+                let audioChunk = AudioChunk(
                     samples: chunk,
                     sampleRate: 24000,
                     frameIndex: chunkFrameStart,
-                    totalFrames: chunkFrameEnd,
                     isFinal: isEos || iterIdx == safeMaxTokens - 1,
                     elapsedTime: CFAbsoluteTimeGetCurrent() - t0)
                 continuation.yield(audioChunk)
@@ -405,11 +387,10 @@ public class Qwen3TTSModel {
                 chunkEnd: numFrames,
                 decoderLeftContext: streaming.decoderLeftContext,
                 samplesPerFrame: samplesPerFrame)
-            let audioChunk = TTSAudioChunk(
+            let audioChunk = AudioChunk(
                 samples: chunk,
                 sampleRate: 24000,
                 frameIndex: emittedFrames,
-                totalFrames: numFrames,
                 isFinal: true,
                 elapsedTime: CFAbsoluteTimeGetCurrent() - t0)
             continuation.yield(audioChunk)

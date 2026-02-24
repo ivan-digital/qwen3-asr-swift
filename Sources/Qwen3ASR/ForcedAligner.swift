@@ -4,18 +4,7 @@ import MLXNN
 import MLXFast
 import Qwen3Common
 
-/// A word with its aligned start and end timestamps
-public struct AlignedWord: Sendable {
-    public let text: String
-    public let startTime: Float   // seconds
-    public let endTime: Float     // seconds
-
-    public init(text: String, startTime: Float, endTime: Float) {
-        self.text = text
-        self.startTime = startTime
-        self.endTime = endTime
-    }
-}
+// AlignedWord is defined in Qwen3Common/Protocols.swift and re-exported via Qwen3Common import above.
 
 /// Qwen3 Forced Aligner — predicts word-level timestamps for audio+text pairs.
 ///

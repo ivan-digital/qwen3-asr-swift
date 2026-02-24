@@ -3,14 +3,6 @@ import MLX
 import MLXNN
 import Qwen3Common
 
-/// Audio chunk for streaming synthesis
-public struct CosyVoiceAudioChunk: Sendable {
-    public let samples: [Float]
-    public let sampleRate: Int
-    public let frameIndex: Int
-    public let isFinal: Bool
-}
-
 /// Error types for CosyVoice TTS
 public enum CosyVoiceTTSError: Error, LocalizedError {
     case modelLoadFailed(String)
@@ -192,8 +184,8 @@ public final class CosyVoiceTTSModel {
         text: String,
         language: String = "english",
         chunkSize: Int = 25
-    ) -> AsyncThrowingStream<CosyVoiceAudioChunk, Error> {
-        let (stream, continuation) = AsyncThrowingStream<CosyVoiceAudioChunk, Error>.makeStream()
+    ) -> AsyncThrowingStream<AudioChunk, Error> {
+        let (stream, continuation) = AsyncThrowingStream<AudioChunk, Error>.makeStream()
 
         Task { [weak self] in
             guard let self else {
@@ -202,7 +194,7 @@ public final class CosyVoiceTTSModel {
             }
             // Non-streaming for now — stream the full result as a single chunk
             let samples = self.synthesize(text: text, language: language)
-            let chunk = CosyVoiceAudioChunk(
+            let chunk = AudioChunk(
                 samples: samples,
                 sampleRate: config.sampleRate,
                 frameIndex: 0,

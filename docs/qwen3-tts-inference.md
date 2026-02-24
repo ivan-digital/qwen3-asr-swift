@@ -177,7 +177,7 @@ The Talker, Code Predictor, and Mimi decoder are all fully causal, enabling chun
     ~25ms        ~120ms                53ms/step
 ```
 
-**`synthesizeStream()`** returns `AsyncThrowingStream<TTSAudioChunk>`:
+**`synthesizeStream()`** returns `AsyncThrowingStream<AudioChunk>` (from `Qwen3Common`):
 
 1. **First chunk** — emitted after `firstChunkFrames` tokens (default 3, or 1 for low-latency)
 2. **Subsequent chunks** — emitted every `chunkFrames` tokens (default 25 = 2s audio)
