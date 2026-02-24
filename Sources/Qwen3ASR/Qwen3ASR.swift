@@ -13,6 +13,7 @@ public struct Qwen3ASRTokens {
     public static let padTokenId = 151643          // <|endoftext|>
     public static let imStartTokenId = 151644      // <|im_start|>
     public static let imEndTokenId = 151645        // <|im_end|>
+    public static let timestampTokenId = 151705    // <|timestamp|>
 }
 
 /// Main Qwen3-ASR model for speech recognition

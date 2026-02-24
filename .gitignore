@@ -9,6 +9,7 @@ DerivedData/
 # Model weights
 cosyvoice3-mlx-4bit/
 personaplex-mlx-4bit/
+forced-aligner-4bit/
 *.safetensors
 *.pt
 *.onnx

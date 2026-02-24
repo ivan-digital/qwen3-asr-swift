@@ -3,6 +3,7 @@
 AI speech models for Apple Silicon, powered by [MLX Swift](https://github.com/ml-explore/mlx-swift).
 
 - **Qwen3-ASR** — Speech-to-text (automatic speech recognition)
+- **Qwen3-ForcedAligner** — Word-level timestamp alignment (audio + text → timestamps)
 - **Qwen3-TTS** — Text-to-speech synthesis (highest quality, custom speakers)
 - **CosyVoice TTS** — Text-to-speech with streaming (9 languages, DiT flow matching)
 - **PersonaPlex** — Full-duplex speech-to-speech (7B, audio in → audio out)
@@ -20,6 +21,7 @@ Papers: [Qwen3-ASR](https://arxiv.org/abs/2601.21337), [Qwen3-TTS](https://arxiv
 |-------|------|-----------|-----------|--------------|
 | Qwen3-ASR-0.6B (4-bit) | Speech → Text | No | 52 languages | ~400 MB |
 | Qwen3-ASR-1.7B (8-bit) | Speech → Text | No | 52 languages | ~2.5 GB |
+| Qwen3-ForcedAligner-0.6B (4-bit) | Audio + Text → Timestamps | No | Multi | ~979 MB |
 | Qwen3-TTS-0.6B Base (4-bit) | Text → Speech | Yes (~120ms) | 10 languages | ~1.7 GB |
 | Qwen3-TTS-0.6B CustomVoice (4-bit) | Text → Speech | Yes (~120ms) | 10 languages | ~1.7 GB |
 | CosyVoice3-0.5B (4-bit) | Text → Speech | Yes (~150ms) | 9 languages | ~1.9 GB |
@@ -91,6 +93,49 @@ swift build -c release
 # Use 1.7B model
 .build/release/qwen3-asr-cli --model 1.7B audio.wav
 ```
+
+## Forced Alignment
+
+### Word-Level Timestamps
+
+```swift
+import Qwen3ASR
+
+let aligner = try await Qwen3ForcedAligner.fromPretrained()
+// Downloads ~979 MB on first run
+
+let aligned = aligner.align(
+    audio: audioSamples,
+    text: "Can you guarantee that the replacement part will be shipped tomorrow?",
+    sampleRate: 24000
+)
+
+for word in aligned {
+    print("[\(String(format: "%.2f", word.startTime))s - \(String(format: "%.2f", word.endTime))s] \(word.text)")
+}
+```
+
+### Forced Alignment CLI
+
+```bash
+swift build -c release
+
+# Align with provided text
+.build/release/qwen3-asr-cli --align --text "Hello world" audio.wav
+
+# Transcribe first, then align
+.build/release/qwen3-asr-cli --align audio.wav
+```
+
+Output:
+```
+[0.12s - 0.45s] Can
+[0.45s - 0.72s] you
+[0.72s - 1.20s] guarantee
+...
+```
+
+Non-autoregressive — single forward pass, no sampling loop. See [Forced Aligner](docs/forced-aligner.md) for architecture details.
 
 ## TTS Usage
 
@@ -361,6 +406,14 @@ swift build -c release
 | Whisper-large-v3 | whisper.cpp (Q5_0) | ~0.10 | ~1.0s |
 | Whisper-small | whisper.cpp (Q5_0) | ~0.04 | ~0.4s |
 
+### Forced Alignment
+
+| Model | Framework | 20s audio | RTF |
+|-------|-----------|-----------|-----|
+| Qwen3-ForcedAligner-0.6B (4-bit) | MLX Swift (debug) | ~365ms | ~0.018 |
+
+> Single non-autoregressive forward pass — no sampling loop. Audio encoder dominates (~328ms), decoder single-pass is ~37ms. **55x faster than real-time.**
+
 ### TTS
 
 | Model | Framework | Short (1s) | Medium (3s) | Long (6s) | Streaming First-Packet |
@@ -382,7 +435,7 @@ RTF = Real-Time Factor (lower is better, < 1.0 = faster than real-time).
 
 ## Architecture
 
-See [ASR Inference](docs/asr-inference.md), [ASR Model](docs/asr-model.md), [Qwen3-TTS Inference](docs/qwen3-tts-inference.md), [TTS Model](docs/tts-model.md), [CosyVoice TTS](docs/cosyvoice-tts.md), [PersonaPlex](docs/personaplex.md) for detailed architecture docs.
+See [ASR Inference](docs/asr-inference.md), [ASR Model](docs/asr-model.md), [Forced Aligner](docs/forced-aligner.md), [Qwen3-TTS Inference](docs/qwen3-tts-inference.md), [TTS Model](docs/tts-model.md), [CosyVoice TTS](docs/cosyvoice-tts.md), [PersonaPlex](docs/personaplex.md) for detailed architecture docs.
 
 ## Cache Configuration
 
@@ -404,10 +457,10 @@ swift build -c release --disable-sandbox
 
 ## Testing
 
-Unit tests (config, sampling) run without model downloads:
+Unit tests (config, sampling, text preprocessing, timestamp correction) run without model downloads:
 
 ```bash
-swift test --filter "Qwen3TTSConfigTests|SamplingTests|CosyVoiceTTSConfigTests|PersonaPlexTests"
+swift test --filter "Qwen3TTSConfigTests|SamplingTests|CosyVoiceTTSConfigTests|PersonaPlexTests|ForcedAlignerTests/testText|ForcedAlignerTests/testTimestamp|ForcedAlignerTests/testLIS"
 ```
 
 Integration tests require model weights (downloaded automatically on first run):
@@ -418,6 +471,9 @@ swift test --filter TTSASRRoundTripTests
 
 # ASR only: transcribe test audio
 swift test --filter Qwen3ASRIntegrationTests
+
+# Forced Aligner E2E: word-level timestamps (~979 MB download)
+swift test --filter ForcedAlignerTests/testForcedAlignerE2E
 
 # PersonaPlex E2E: speech-to-speech pipeline (~5.5 GB download)
 PERSONAPLEX_E2E=1 swift test --filter PersonaPlexE2ETests

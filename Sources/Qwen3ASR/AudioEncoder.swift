@@ -65,6 +65,26 @@ public struct Qwen3AudioEncoderConfig {
         layerNormEps: 1e-5,
         convOutInputDim: 7680
     )
+
+    /// Config for Qwen3-ForcedAligner-0.6B (large encoder projecting to 1024-dim text decoder)
+    public static let forcedAligner = Qwen3AudioEncoderConfig(
+        dModel: 1024,
+        encoderAttentionHeads: 16,
+        encoderFFNDim: 4096,
+        encoderLayers: 24,
+        numMelBins: 128,
+        maxSourcePositions: 1500,
+        outputDim: 1024,
+        downsampleHiddenSize: 480,
+        convChunksize: 500,
+        nWindow: 50,
+        nWindowInfer: 800,
+        dropout: 0.0,
+        attentionDropout: 0.0,
+        activationDropout: 0.0,
+        layerNormEps: 1e-5,
+        convOutInputDim: 7680
+    )
 }
 
 /// Multi-head self-attention for audio encoder layers

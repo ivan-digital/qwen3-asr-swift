@@ -114,6 +114,10 @@ public struct Qwen3ASRConfig: Codable, Sendable {
     public var eosTokenId: Int = 151645
     public var padTokenId: Int = 151643
 
+    // ForcedAligner-specific config
+    public var classifyNum: Int = 5000
+    public var timestampSegmentTime: Float = 0.08  // 80ms per timestamp class
+
     public init(
         audioEncoder: AudioEncoderConfig = AudioEncoderConfig(),
         textDecoder: TextDecoderConfig = TextDecoderConfig()

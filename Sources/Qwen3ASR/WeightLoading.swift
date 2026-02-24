@@ -124,6 +124,96 @@ public enum WeightLoader {
         print("Applied weights to text decoder (\(textModel.layers.count) layers)")
     }
 
+    // MARK: - Forced Aligner Weight Loading
+
+    /// Load weights for the forced aligner model.
+    /// Weight key structure:
+    ///   - `thinker.audio_tower.*` → audio encoder
+    ///   - `thinker.model.*` → text decoder
+    ///   - `thinker.lm_head.*` → classify head (Linear, NOT quantized)
+    public static func loadForcedAlignerWeights(
+        into model: Qwen3ForcedAligner,
+        from directory: URL
+    ) throws {
+        let fileManager = FileManager.default
+        let contents = try fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+        let safetensorFiles = contents.filter { $0.pathExtension == "safetensors" }
+
+        guard !safetensorFiles.isEmpty else {
+            throw WeightLoadingError.noWeightsFound(directory)
+        }
+
+        // Load all weight files
+        var allWeights: [String: MLXArray] = [:]
+        for file in safetensorFiles {
+            print("Loading: \(file.lastPathComponent)")
+            let weights = try loadSafetensors(url: file)
+            allWeights.merge(weights) { _, new in new }
+        }
+
+        print("Loaded \(allWeights.count) weight tensors")
+
+        // Strip thinker. prefix and categorize
+        var audioTowerWeights: [String: MLXArray] = [:]
+        var textWeights: [String: MLXArray] = [:]
+        var classifyWeights: [String: MLXArray] = [:]
+
+        for (key, value) in allWeights {
+            // Strip thinker. prefix if present
+            let stripped: String
+            if key.hasPrefix("thinker.") {
+                stripped = String(key.dropFirst("thinker.".count))
+            } else {
+                stripped = key
+            }
+
+            if stripped.hasPrefix("audio_tower.") {
+                let audioKey = String(stripped.dropFirst("audio_tower.".count))
+                audioTowerWeights[audioKey] = value
+            } else if stripped.hasPrefix("model.") {
+                let modelKey = String(stripped.dropFirst("model.".count))
+                textWeights[modelKey] = value
+            } else if stripped.hasPrefix("lm_head.") {
+                classifyWeights[stripped] = value
+            }
+        }
+
+        print("Audio tower: \(audioTowerWeights.count), Text decoder: \(textWeights.count), Classify head: \(classifyWeights.count)")
+
+        // Load audio encoder weights (transpose Conv2d from PyTorch [outC,inC,kH,kW] to MLX [outC,kH,kW,inC])
+        applyConv2dWeights(to: model.audioEncoder.conv2d1, prefix: "conv2d1", from: audioTowerWeights, transposePyTorch: true)
+        applyConv2dWeights(to: model.audioEncoder.conv2d2, prefix: "conv2d2", from: audioTowerWeights, transposePyTorch: true)
+        applyConv2dWeights(to: model.audioEncoder.conv2d3, prefix: "conv2d3", from: audioTowerWeights, transposePyTorch: true)
+        CommonWeightLoader.applyLinearWeights(to: model.audioEncoder.convOut, prefix: "conv_out", from: audioTowerWeights)
+        CommonWeightLoader.applyLayerNormWeights(to: model.audioEncoder.lnPost, prefix: "ln_post", from: audioTowerWeights)
+        CommonWeightLoader.applyLinearWeights(to: model.audioEncoder.proj1, prefix: "proj1", from: audioTowerWeights)
+        CommonWeightLoader.applyLinearWeights(to: model.audioEncoder.proj2, prefix: "proj2", from: audioTowerWeights)
+
+        for (index, layer) in model.audioEncoder.layers.enumerated() {
+            let prefix = "layers.\(index)"
+            applyEncoderLayerWeights(to: layer, prefix: prefix, from: audioTowerWeights)
+        }
+        print("Applied audio encoder weights (\(model.audioEncoder.layers.count) layers)")
+
+        // Load text decoder weights
+        CommonWeightLoader.applyQuantizedEmbeddingWeights(
+            to: model.textDecoder.embedTokens,
+            prefix: "embed_tokens",
+            from: textWeights
+        )
+        CommonWeightLoader.applyRMSNormWeights(to: model.textDecoder.norm, prefix: "norm", from: textWeights)
+
+        for (index, layer) in model.textDecoder.layers.enumerated() {
+            let prefix = "layers.\(index)"
+            applyQuantizedDecoderLayerWeights(to: layer, prefix: prefix, from: textWeights)
+        }
+        print("Applied text decoder weights (\(model.textDecoder.layers.count) layers)")
+
+        // Load classify head (NOT quantized — regular Linear)
+        CommonWeightLoader.applyLinearWeights(to: model.classifyHead, prefix: "lm_head", from: classifyWeights)
+        print("Applied classify head weights")
+    }
+
     // MARK: - ASR-specific Weight Application Helpers
 
     private static func applyQuantizedDecoderLayerWeights(
@@ -156,12 +246,18 @@ public enum WeightLoader {
     private static func applyConv2dWeights(
         to conv: Conv2d,
         prefix: String,
-        from weights: [String: MLXArray]
+        from weights: [String: MLXArray],
+        transposePyTorch: Bool = false
     ) {
         var params: [String: NestedItem<String, MLXArray>] = [:]
 
         if let weight = weights["\(prefix).weight"] {
-            params["weight"] = .value(weight)
+            if transposePyTorch {
+                // PyTorch Conv2d: [outC, inC, kH, kW] -> MLX Conv2d: [outC, kH, kW, inC]
+                params["weight"] = .value(weight.transposed(0, 2, 3, 1))
+            } else {
+                params["weight"] = .value(weight)
+            }
         }
         if let bias = weights["\(prefix).bias"] {
             params["bias"] = .value(bias)
