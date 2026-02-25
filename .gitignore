@@ -21,3 +21,4 @@ Tests/**/test_audio_roundtrip.wav
 
 # Blog drafts
 blog/
+docs/blog-*.md

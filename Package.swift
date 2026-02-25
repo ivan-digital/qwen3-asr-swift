@@ -28,6 +28,10 @@ let package = Package(
             name: "PersonaPlex",
             targets: ["PersonaPlex"]
         ),
+        .library(
+            name: "SpeechVAD",
+            targets: ["SpeechVAD"]
+        ),
         .executable(
             name: "audio",
             targets: ["AudioCLI"]
@@ -85,12 +89,21 @@ let package = Package(
             ]
         ),
         .target(
+            name: "SpeechVAD",
+            dependencies: [
+                "AudioCommon",
+                .product(name: "MLX", package: "mlx-swift"),
+                .product(name: "MLXNN", package: "mlx-swift"),
+            ]
+        ),
+        .target(
             name: "AudioCLILib",
             dependencies: [
                 "Qwen3ASR",
                 "Qwen3TTS",
                 "CosyVoiceTTS",
                 "PersonaPlex",
+                "SpeechVAD",
                 "AudioCommon",
                 .product(name: "MLX", package: "mlx-swift"),
                 .product(name: "ArgumentParser", package: "swift-argument-parser")
@@ -118,6 +131,14 @@ let package = Package(
         .testTarget(
             name: "CosyVoiceTTSTests",
             dependencies: ["CosyVoiceTTS", "AudioCommon"]
+        ),
+        .testTarget(
+            name: "SpeechVADTests",
+            dependencies: [
+                "SpeechVAD",
+                "AudioCommon",
+                .product(name: "MLX", package: "mlx-swift"),
+            ]
         ),
         .testTarget(
             name: "AudioCLITests",

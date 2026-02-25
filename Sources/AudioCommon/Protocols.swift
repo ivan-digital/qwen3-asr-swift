@@ -86,3 +86,68 @@ public protocol SpeechToSpeechModel: AnyObject {
     /// Generate response audio from input audio with streaming output
     func respondStream(userAudio: [Float]) -> AsyncThrowingStream<AudioChunk, Error>
 }
+
+// MARK: - Voice Activity Detection
+
+/// A time segment where speech was detected.
+public struct SpeechSegment: Sendable {
+    /// Start time in seconds
+    public let startTime: Float
+    /// End time in seconds
+    public let endTime: Float
+
+    public init(startTime: Float, endTime: Float) {
+        self.startTime = startTime
+        self.endTime = endTime
+    }
+
+    /// Duration in seconds
+    public var duration: Float { endTime - startTime }
+}
+
+/// A model that detects speech activity regions in audio.
+public protocol VoiceActivityDetectionModel: AnyObject {
+    /// Expected input sample rate in Hz
+    var inputSampleRate: Int { get }
+    /// Detect speech segments in audio
+    func detectSpeech(audio: [Float], sampleRate: Int) -> [SpeechSegment]
+}
+
+// MARK: - Speaker Diarization
+
+/// A speech segment with an assigned speaker identity.
+public struct DiarizedSegment: Sendable {
+    /// Start time in seconds
+    public let startTime: Float
+    /// End time in seconds
+    public let endTime: Float
+    /// Speaker identifier (0-based)
+    public let speakerId: Int
+
+    public init(startTime: Float, endTime: Float, speakerId: Int) {
+        self.startTime = startTime
+        self.endTime = endTime
+        self.speakerId = speakerId
+    }
+
+    /// Duration in seconds
+    public var duration: Float { endTime - startTime }
+}
+
+/// A model that produces speaker embeddings from audio.
+public protocol SpeakerEmbeddingModel: AnyObject {
+    /// Expected input sample rate in Hz
+    var inputSampleRate: Int { get }
+    /// Embedding vector dimension
+    var embeddingDimension: Int { get }
+    /// Extract a speaker embedding from audio
+    func embed(audio: [Float], sampleRate: Int) -> [Float]
+}
+
+/// A model that assigns speaker identities to speech segments.
+public protocol SpeakerDiarizationModel: AnyObject {
+    /// Expected input sample rate in Hz
+    var inputSampleRate: Int { get }
+    /// Diarize audio into speaker-labeled segments
+    func diarize(audio: [Float], sampleRate: Int) -> [DiarizedSegment]
+}

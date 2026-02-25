@@ -10,14 +10,15 @@ The `AudioCommon` module defines shared protocols that provide model-agnostic in
 │                                                         │
 │  AudioChunk          SpeechGenerationModel (TTS)        │
 │  AlignedWord         SpeechRecognitionModel (STT)       │
-│                      ForcedAlignmentModel                │
+│  SpeechSegment       ForcedAlignmentModel                │
 │                      SpeechToSpeechModel                 │
+│                      VoiceActivityDetectionModel (VAD)   │
 └─────────────────────────────────────────────────────────┘
         ▲                    ▲                    ▲
         │                    │                    │
-   ┌────┴────┐        ┌─────┴─────┐       ┌─────┴─────┐
-   │Qwen3TTS │        │  Qwen3ASR │       │PersonaPlex │
-   │CosyVoice│        │ForcedAlign│       └───────────┘
+   ┌────┴────┐        ┌─────┴─────┐       ┌─────┴─────┐       ┌─────┴─────┐
+   │Qwen3TTS │        │  Qwen3ASR │       │PersonaPlex │       │ SpeechVAD │
+   │CosyVoice│        │ForcedAlign│       └───────────┘       └───────────┘
    └─────────┘        └───────────┘
 ```
 
@@ -76,6 +77,19 @@ public protocol SpeechToSpeechModel: AnyObject {
 
 **Conforming types:** `PersonaPlexModel`
 
+### VoiceActivityDetectionModel (VAD)
+
+Models that detect speech activity regions in audio.
+
+```swift
+public protocol VoiceActivityDetectionModel: AnyObject {
+    var inputSampleRate: Int { get }
+    func detectSpeech(audio: [Float], sampleRate: Int) -> [SpeechSegment]
+}
+```
+
+**Conforming types:** `PyannoteVADModel`, `SileroVADModel`
+
 ## Shared Types
 
 ### AudioChunk
@@ -89,6 +103,18 @@ public struct AudioChunk: Sendable {
     public let frameIndex: Int     // First frame index in this chunk
     public let isFinal: Bool       // Last chunk flag
     public let elapsedTime: Double? // Wall-clock seconds (nil if not tracked)
+}
+```
+
+### SpeechSegment
+
+Time segment where speech was detected, returned by `VoiceActivityDetectionModel`:
+
+```swift
+public struct SpeechSegment: Sendable {
+    public let startTime: Float    // seconds
+    public let endTime: Float      // seconds
+    public var duration: Float     // computed: endTime - startTime
 }
 ```
 
@@ -154,7 +180,7 @@ for model in ttsModels {
 ```
 Sources/
 ├── AudioCommon/               Shared types, protocols, utilities
-│   ├── Protocols.swift        AudioChunk, AlignedWord, 4 protocols
+│   ├── Protocols.swift        AudioChunk, AlignedWord, SpeechSegment, 5 protocols
 │   ├── AudioFileLoader.swift  WAV/audio file loading
 │   ├── WAVWriter.swift        WAV file writing
 │   ├── WeightLoading.swift    Safetensors loading, HuggingFace download
@@ -180,6 +206,13 @@ Sources/
 │   ├── PersonaPlex.swift      PersonaPlexModel: SpeechToSpeechModel
 │   └── PersonaPlex+Protocols.swift
 │
+├── SpeechVAD/                 Voice Activity Detection (pyannote + Silero)
+│   ├── SpeechVAD.swift        PyannoteVADModel: VoiceActivityDetectionModel
+│   ├── SpeechVAD+Protocols.swift
+│   ├── SileroVAD.swift        SileroVADModel: VoiceActivityDetectionModel
+│   ├── SileroModel.swift      Silero VAD v5 network (STFT + encoder + LSTM)
+│   └── StreamingVADProcessor.swift  Event-driven streaming wrapper
+│
 ├── AudioCLILib/               CLI commands and utilities (library)
 └── AudioCLI/                  Thin launcher (main.swift → AudioCLILib)
 ```
@@ -188,9 +221,10 @@ Sources/
 
 ```
 AudioCommon  ← Qwen3ASR      ─┐
-             ← Qwen3TTS      ├── AudioCLILib ── AudioCLI (executable)
-             ← CosyVoiceTTS  │
-             ← PersonaPlex  ─┘
+             ← Qwen3TTS      │
+             ← CosyVoiceTTS  ├── AudioCLILib ── AudioCLI (executable)
+             ← PersonaPlex   │
+             ← SpeechVAD    ─┘
 ```
 
 Each model target depends only on `AudioCommon` and MLX. No cross-dependencies between model targets.

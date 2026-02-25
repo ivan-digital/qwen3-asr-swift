@@ -7,6 +7,9 @@ AI speech models for Apple Silicon, powered by [MLX Swift](https://github.com/ml
 - **Qwen3-TTS** — Text-to-speech synthesis (highest quality, custom speakers)
 - **CosyVoice TTS** — Text-to-speech with streaming (9 languages, DiT flow matching)
 - **PersonaPlex** — Full-duplex speech-to-speech (7B, audio in → audio out)
+- **Silero VAD** — Streaming voice activity detection (32ms chunks, ~309K params)
+- **Pyannote VAD** — Offline voice activity detection (10s windows, multi-speaker overlap)
+- **Speaker Diarization** — Who spoke when (pyannote segmentation + WeSpeaker embedding + clustering)
 
 Papers: [Qwen3-ASR](https://arxiv.org/abs/2601.21337), [Qwen3-TTS](https://arxiv.org/abs/2601.15621), [CosyVoice 3](https://arxiv.org/abs/2505.17589), [PersonaPlex](https://arxiv.org/abs/2602.06053), [Mimi](https://arxiv.org/abs/2410.00037) (audio codec)
 
@@ -26,6 +29,9 @@ Papers: [Qwen3-ASR](https://arxiv.org/abs/2601.21337), [Qwen3-TTS](https://arxiv
 | Qwen3-TTS-0.6B CustomVoice (4-bit) | Text → Speech | Yes (~120ms) | 10 languages | ~1.7 GB |
 | CosyVoice3-0.5B (4-bit) | Text → Speech | Yes (~150ms) | 9 languages | ~1.9 GB |
 | PersonaPlex-7B (4-bit) | Speech → Speech | Yes (~2s chunks) | EN | ~5.3 GB |
+| Silero-VAD-v5 | Voice Activity Detection | Yes (32ms chunks) | Language-agnostic | ~1.2 MB |
+| Pyannote-Segmentation-3.0 | VAD + Speaker Segmentation | No (10s windows) | Language-agnostic | ~5.7 MB |
+| WeSpeaker-ResNet34-LM | Speaker Embedding (256-dim) | No | Language-agnostic | ~25 MB |
 
 ### When to Use Which TTS
 
@@ -68,6 +74,7 @@ import Qwen3ASR     // Speech recognition
 import Qwen3TTS     // Text-to-speech (Qwen3)
 import CosyVoiceTTS  // Text-to-speech (streaming)
 import PersonaPlex   // Speech-to-speech (full-duplex)
+import SpeechVAD     // Voice activity detection (pyannote + Silero)
 import AudioCommon   // Shared utilities
 ```
 
@@ -411,6 +418,128 @@ swift build -c release
 .build/release/audio speak "Hello world" --engine cosyvoice --language english --stream --output output.wav
 ```
 
+## Voice Activity Detection
+
+### Streaming VAD (Silero)
+
+Silero VAD v5 processes 32ms audio chunks with sub-millisecond latency — ideal for real-time speech detection from microphones or streams.
+
+```swift
+import SpeechVAD
+
+let vad = try await SileroVADModel.fromPretrained()
+// Downloads ~1.2 MB on first run
+
+// Streaming: process 512-sample chunks (32ms @ 16kHz)
+let prob = vad.processChunk(samples)  // → 0.0...1.0
+vad.resetState()  // call between different audio streams
+
+// Or detect all segments at once
+let segments = vad.detectSpeech(audio: audioSamples, sampleRate: 16000)
+for seg in segments {
+    print("Speech: \(seg.startTime)s - \(seg.endTime)s")
+}
+```
+
+### Event-Driven Streaming
+
+```swift
+let processor = StreamingVADProcessor(model: vad)
+
+// Feed audio of any length — events emitted as speech is confirmed
+let events = processor.process(samples: audioBuffer)
+for event in events {
+    switch event {
+    case .speechStarted(let time):
+        print("Speech started at \(time)s")
+    case .speechEnded(let segment):
+        print("Speech: \(segment.startTime)s - \(segment.endTime)s")
+    }
+}
+
+// Flush at end of stream
+let final = processor.flush()
+```
+
+### VAD CLI
+
+```bash
+swift build -c release
+
+# Streaming Silero VAD (32ms chunks)
+.build/release/audio vad-stream audio.wav
+
+# With custom thresholds
+.build/release/audio vad-stream audio.wav --onset 0.6 --offset 0.4
+
+# JSON output
+.build/release/audio vad-stream audio.wav --json
+
+# Batch pyannote VAD (10s sliding windows)
+.build/release/audio vad audio.wav
+```
+
+## Speaker Diarization
+
+### Diarization Pipeline
+
+```swift
+import SpeechVAD
+
+let pipeline = try await DiarizationPipeline.fromPretrained()
+// Downloads pyannote (~5.7 MB) + WeSpeaker (~25 MB) on first run
+
+let result = pipeline.diarize(audio: samples, sampleRate: 16000)
+for seg in result.segments {
+    print("Speaker \(seg.speakerId): [\(seg.startTime)s - \(seg.endTime)s]")
+}
+print("\(result.numSpeakers) speakers detected")
+```
+
+### Speaker Embedding
+
+```swift
+let model = try await WeSpeakerModel.fromPretrained()
+let embedding = model.embed(audio: samples, sampleRate: 16000)
+// embedding: [Float] of length 256, L2-normalized
+
+// Compare speakers
+let similarity = WeSpeakerModel.cosineSimilarity(embeddingA, embeddingB)
+```
+
+### Speaker Extraction
+
+Extract only a specific speaker's segments using a reference recording:
+
+```swift
+let pipeline = try await DiarizationPipeline.fromPretrained()
+let targetEmb = pipeline.embeddingModel.embed(audio: enrollmentAudio, sampleRate: 16000)
+let segments = pipeline.extractSpeaker(
+    audio: meetingAudio, sampleRate: 16000,
+    targetEmbedding: targetEmb
+)
+```
+
+### Diarization CLI
+
+```bash
+swift build -c release
+
+# Speaker diarization
+.build/release/audio diarize meeting.wav
+
+# With options
+.build/release/audio diarize meeting.wav --threshold 0.6 --max-speakers 3 --json
+
+# Extract a specific speaker
+.build/release/audio diarize meeting.wav --target-speaker enrollment.wav
+
+# Speaker embedding
+.build/release/audio embed-speaker enrollment.wav --json
+```
+
+See [Speaker Diarization](docs/speaker-diarization.md) for architecture details.
+
 ## Latency (M2 Max, 64 GB)
 
 ### ASR
@@ -447,11 +576,19 @@ swift build -c release
 
 > PersonaPlex runs at ~68ms/step — well under the 80ms real-time threshold at 12.5 Hz, achieving **faster-than-real-time** inference (RTF < 1.0). Both temporal transformer and depformer are 4-bit quantized.
 
+### VAD
+
+| Model | Framework | Chunk Size | 20s audio processed in | Throughput |
+|-------|-----------|-----------|------------------------|------------|
+| Silero-VAD-v5 | MLX Swift (release) | 32ms (512 samples) | ~0.87s | 23x real-time |
+
+> Silero VAD processes each 32ms chunk in ~40μs after model load. The streaming `StreamingVADProcessor` applies hysteresis thresholding with configurable onset/offset thresholds and minimum duration filtering.
+
 RTF = Real-Time Factor (lower is better, < 1.0 = faster than real-time).
 
 ## Architecture
 
-See [ASR Inference](docs/asr-inference.md), [ASR Model](docs/asr-model.md), [Forced Aligner](docs/forced-aligner.md), [Qwen3-TTS Inference](docs/qwen3-tts-inference.md), [TTS Model](docs/tts-model.md), [CosyVoice TTS](docs/cosyvoice-tts.md), [PersonaPlex](docs/personaplex.md), [Shared Protocols](docs/shared-protocols.md) for detailed architecture docs.
+See [ASR Inference](docs/asr-inference.md), [ASR Model](docs/asr-model.md), [Forced Aligner](docs/forced-aligner.md), [Qwen3-TTS Inference](docs/qwen3-tts-inference.md), [TTS Model](docs/tts-model.md), [CosyVoice TTS](docs/cosyvoice-tts.md), [PersonaPlex](docs/personaplex.md), [Silero VAD](docs/silero-vad.md), [Speaker Diarization](docs/speaker-diarization.md), [Shared Protocols](docs/shared-protocols.md) for detailed architecture docs.
 
 ## Cache Configuration
 
@@ -476,7 +613,7 @@ swift build -c release --disable-sandbox
 Unit tests (config, sampling, text preprocessing, timestamp correction) run without model downloads:
 
 ```bash
-swift test --filter "Qwen3TTSConfigTests|SamplingTests|CosyVoiceTTSConfigTests|PersonaPlexTests|ForcedAlignerTests/testText|ForcedAlignerTests/testTimestamp|ForcedAlignerTests/testLIS"
+swift test --filter "Qwen3TTSConfigTests|SamplingTests|CosyVoiceTTSConfigTests|PersonaPlexTests|ForcedAlignerTests/testText|ForcedAlignerTests/testTimestamp|ForcedAlignerTests/testLIS|SileroVADTests/testSilero|SileroVADTests/testReflection|SileroVADTests/testProcess|SileroVADTests/testReset|SileroVADTests/testDetect|SileroVADTests/testStreaming|SileroVADTests/testVADEvent"
 ```
 
 Integration tests require model weights (downloaded automatically on first run):
