@@ -9,6 +9,10 @@ public struct AudioCLI: ParsableCommand {
             AlignCommand.self,
             SpeakCommand.self,
             RespondCommand.self,
+            VadCommand.self,
+            VadStreamCommand.self,
+            DiarizeCommand.self,
+            EmbedSpeakerCommand.self,
         ]
     )
 
