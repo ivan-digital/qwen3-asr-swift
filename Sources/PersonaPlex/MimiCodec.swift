@@ -226,18 +226,11 @@ public extension Mimi {
         let weightFile = mimiDir.appendingPathComponent(filename)
 
         if !FileManager.default.fileExists(atPath: weightFile.path) {
-            let url = URL(string: "https://huggingface.co/\(repoId)/resolve/main/\(filename)")!
-            let config = URLSessionConfiguration.default
-            config.timeoutIntervalForResource = 600
-            let session = URLSession(configuration: config)
-            defer { session.finishTasksAndInvalidate() }
-
-            let (tempURL, response) = try await session.download(from: url)
-            guard let httpResponse = response as? HTTPURLResponse,
-                  httpResponse.statusCode == 200 else {
-                throw DownloadError.failedToDownload(filename)
-            }
-            try FileManager.default.moveItem(at: tempURL, to: weightFile)
+            try await HuggingFaceDownloader.downloadWeights(
+                modelId: repoId,
+                to: mimiDir,
+                additionalFiles: [filename]
+            )
         }
 
         progressHandler?(0.5, "Loading Mimi weights...")
