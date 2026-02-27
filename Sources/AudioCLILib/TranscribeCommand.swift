@@ -1,6 +1,7 @@
 import Foundation
 import ArgumentParser
 import Qwen3ASR
+import SpeechVAD
 import AudioCommon
 
 public struct TranscribeCommand: ParsableCommand {
@@ -18,9 +19,26 @@ public struct TranscribeCommand: ParsableCommand {
     @Option(name: .long, help: "Language hint (optional)")
     public var language: String?
 
+    @Flag(name: .long, help: "Enable streaming transcription with VAD")
+    public var stream: Bool = false
+
+    @Option(name: .long, help: "Maximum segment duration in seconds (default 10)")
+    public var maxSegment: Float = 10.0
+
+    @Flag(name: .long, help: "Emit partial results during speech")
+    public var partial: Bool = false
+
     public init() {}
 
     public func run() throws {
+        if stream {
+            try runStreamingTranscription()
+        } else {
+            try runBatchTranscription()
+        }
+    }
+
+    private func runBatchTranscription() throws {
         try runAsync {
             let modelId = resolveASRModelId(model)
             let detectedSize = ASRModelSize.detect(from: modelId)
@@ -38,6 +56,39 @@ public struct TranscribeCommand: ParsableCommand {
             print("Transcribing...")
             let result = asrModel.transcribe(audio: audio, sampleRate: 24000, language: language)
             print("Result: \(result)")
+        }
+    }
+
+    private func runStreamingTranscription() throws {
+        try runAsync {
+            let modelId = resolveASRModelId(model)
+
+            print("Loading audio: \(audioFile)")
+            let audio = try AudioFileLoader.load(
+                url: URL(fileURLWithPath: audioFile), targetSampleRate: 16000)
+            let duration = Float(audio.count) / 16000.0
+            print("  Loaded \(audio.count) samples (\(String(format: "%.2f", duration))s)")
+
+            print("Loading models...")
+            let streaming = try await StreamingASR.fromPretrained(
+                asrModelId: modelId, progressHandler: reportProgress)
+
+            let config = StreamingASRConfig(
+                maxSegmentDuration: maxSegment,
+                language: language,
+                emitPartialResults: partial
+            )
+
+            print("Streaming transcription (VAD + ASR)...")
+            let stream = streaming.transcribeStream(
+                audio: audio, sampleRate: 16000, config: config)
+
+            for try await segment in stream {
+                let tag = segment.isFinal ? "FINAL" : "partial"
+                let start = String(format: "%.2f", segment.startTime)
+                let end = String(format: "%.2f", segment.endTime)
+                print("[\(start)s-\(end)s] [\(tag)] \(segment.text)")
+            }
         }
     }
 }

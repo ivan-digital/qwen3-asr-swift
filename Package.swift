@@ -56,6 +56,7 @@ let package = Package(
             name: "Qwen3ASR",
             dependencies: [
                 "AudioCommon",
+                "SpeechVAD",
                 .product(name: "MLX", package: "mlx-swift"),
                 .product(name: "MLXNN", package: "mlx-swift"),
                 .product(name: "MLXFast", package: "mlx-swift")
@@ -119,7 +120,7 @@ let package = Package(
         ),
         .testTarget(
             name: "Qwen3ASRTests",
-            dependencies: ["Qwen3ASR", "AudioCommon"],
+            dependencies: ["Qwen3ASR", "SpeechVAD", "AudioCommon"],
             resources: [
                 .copy("Resources/test_audio.wav")
             ]
