@@ -429,6 +429,11 @@ final class CosyVoiceForwardPassTests: XCTestCase {
 
 final class CosyVoiceTTSE2ETests: XCTestCase {
 
+    override func tearDown() {
+        super.tearDown()
+        Memory.clearCache()
+    }
+
     func testBasicSynthesis() async throws {
         let model = try await CosyVoiceTTSModel.fromPretrained()
         let samples = model.synthesize(text: "Hello world")
