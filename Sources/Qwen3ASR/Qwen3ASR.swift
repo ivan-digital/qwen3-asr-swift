@@ -5,7 +5,7 @@ import MLXFast
 import AudioCommon
 
 /// Special token IDs for Qwen3-ASR
-public struct Qwen3ASRTokens {
+public struct Qwen3ASRTokens: Sendable {
     public static let audioTokenId = 151676        // <|audio_pad|>
     public static let audioStartTokenId = 151669   // <|audio_start|>
     public static let audioEndTokenId = 151670     // <|audio_end|>
@@ -16,7 +16,9 @@ public struct Qwen3ASRTokens {
     public static let timestampTokenId = 151705    // <|timestamp|>
 }
 
-/// Main Qwen3-ASR model for speech recognition
+/// Main Qwen3-ASR model for speech recognition.
+///
+/// - Warning: This class is not thread-safe. Create separate instances for concurrent use.
 public class Qwen3ASRModel {
     public let audioEncoder: Qwen3AudioEncoder
     public let featureExtractor: WhisperFeatureExtractor

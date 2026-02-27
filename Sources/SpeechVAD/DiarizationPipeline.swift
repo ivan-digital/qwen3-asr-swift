@@ -5,7 +5,7 @@ import AudioCommon
 // MARK: - Configuration
 
 /// Configuration for speaker diarization.
-public struct DiarizationConfig {
+public struct DiarizationConfig: Sendable {
     /// Onset threshold for speaker activity
     public var onset: Float
     /// Offset threshold for speaker activity
@@ -59,6 +59,8 @@ public struct DiarizationResult: Sendable {
 // MARK: - Pipeline
 
 /// Speaker diarization pipeline: segmentation → embedding → clustering.
+///
+/// - Warning: This class is not thread-safe. Create separate instances for concurrent use.
 ///
 /// Three-stage pipeline:
 /// 1. **Segmentation**: Pyannote segmentation on 10s sliding windows → per-speaker local segments

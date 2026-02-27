@@ -8,6 +8,8 @@ import AudioCommon
 /// (32ms @ 16kHz) with sub-millisecond latency. Carries LSTM state across
 /// chunks for streaming operation.
 ///
+/// - Warning: This class is not thread-safe. Create separate instances for concurrent use.
+///
 /// ```swift
 /// let vad = try await SileroVADModel.fromPretrained()
 ///

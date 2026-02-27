@@ -26,6 +26,8 @@ public enum CosyVoiceTTSError: Error, LocalizedError {
 /// 1. LLM (Qwen2.5-0.5B) generates speech tokens from text
 /// 2. Flow matching (DiT) converts tokens to mel spectrogram
 /// 3. HiFi-GAN vocoder converts mel to 24kHz audio waveform
+///
+/// - Warning: This class is not thread-safe. Create separate instances for concurrent use.
 public final class CosyVoiceTTSModel {
     public let config: CosyVoiceConfig
 

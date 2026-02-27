@@ -19,7 +19,9 @@ public enum TTSError: Error, LocalizedError {
     }
 }
 
-/// Main Qwen3-TTS model for text-to-speech synthesis
+/// Main Qwen3-TTS model for text-to-speech synthesis.
+///
+/// - Warning: This class is not thread-safe. Create separate instances for concurrent use.
 public class Qwen3TTSModel {
     /// Default instruct text applied automatically for CustomVoice models when no explicit
     /// `--instruct` is provided. Prevents rambling output for short texts.

@@ -2,7 +2,7 @@ import Foundation
 
 /// Smart text chunking for memory-efficient long text generation.
 /// Finds natural break points to split text while maintaining prosody.
-public struct TextChunker {
+public struct TextChunker: Sendable {
 
     /// Default maximum words per chunk
     public static let defaultMaxWords = 35

@@ -7,7 +7,7 @@ import AudioCommon
 /// Processes audio in overlapping 10-second windows, runs the segmentation model
 /// on each window, aggregates overlapping frame predictions, then applies
 /// hysteresis thresholding and duration filtering to produce speech segments.
-public struct VADPipeline {
+public struct VADPipeline: Sendable {
 
     /// Configuration for the pipeline
     public let config: VADConfig

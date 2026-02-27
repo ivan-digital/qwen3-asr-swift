@@ -7,6 +7,9 @@ import AudioCommon
 /// Produces 256-dimensional L2-normalized speaker embeddings from audio.
 /// Uses 80-dim log-mel features at 16kHz.
 ///
+/// This class is thread-safe: all properties are `let` and inference is pure computation
+/// with no mutable state.
+///
 /// ```swift
 /// let model = try await WeSpeakerModel.fromPretrained()
 /// let embedding = model.embed(audio: samples, sampleRate: 16000)

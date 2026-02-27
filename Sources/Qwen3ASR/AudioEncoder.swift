@@ -5,7 +5,7 @@ import MLXFast
 import AudioCommon
 
 /// Audio encoder configuration matching Qwen3-ASR HuggingFace model
-public struct Qwen3AudioEncoderConfig {
+public struct Qwen3AudioEncoderConfig: Sendable {
     public let dModel: Int           // 896
     public let encoderAttentionHeads: Int  // 14
     public let encoderFFNDim: Int    // 3584

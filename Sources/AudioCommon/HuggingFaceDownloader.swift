@@ -1,5 +1,6 @@
 import Foundation
 import Hub
+import os
 
 /// Download errors
 public enum DownloadError: Error, LocalizedError {
@@ -53,7 +54,13 @@ public enum HuggingFaceDownloader {
     /// Check if safetensors weights exist in a directory.
     public static func weightsExist(in directory: URL) -> Bool {
         let fm = FileManager.default
-        let contents = (try? fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
+        let contents: [URL]
+        do {
+            contents = try fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+        } catch {
+            AudioLog.download.debug("Could not list directory \(directory.path): \(error)")
+            contents = []
+        }
         return contents.contains { $0.pathExtension == "safetensors" }
     }
 

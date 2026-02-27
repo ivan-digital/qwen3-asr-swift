@@ -1,6 +1,6 @@
 import Foundation
 import AudioCommon
-@preconcurrency import SpeechVAD
+import SpeechVAD
 
 // MARK: - TranscriptionSegment
 
@@ -51,6 +51,9 @@ public struct StreamingASRConfig: Sendable {
 
 // MARK: - StreamingASR
 
+/// Streaming ASR with VAD-guided segmentation.
+///
+/// - Warning: This class is not thread-safe. Create separate instances for concurrent use.
 public class StreamingASR {
     private let asrModel: Qwen3ASRModel
     private let vadModel: SileroVADModel
