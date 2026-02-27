@@ -645,6 +645,10 @@ PERSONAPLEX_E2E=1 swift test --filter PersonaPlexE2ETests
 | CosyVoice TTS | CN, EN, JA, KO, DE, ES, FR, IT, RU |
 | PersonaPlex | EN |
 
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=ivan-digital/qwen3-asr-swift&type=date&legend=top-left)](https://www.star-history.com/#ivan-digital/qwen3-asr-swift&type=date&legend=top-left)
+
 ## License
 
 Apache 2.0 (same as original Qwen3 models)
