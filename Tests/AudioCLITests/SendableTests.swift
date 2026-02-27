@@ -1,6 +1,7 @@
 import XCTest
 import SpeechVAD
 import Qwen3ASR
+import ParakeetASR
 
 /// Compile-time verification that config types conform to Sendable.
 /// These tests pass if they compile — the Task boundary enforces Sendable.
@@ -28,6 +29,12 @@ final class SendableTests: XCTestCase {
         let config = Qwen3AudioEncoderConfig.default
         let result = await Task { config }.value
         XCTAssertEqual(result.dModel, 896)
+    }
+
+    func testParakeetConfigSendable() async {
+        let config = ParakeetConfig.default
+        let result = await Task { config }.value
+        XCTAssertEqual(result.encoderHidden, 1024)
     }
 
     func testAllConfigsSendableInTaskGroup() async {

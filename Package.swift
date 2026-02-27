@@ -32,6 +32,10 @@ let package = Package(
             name: "SpeechVAD",
             targets: ["SpeechVAD"]
         ),
+        .library(
+            name: "ParakeetASR",
+            targets: ["ParakeetASR"]
+        ),
         .executable(
             name: "audio",
             targets: ["AudioCLI"]
@@ -98,6 +102,12 @@ let package = Package(
             ]
         ),
         .target(
+            name: "ParakeetASR",
+            dependencies: [
+                "AudioCommon",
+            ]
+        ),
+        .target(
             name: "AudioCLILib",
             dependencies: [
                 "Qwen3ASR",
@@ -105,6 +115,7 @@ let package = Package(
                 "CosyVoiceTTS",
                 "PersonaPlex",
                 "SpeechVAD",
+                "ParakeetASR",
                 "AudioCommon",
                 .product(name: "MLX", package: "mlx-swift"),
                 .product(name: "ArgumentParser", package: "swift-argument-parser")
@@ -139,6 +150,13 @@ let package = Package(
                 "SpeechVAD",
                 "AudioCommon",
                 .product(name: "MLX", package: "mlx-swift"),
+            ]
+        ),
+        .testTarget(
+            name: "ParakeetASRTests",
+            dependencies: ["ParakeetASR", "AudioCommon"],
+            resources: [
+                .copy("Resources/test_audio.wav")
             ]
         ),
         .testTarget(
