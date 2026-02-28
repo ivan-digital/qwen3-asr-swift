@@ -98,7 +98,7 @@ let model = try await Qwen3ASRModel.fromPretrained()
 
 // Or use the larger 1.7B model for better accuracy
 let model = try await Qwen3ASRModel.fromPretrained(
-    modelId: "mlx-community/Qwen3-ASR-1.7B-8bit"
+    modelId: "aufklarer/Qwen3-ASR-1.7B-MLX-8bit"
 )
 
 // Audio can be any sample rate — automatically resampled to 16kHz internally

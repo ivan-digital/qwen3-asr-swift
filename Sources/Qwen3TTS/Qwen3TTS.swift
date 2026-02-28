@@ -1415,7 +1415,7 @@ public class Qwen3TTSModel {
 public extension Qwen3TTSModel {
     /// Load model from HuggingFace hub
     static func fromPretrained(
-        modelId: String = "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit",
+        modelId: String = "aufklarer/Qwen3-TTS-12Hz-0.6B-Base-MLX-4bit",
         tokenizerModelId: String = "Qwen/Qwen3-TTS-Tokenizer-12Hz",
         progressHandler: ((Double, String) -> Void)? = nil
     ) async throws -> Qwen3TTSModel {

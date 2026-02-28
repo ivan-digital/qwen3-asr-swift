@@ -132,7 +132,7 @@ Weights use a `thinker.` prefix:
 | Model | ID | Size |
 |-------|----|------|
 | 4-bit quantized | `aufklarer/Qwen3-ForcedAligner-0.6B-4bit` | ~979 MB |
-| bf16 (original) | `mlx-community/Qwen3-ForcedAligner-0.6B-bf16` | ~1.84 GB |
+| bf16 (original) | `aufklarer/Qwen3-ForcedAligner-0.6B-MLX-bf16` | ~1.84 GB |
 
 ## CLI Usage
 
@@ -144,7 +144,7 @@ audio align audio.wav --text "Can you guarantee that the replacement part will b
 audio align audio.wav
 
 # Custom aligner model
-audio align audio.wav --aligner-model mlx-community/Qwen3-ForcedAligner-0.6B-bf16
+audio align audio.wav --aligner-model aufklarer/Qwen3-ForcedAligner-0.6B-MLX-bf16
 ```
 
 Output format:

@@ -178,8 +178,8 @@ final class SpeakerConfigTests: XCTestCase {
     }
 
     func testTTSModelVariant() {
-        XCTAssertEqual(TTSModelVariant.base.rawValue, "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit")
-        XCTAssertEqual(TTSModelVariant.customVoice.rawValue, "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-4bit")
+        XCTAssertEqual(TTSModelVariant.base.rawValue, "aufklarer/Qwen3-TTS-12Hz-0.6B-Base-MLX-4bit")
+        XCTAssertEqual(TTSModelVariant.customVoice.rawValue, "aufklarer/Qwen3-TTS-12Hz-0.6B-CustomVoice-MLX-4bit")
     }
 
     func testAvailableSpeakersEmptyByDefault() {
@@ -198,7 +198,7 @@ final class SpeakerConfigTests: XCTestCase {
 
 final class InstructTokenTests: XCTestCase {
 
-    static let ttsModelId = "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit"
+    static let ttsModelId = "aufklarer/Qwen3-TTS-12Hz-0.6B-Base-MLX-4bit"
     private static var _sharedModel: Qwen3TTSModel?
 
     /// Verify instruct token format: <|im_start|>user\n{text}<|im_end|>\n
@@ -279,9 +279,9 @@ final class InstructTokenTests: XCTestCase {
 /// Requires CustomVoice model weights (~1 GB download).
 final class CustomVoiceInstructE2ETests: XCTestCase {
 
-    static let customVoiceModelId = "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-4bit"
+    static let customVoiceModelId = "aufklarer/Qwen3-TTS-12Hz-0.6B-CustomVoice-MLX-4bit"
     static let ttsTokenizerModelId = "Qwen/Qwen3-TTS-Tokenizer-12Hz"
-    static let asrModelId = "mlx-community/Qwen3-ASR-0.6B-4bit"
+    static let asrModelId = "aufklarer/Qwen3-ASR-0.6B-MLX-4bit"
     private static var _sharedTTSModel: Qwen3TTSModel?
     private static var _sharedASRModel: Qwen3ASRModel?
 
@@ -534,9 +534,9 @@ final class CustomVoiceInstructE2ETests: XCTestCase {
 /// Requires TTS model weights (~1.7 GB). Tests are grouped by language.
 final class TTSE2ETests: XCTestCase {
 
-    static let ttsModelId = "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit"
+    static let ttsModelId = "aufklarer/Qwen3-TTS-12Hz-0.6B-Base-MLX-4bit"
     static let ttsTokenizerModelId = "Qwen/Qwen3-TTS-Tokenizer-12Hz"
-    static let asrModelId = "mlx-community/Qwen3-ASR-0.6B-4bit"
+    static let asrModelId = "aufklarer/Qwen3-ASR-0.6B-MLX-4bit"
     private static var _sharedTTSModel: Qwen3TTSModel?
     private static var _sharedASRModel: Qwen3ASRModel?
 
@@ -830,9 +830,9 @@ final class TTSE2ETests: XCTestCase {
 
 final class TTSBatchTests: XCTestCase {
 
-    static let ttsModelId = "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit"
+    static let ttsModelId = "aufklarer/Qwen3-TTS-12Hz-0.6B-Base-MLX-4bit"
     static let ttsTokenizerModelId = "Qwen/Qwen3-TTS-Tokenizer-12Hz"
-    static let asrModelId = "mlx-community/Qwen3-ASR-0.6B-4bit"
+    static let asrModelId = "aufklarer/Qwen3-ASR-0.6B-MLX-4bit"
     private static var _sharedTTSModel: Qwen3TTSModel?
     private static var _sharedASRModel: Qwen3ASRModel?
 
@@ -1027,9 +1027,9 @@ final class TTSBatchTests: XCTestCase {
 /// Requires TTS model weights (~1.7 GB).
 final class TTSStreamingTests: XCTestCase {
 
-    static let ttsModelId = "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit"
+    static let ttsModelId = "aufklarer/Qwen3-TTS-12Hz-0.6B-Base-MLX-4bit"
     static let ttsTokenizerModelId = "Qwen/Qwen3-TTS-Tokenizer-12Hz"
-    static let asrModelId = "mlx-community/Qwen3-ASR-0.6B-4bit"
+    static let asrModelId = "aufklarer/Qwen3-ASR-0.6B-MLX-4bit"
     private static var _sharedTTSModel: Qwen3TTSModel?
     private static var _sharedASRModel: Qwen3ASRModel?
 

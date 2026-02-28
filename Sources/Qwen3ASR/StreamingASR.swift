@@ -64,7 +64,7 @@ public class StreamingASR {
     }
 
     public static func fromPretrained(
-        asrModelId: String = "mlx-community/Qwen3-ASR-0.6B-4bit",
+        asrModelId: String = "aufklarer/Qwen3-ASR-0.6B-MLX-4bit",
         vadModelId: String = SileroVADModel.defaultModelId,
         progressHandler: ((Double, String) -> Void)? = nil
     ) async throws -> StreamingASR {

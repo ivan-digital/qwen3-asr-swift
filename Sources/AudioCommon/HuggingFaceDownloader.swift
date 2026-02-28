@@ -34,14 +34,14 @@ public enum HuggingFaceDownloader {
         let fm = FileManager.default
 
         // Check old (flat) cache path for backward compat:
-        //   ~/Library/Caches/qwen3-speech/mlx-community_Qwen3-ASR-0.6B-4bit/
+        //   ~/Library/Caches/qwen3-speech/aufklarer_Qwen3-ASR-0.6B-MLX-4bit/
         let oldDir = base.appendingPathComponent(sanitizedCacheKey(for: modelId), isDirectory: true)
         if weightsExist(in: oldDir) {
             return oldDir
         }
 
         // New Hub-style path:
-        //   ~/Library/Caches/qwen3-speech/models/mlx-community/Qwen3-ASR-0.6B-4bit/
+        //   ~/Library/Caches/qwen3-speech/models/aufklarer/Qwen3-ASR-0.6B-MLX-4bit/
         let hub = HubApi(downloadBase: base)
         let repo = Hub.Repo(id: modelId)
         let dir = hub.localRepoLocation(repo)

@@ -163,8 +163,8 @@ Qwen3-TTS ships in two variants with identical architecture (Talker + Code Predi
 
 | Variant | HuggingFace ID (0.6B, 4-bit) | Speaker Selection |
 |---------|-------------------------------|-------------------|
-| **Base** | `mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit` | None (single default voice) |
-| **CustomVoice** | `mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-4bit` | 9 preset voices + instruction control |
+| **Base** | `aufklarer/Qwen3-TTS-12Hz-0.6B-Base-MLX-4bit` | None (single default voice) |
+| **CustomVoice** | `aufklarer/Qwen3-TTS-12Hz-0.6B-CustomVoice-MLX-4bit` | 9 preset voices + instruction control |
 
 ### CustomVoice Speakers
 
@@ -284,4 +284,4 @@ ECAPA-TDNN network extracting speaker embeddings from reference audio.
 
 Total: ~2.5 GB unquantized, ~1.6 GB 4-bit quantized (speech tokenizer stays float32).
 
-Pre-converted MLX weights: [mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit](https://huggingface.co/mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit)
+Pre-converted MLX weights: [aufklarer/Qwen3-TTS-12Hz-0.6B-Base-MLX-4bit](https://huggingface.co/aufklarer/Qwen3-TTS-12Hz-0.6B-Base-MLX-4bit)

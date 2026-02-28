@@ -228,8 +228,8 @@ public enum ASRModelSize {
     /// Default model IDs on HuggingFace
     public var defaultModelId: String {
         switch self {
-        case .small: return "mlx-community/Qwen3-ASR-0.6B-4bit"
-        case .large: return "mlx-community/Qwen3-ASR-1.7B-8bit"
+        case .small: return "aufklarer/Qwen3-ASR-0.6B-MLX-4bit"
+        case .large: return "aufklarer/Qwen3-ASR-1.7B-MLX-8bit"
         }
     }
 
@@ -263,7 +263,7 @@ public enum ASRModelSize {
 public extension Qwen3ASRModel {
     /// Load model from HuggingFace hub with automatic weight downloading
     static func fromPretrained(
-        modelId: String = "mlx-community/Qwen3-ASR-0.6B-4bit",
+        modelId: String = "aufklarer/Qwen3-ASR-0.6B-MLX-4bit",
         progressHandler: ((Double, String) -> Void)? = nil
     ) async throws -> Qwen3ASRModel {
         progressHandler?(0.0, "Downloading model...")
