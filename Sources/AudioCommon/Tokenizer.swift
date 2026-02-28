@@ -27,6 +27,12 @@ public class Qwen3Tokenizer {
 
     public init() {}
 
+    /// Test-only initializer with pre-built token mappings
+    internal init(idToToken: [Int: String]) {
+        self.idToToken = idToToken
+        for (id, token) in idToToken { tokenToId[token] = id }
+    }
+
     /// Load tokenizer from vocab.json file (direct token->id mapping)
     public func load(from url: URL) throws {
         let data = try Data(contentsOf: url)
@@ -99,39 +105,40 @@ public class Qwen3Tokenizer {
         }
     }
 
-    /// Decode token IDs to text
+    /// Decode token IDs to text using a unified byte buffer.
+    /// Collects all bytes before converting to UTF-8, so multi-byte characters
+    /// split across BPE tokens (e.g. CJK) decode correctly.
     public func decode(tokens: [Int]) -> String {
-        var result = ""
+        var buffer: [UInt8] = []
 
         for tokenId in tokens {
-            if let token = idToToken[tokenId] {
-                // Handle special tokens - skip most but keep some for parsing
-                if token.hasPrefix("<|") && token.hasSuffix("|>") {
-                    // Skip special tokens like <|endoftext|>, <|im_start|>, etc.
-                    continue
+            guard let token = idToToken[tokenId] else { continue }
+
+            // Skip <|...|> special tokens
+            if token.hasPrefix("<|") && token.hasSuffix("|>") {
+                continue
+            }
+
+            // Keep <asr_text> and similar markers — append their UTF-8 bytes
+            if token.hasPrefix("<") && token.hasSuffix(">") && !token.contains("|") {
+                buffer.append(contentsOf: Array(token.utf8))
+                continue
+            }
+
+            // Convert each char via unicodeToByte (Ġ→0x20 space is handled
+            // automatically since unicodeToByte maps Ġ (U+0120) → byte 32)
+            for char in token {
+                if let byte = Self.unicodeToByte[char] {
+                    buffer.append(byte)
+                } else {
+                    buffer.append(contentsOf: String(char).utf8)
                 }
-
-                // Keep <asr_text> and similar markers that don't have |> suffix
-                // These are needed for output parsing
-                if token.hasPrefix("<") && token.hasSuffix(">") && !token.contains("|") {
-                    result += token
-                    continue
-                }
-
-                // Handle byte-level tokens (Ġ prefix means space)
-                var decodedToken = token
-                if decodedToken.hasPrefix("Ġ") {
-                    decodedToken = " " + String(decodedToken.dropFirst())
-                }
-
-                // Handle other byte-level encodings
-                decodedToken = decodeByteLevelToken(decodedToken)
-
-                result += decodedToken
             }
         }
 
-        return result.trimmingCharacters(in: .whitespaces)
+        let text = String(bytes: buffer, encoding: .utf8)
+            ?? String(decoding: buffer, as: UTF8.self)
+        return text.trimmingCharacters(in: .whitespaces)
     }
 
     /// Byte-to-unicode mapping table (GPT-2 style)
@@ -172,28 +179,6 @@ public class Qwen3Tokenizer {
         }
         return reverse
     }()
-
-    /// Decode byte-level BPE token to proper UTF-8 string
-    private func decodeByteLevelToken(_ token: String) -> String {
-        var bytes: [UInt8] = []
-
-        for char in token {
-            if let byte = Self.unicodeToByte[char] {
-                bytes.append(byte)
-            } else {
-                // Character not in mapping - keep as UTF-8
-                bytes.append(contentsOf: String(char).utf8)
-            }
-        }
-
-        // Decode bytes as UTF-8
-        if let decoded = String(bytes: bytes, encoding: .utf8) {
-            return decoded
-        } else {
-            // Fallback to original if decoding fails
-            return token
-        }
-    }
 
     /// Encode a byte-level BPE token string from raw text bytes
     private func encodeByteLevelToken(_ text: String) -> String {
