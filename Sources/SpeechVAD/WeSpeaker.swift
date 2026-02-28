@@ -23,8 +23,9 @@ public enum WeSpeakerEngine: String, Sendable {
 /// - `.mlx`: GPU-based inference via MLX (default)
 /// - `.coreml`: Neural Engine inference via CoreML (lower power, frees GPU)
 ///
-/// This class is thread-safe: all properties are `let` and inference is pure computation
-/// with no mutable state.
+/// This class is thread-safe: all properties are immutable after construction and
+/// inference is pure computation with no mutable state. `MLModel.prediction(from:)` is
+/// documented as thread-safe by Apple.
 ///
 /// ```swift
 /// let model = try await WeSpeakerModel.fromPretrained(engine: .coreml)
@@ -44,7 +45,7 @@ public final class WeSpeakerModel {
 
     #if canImport(CoreML)
     /// CoreML compiled model (nil when using MLX engine)
-    var coremlModel: MLModel?
+    let coremlModel: MLModel?
     #endif
 
     /// Default HuggingFace model ID (MLX weights)
@@ -66,6 +67,9 @@ public final class WeSpeakerModel {
         self.engine = .mlx
         self.network = network
         self.melExtractor = MelFeatureExtractor()
+        #if canImport(CoreML)
+        self.coremlModel = nil
+        #endif
     }
 
     #if canImport(CoreML)
