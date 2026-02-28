@@ -22,8 +22,8 @@ public struct RespondCommand: ParsableCommand {
     @Option(name: .long, help: "System prompt preset: assistant, focused, customer-service, teacher")
     public var systemPrompt: String = "assistant"
 
-    @Option(name: .long, help: "Maximum generation steps at 12.5Hz (default: 500 = ~40s)")
-    public var maxSteps: Int = 500
+    @Option(name: .long, help: "Maximum generation steps at 12.5Hz (default: 200 = ~16s)")
+    public var maxSteps: Int = 200
 
     @Option(name: .long, help: "HuggingFace model ID")
     public var modelId: String = "aufklarer/PersonaPlex-7B-MLX-4bit"
@@ -83,6 +83,9 @@ public struct RespondCommand: ParsableCommand {
         }
 
         try runAsync {
+            if verbose {
+                print("Build: \(buildVersion)")
+            }
             print("Loading PersonaPlex 7B model...")
             let model = try await PersonaPlexModel.fromPretrained(
                 modelId: modelId, progressHandler: reportProgress)

@@ -22,6 +22,29 @@ public func runAsync(_ block: @escaping () async throws -> Void) throws {
     }
 }
 
+/// Git commit hash baked in at build time, or read from .git at runtime.
+public let buildVersion: String = {
+    let pipe = Pipe()
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+    process.arguments = ["rev-parse", "--short", "HEAD"]
+    process.standardOutput = pipe
+    process.standardError = FileHandle.nullDevice
+    if let execURL = Bundle.main.executableURL {
+        process.currentDirectoryURL = execURL.deletingLastPathComponent()
+    }
+    do {
+        try process.run()
+        process.waitUntilExit()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        if let hash = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !hash.isEmpty {
+            return hash
+        }
+    } catch {}
+    return "unknown"
+}()
+
 /// Print model loading progress in a consistent format.
 public func reportProgress(_ progress: Double, _ status: String) {
     print("  [\(Int(progress * 100))%] \(status)")
