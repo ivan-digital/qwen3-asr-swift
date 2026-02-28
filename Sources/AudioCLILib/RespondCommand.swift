@@ -83,6 +83,9 @@ public struct RespondCommand: ParsableCommand {
         }
 
         try runAsync {
+            if verbose {
+                print("Build: \(buildVersion)")
+            }
             print("Loading PersonaPlex 7B model...")
             let model = try await PersonaPlexModel.fromPretrained(
                 modelId: modelId, progressHandler: reportProgress)

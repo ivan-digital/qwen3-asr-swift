@@ -1061,6 +1061,8 @@ public final class PersonaPlexModel: Module {
             "depformer.safetensors",
             "embeddings.safetensors",
             "mimi.safetensors",
+            "voices/*.safetensors",
+            "tokenizer_spm_32k_3.model",
             "config.json"
         ]
 

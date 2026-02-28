@@ -161,6 +161,69 @@ final class PersonaPlexTests: XCTestCase {
         let diff = MLX.sum(MLX.abs(out0 - out1)).item(Float.self)
         XCTAssertGreaterThan(diff, 0, "Different steps should produce different outputs")
     }
+
+    // MARK: - Voice File Tests
+
+    /// Verify that all 18 voice preset safetensors exist in the model cache.
+    /// Regression test for #32: voices were not downloaded by fromPretrained().
+    func testVoiceFilesExist() throws {
+        let modelId = "aufklarer/PersonaPlex-7B-MLX-4bit"
+        let cacheDir: URL
+        do {
+            cacheDir = try HuggingFaceDownloader.getCacheDirectory(for: modelId)
+        } catch {
+            throw XCTSkip("Cannot resolve cache directory")
+        }
+
+        let voiceDir = cacheDir.appendingPathComponent("voices")
+        guard FileManager.default.fileExists(atPath: voiceDir.path) else {
+            throw XCTSkip("Voice directory not found at \(voiceDir.path) — model not cached")
+        }
+
+        for voice in PersonaPlexVoice.allCases {
+            let voiceFile = voiceDir.appendingPathComponent("\(voice.rawValue).safetensors")
+            XCTAssertTrue(
+                FileManager.default.fileExists(atPath: voiceFile.path),
+                "Voice file missing: voices/\(voice.rawValue).safetensors — fromPretrained() must download voices/*.safetensors"
+            )
+        }
+    }
+
+    /// Verify voice preset loads and contains non-empty embeddings + cache.
+    /// Regression test for #32: missing voice → 0 frames → gibberish output.
+    func testVoicePresetLoading() throws {
+        let modelId = "aufklarer/PersonaPlex-7B-MLX-4bit"
+        let cacheDir: URL
+        do {
+            cacheDir = try HuggingFaceDownloader.getCacheDirectory(for: modelId)
+        } catch {
+            throw XCTSkip("Cannot resolve cache directory")
+        }
+
+        let voiceFile = cacheDir.appendingPathComponent("voices/NATF1.safetensors")
+        guard FileManager.default.fileExists(atPath: voiceFile.path) else {
+            throw XCTSkip("Voice file not cached: \(voiceFile.path)")
+        }
+
+        let weights = try MLX.loadArrays(url: voiceFile)
+
+        // Must have "embeddings" key with shape [T, 1, 1, dim] where T > 0
+        guard let embeddings = weights["embeddings"] else {
+            XCTFail("Voice safetensors missing 'embeddings' key")
+            return
+        }
+        XCTAssertEqual(embeddings.ndim, 4, "Voice embeddings should be [T, 1, 1, dim]")
+        XCTAssertGreaterThan(embeddings.shape[0], 0, "Voice should have >0 frames (was 0 in #32)")
+        print("NATF1 voice: \(embeddings.shape[0]) frames, dim=\(embeddings.shape[3])")
+
+        // Must have "cache" key
+        guard let cache = weights["cache"] else {
+            XCTFail("Voice safetensors missing 'cache' key")
+            return
+        }
+        XCTAssertEqual(cache.ndim, 3, "Voice cache should be [1, 17, CT]")
+        XCTAssertEqual(cache.shape[1], 17, "Voice cache should have 17 streams")
+    }
 }
 
 // MARK: - E2E Tests (require model download)
