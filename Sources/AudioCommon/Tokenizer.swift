@@ -100,37 +100,55 @@ public class Qwen3Tokenizer {
     }
 
     /// Decode token IDs to text
+    ///
+    /// Collects all byte-level BPE tokens into a single byte buffer before
+    /// decoding as UTF-8. This is necessary because a single UTF-8 character
+    /// (e.g. Chinese 「來」= 3 bytes) may be split across multiple BPE tokens.
+    /// Decoding each token independently would produce incomplete byte sequences
+    /// that fail UTF-8 validation and cause garbled output.
     public func decode(tokens: [Int]) -> String {
-        var result = ""
+        var bytes: [UInt8] = []
 
         for tokenId in tokens {
-            if let token = idToToken[tokenId] {
-                // Handle special tokens - skip most but keep some for parsing
-                if token.hasPrefix("<|") && token.hasSuffix("|>") {
-                    // Skip special tokens like <|endoftext|>, <|im_start|>, etc.
-                    continue
+            guard let token = idToToken[tokenId] else { continue }
+
+            // Skip special tokens like <|endoftext|>, <|im_start|>, etc.
+            if token.hasPrefix("<|") && token.hasSuffix("|>") {
+                continue
+            }
+
+            // Keep <asr_text> and similar markers for output parsing.
+            // Flush accumulated bytes first so they decode correctly.
+            if token.hasPrefix("<") && token.hasSuffix(">") && !token.contains("|") {
+                if let decoded = String(bytes: bytes, encoding: .utf8) {
+                    bytes.removeAll()
+                    // Re-add as raw UTF-8 bytes so final decode works
+                    bytes.append(contentsOf: decoded.utf8)
                 }
+                bytes.append(contentsOf: token.utf8)
+                continue
+            }
 
-                // Keep <asr_text> and similar markers that don't have |> suffix
-                // These are needed for output parsing
-                if token.hasPrefix("<") && token.hasSuffix(">") && !token.contains("|") {
-                    result += token
-                    continue
+            // Handle byte-level tokens (Ġ prefix means space in GPT-2 BPE)
+            var rawToken = token
+            if rawToken.hasPrefix("Ġ") {
+                bytes.append(UInt8(ascii: " "))
+                rawToken = String(rawToken.dropFirst())
+            }
+
+            // Map each character through the unicode-to-byte table
+            for char in rawToken {
+                if let byte = Self.unicodeToByte[char] {
+                    bytes.append(byte)
+                } else {
+                    // Character not in BPE mapping — keep as raw UTF-8
+                    bytes.append(contentsOf: String(char).utf8)
                 }
-
-                // Handle byte-level tokens (Ġ prefix means space)
-                var decodedToken = token
-                if decodedToken.hasPrefix("Ġ") {
-                    decodedToken = " " + String(decodedToken.dropFirst())
-                }
-
-                // Handle other byte-level encodings
-                decodedToken = decodeByteLevelToken(decodedToken)
-
-                result += decodedToken
             }
         }
 
+        let result = String(bytes: bytes, encoding: .utf8)
+            ?? String(decoding: bytes, as: UTF8.self)
         return result.trimmingCharacters(in: .whitespaces)
     }
 
