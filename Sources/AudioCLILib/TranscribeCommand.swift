@@ -67,8 +67,14 @@ public struct TranscribeCommand: ParsableCommand {
                 modelId: modelId, progressHandler: reportProgress)
 
             print("Transcribing...")
+            let startTime = CFAbsoluteTimeGetCurrent()
             let result = asrModel.transcribe(audio: audio, sampleRate: 24000, language: language)
+            let elapsed = CFAbsoluteTimeGetCurrent() - startTime
+            let duration = Float(audio.count) / 24000.0
+            let rtf = elapsed / Double(duration)
+
             print("Result: \(result)")
+            print(String(format: "  Time: %.2fs, RTF: %.3f", elapsed, rtf))
         }
     }
 
@@ -117,6 +123,11 @@ public struct TranscribeCommand: ParsableCommand {
             let model = try await ParakeetASRModel.fromPretrained(
                 progressHandler: reportProgress)
 
+            print("Warming up CoreML...")
+            let warmupStart = CFAbsoluteTimeGetCurrent()
+            try model.warmUp()
+            let warmupTime = CFAbsoluteTimeGetCurrent() - warmupStart
+
             print("Transcribing...")
             let startTime = CFAbsoluteTimeGetCurrent()
             let result = try model.transcribeAudio(audio, sampleRate: 16000, language: language)
@@ -124,7 +135,7 @@ public struct TranscribeCommand: ParsableCommand {
             let rtf = elapsed / Double(duration)
 
             print("Result: \(result)")
-            print(String(format: "  Time: %.2fs, RTF: %.3f", elapsed, rtf))
+            print(String(format: "  Time: %.2fs, RTF: %.3f (warmup: %.2fs)", elapsed, rtf, warmupTime))
         }
     }
 }
