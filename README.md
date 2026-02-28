@@ -3,6 +3,7 @@
 AI speech models for Apple Silicon, powered by [MLX Swift](https://github.com/ml-explore/mlx-swift).
 
 - **Qwen3-ASR** — Speech-to-text (automatic speech recognition)
+- **Parakeet TDT** — Speech-to-text via CoreML (Neural Engine, FastConformer + TDT decoder)
 - **Qwen3-ForcedAligner** — Word-level timestamp alignment (audio + text → timestamps)
 - **Qwen3-TTS** — Text-to-speech synthesis (highest quality, custom speakers)
 - **CosyVoice TTS** — Text-to-speech with streaming (9 languages, DiT flow matching)
@@ -25,6 +26,7 @@ Papers: [Qwen3-ASR](https://arxiv.org/abs/2601.21337), [Qwen3-TTS](https://arxiv
 |-------|------|-----------|-----------|--------------|
 | Qwen3-ASR-0.6B (4-bit) | Speech → Text | No | 52 languages | ~400 MB |
 | Qwen3-ASR-1.7B (8-bit) | Speech → Text | No | 52 languages | ~2.5 GB |
+| Parakeet-TDT-0.6B (INT4, CoreML) | Speech → Text | No | EN | ~315 MB |
 | Qwen3-ForcedAligner-0.6B (4-bit) | Audio + Text → Timestamps | No | Multi | ~979 MB |
 | Qwen3-TTS-0.6B Base (4-bit) | Text → Speech | Yes (~120ms) | 10 languages | ~1.7 GB |
 | Qwen3-TTS-0.6B CustomVoice (4-bit) | Text → Speech | Yes (~120ms) | 10 languages | ~1.7 GB |
@@ -71,8 +73,9 @@ dependencies: [
 Import the module you need:
 
 ```swift
-import Qwen3ASR     // Speech recognition
-import Qwen3TTS     // Text-to-speech (Qwen3)
+import Qwen3ASR      // Speech recognition (MLX)
+import ParakeetASR   // Speech recognition (CoreML)
+import Qwen3TTS      // Text-to-speech (Qwen3)
 import CosyVoiceTTS  // Text-to-speech (streaming)
 import PersonaPlex   // Speech-to-speech (full-duplex)
 import SpeechVAD     // Voice activity detection (pyannote + Silero)
@@ -106,16 +109,30 @@ let transcription = model.transcribe(audio: audioSamples, sampleRate: 16000)
 print(transcription)
 ```
 
+### Parakeet TDT (CoreML)
+
+```swift
+import ParakeetASR
+
+let model = try await ParakeetASRModel.fromPretrained()
+let transcription = model.transcribe(audio: audioSamples, sampleRate: 16000)
+```
+
+Runs on Neural Engine via CoreML — frees the GPU for concurrent workloads. English only, ~315 MB.
+
 ### ASR CLI
 
 ```bash
 swift build -c release
 
-# Default (0.6B)
+# Default (Qwen3-ASR 0.6B, MLX)
 .build/release/audio transcribe audio.wav
 
 # Use 1.7B model
 .build/release/audio transcribe audio.wav --model 1.7B
+
+# Parakeet TDT (CoreML, Neural Engine)
+.build/release/audio transcribe --engine parakeet audio.wav
 ```
 
 ## Forced Alignment
@@ -555,10 +572,11 @@ See [Speaker Diarization](docs/speaker-diarization.md) for architecture details.
 
 ### ASR
 
-| Model | Framework | RTF | 10s audio processed in |
-|-------|-----------|-----|------------------------|
-| Qwen3-ASR-0.6B (4-bit) | MLX Swift | ~0.06 | ~0.6s |
-| Qwen3-ASR-1.7B (8-bit) | MLX Swift | ~0.11 | ~1.1s |
+| Model | Backend | RTF | 10s audio processed in |
+|-------|---------|-----|------------------------|
+| Qwen3-ASR-0.6B (4-bit) | MLX | ~0.06 | ~0.6s |
+| Qwen3-ASR-1.7B (8-bit) | MLX | ~0.11 | ~1.1s |
+| Parakeet-TDT-0.6B (INT4) | CoreML (Neural Engine) | ~0.07 | ~0.7s |
 | Whisper-large-v3 | whisper.cpp (Q5_0) | ~0.10 | ~1.0s |
 | Whisper-small | whisper.cpp (Q5_0) | ~0.04 | ~0.4s |
 
@@ -617,7 +635,7 @@ CoreML models are available for Silero VAD and WeSpeaker. Pass `engine: .coreml`
 
 ## Architecture
 
-See [ASR Inference](docs/asr-inference.md), [ASR Model](docs/asr-model.md), [Forced Aligner](docs/forced-aligner.md), [Qwen3-TTS Inference](docs/qwen3-tts-inference.md), [TTS Model](docs/tts-model.md), [CosyVoice TTS](docs/cosyvoice-tts.md), [PersonaPlex](docs/personaplex.md), [Silero VAD](docs/silero-vad.md), [Speaker Diarization](docs/speaker-diarization.md), [Shared Protocols](docs/shared-protocols.md) for detailed architecture docs.
+See [ASR Inference](docs/asr-inference.md), [ASR Model](docs/asr-model.md), [Parakeet TDT ASR](docs/parakeet-asr.md), [Forced Aligner](docs/forced-aligner.md), [Qwen3-TTS Inference](docs/qwen3-tts-inference.md), [TTS Model](docs/tts-model.md), [CosyVoice TTS](docs/cosyvoice-tts.md), [PersonaPlex](docs/personaplex.md), [Silero VAD](docs/silero-vad.md), [Speaker Diarization](docs/speaker-diarization.md), [Shared Protocols](docs/shared-protocols.md) for detailed architecture docs.
 
 ## Cache Configuration
 
@@ -669,6 +687,7 @@ PERSONAPLEX_E2E=1 swift test --filter PersonaPlexE2ETests
 | Model | Languages |
 |-------|-----------|
 | Qwen3-ASR | 52 languages (CN, EN, Cantonese, DE, FR, ES, JA, KO, RU, + 22 Chinese dialects, ...) |
+| Parakeet TDT | EN |
 | Qwen3-TTS | EN, CN, DE, JA, ES, FR, KO, RU, IT, PT (+ Beijing/Sichuan dialects via CustomVoice) |
 | CosyVoice TTS | CN, EN, JA, KO, DE, ES, FR, IT, RU |
 | PersonaPlex | EN |
