@@ -72,11 +72,9 @@ On Apple Silicon with Neural Engine:
 - First inference includes CoreML compilation (~2-3s), subsequent runs are faster
 - Encoder runs on Neural Engine for maximum throughput
 
-## Model Source
+## Model Weights
 
-- Original: [nvidia/parakeet-tdt-0.6b-v2](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2)
-- CoreML conversion: `scripts/convert_parakeet.py`
-- Converted weights: [aufklarer/Parakeet-TDT-v3-CoreML-INT4](https://huggingface.co/aufklarer/Parakeet-TDT-v3-CoreML-INT4)
+- [aufklarer/Parakeet-TDT-v3-CoreML-INT4](https://huggingface.co/aufklarer/Parakeet-TDT-v3-CoreML-INT4)
 
 ## Thread Safety
 
