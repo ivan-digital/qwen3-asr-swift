@@ -315,6 +315,95 @@ final class SileroVADTests: XCTestCase {
         }
     }
 
+    // MARK: - CoreML E2E Tests (requires CoreML weights)
+
+    func testE2ECoreMLWithRealWeights() async throws {
+        let model: SileroVADModel
+        do {
+            model = try await SileroVADModel.fromPretrained(engine: .coreml)
+        } catch {
+            throw XCTSkip("CoreML model not cached: \(error)")
+        }
+
+        let audioURL = URL(fileURLWithPath: "Tests/Qwen3ASRTests/Resources/test_audio.wav")
+        guard FileManager.default.fileExists(atPath: audioURL.path) else {
+            throw XCTSkip("Test audio file not found")
+        }
+
+        let (samples, sampleRate) = try AudioFileLoader.loadWAV(url: audioURL)
+        XCTAssertGreaterThan(samples.count, 0)
+
+        // Batch mode
+        let segments = model.detectSpeech(audio: samples, sampleRate: sampleRate)
+
+        XCTAssertGreaterThanOrEqual(segments.count, 1,
+                                     "CoreML should detect at least 1 speech segment")
+
+        if let seg = segments.first {
+            XCTAssertGreaterThan(seg.startTime, 3.0,
+                                 "Speech should start after 3s (got \(seg.startTime))")
+            XCTAssertLessThan(seg.startTime, 7.0,
+                              "Speech should start before 7s (got \(seg.startTime))")
+            XCTAssertGreaterThan(seg.endTime, 7.0,
+                                 "Speech should end after 7s (got \(seg.endTime))")
+            XCTAssertLessThan(seg.endTime, 10.0,
+                              "Speech should end before 10s (got \(seg.endTime))")
+        }
+    }
+
+    func testE2ECoreMLStreamingWithRealWeights() async throws {
+        let model: SileroVADModel
+        do {
+            model = try await SileroVADModel.fromPretrained(engine: .coreml)
+        } catch {
+            throw XCTSkip("CoreML model not cached: \(error)")
+        }
+
+        let audioURL = URL(fileURLWithPath: "Tests/Qwen3ASRTests/Resources/test_audio.wav")
+        guard FileManager.default.fileExists(atPath: audioURL.path) else {
+            throw XCTSkip("Test audio file not found")
+        }
+
+        let (samples, sampleRate) = try AudioFileLoader.loadWAV(url: audioURL)
+
+        // Resample to 16kHz if needed
+        let audio: [Float]
+        if sampleRate != 16000 {
+            audio = AudioFileLoader.resample(samples, from: sampleRate, to: 16000)
+        } else {
+            audio = samples
+        }
+
+        // Streaming mode
+        let processor = StreamingVADProcessor(model: model)
+        var allEvents = [VADEvent]()
+
+        var offset = 0
+        while offset + 512 <= audio.count {
+            let chunk = Array(audio[offset ..< offset + 512])
+            allEvents.append(contentsOf: processor.process(samples: chunk))
+            offset += 512
+        }
+        if offset < audio.count {
+            allEvents.append(contentsOf: processor.process(samples: Array(audio[offset...])))
+        }
+        allEvents.append(contentsOf: processor.flush())
+
+        let segments = allEvents.compactMap { event -> SpeechSegment? in
+            if case .speechEnded(let seg) = event { return seg }
+            return nil
+        }
+        XCTAssertGreaterThanOrEqual(segments.count, 1,
+                                     "CoreML streaming should detect at least 1 speech segment")
+
+        if let seg = segments.first {
+            XCTAssertGreaterThan(seg.duration, 1.0,
+                                 "Speech segment should be at least 1s")
+        }
+    }
+
+    // MARK: - Per-Chunk Probability Tests
+
     func testE2EPerChunkProbabilities() async throws {
         let model = try await SileroVADModel.fromPretrained()
 

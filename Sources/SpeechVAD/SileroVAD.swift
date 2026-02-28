@@ -2,16 +2,32 @@ import Foundation
 import MLX
 import AudioCommon
 
+#if canImport(CoreML)
+import CoreML
+#endif
+
+/// Inference engine for Silero VAD.
+public enum SileroVADEngine: String, Sendable {
+    /// MLX backend — runs on GPU via Metal shaders.
+    case mlx
+    /// CoreML backend — runs on Neural Engine + CPU, freeing the GPU.
+    case coreml
+}
+
 /// Streaming Voice Activity Detection using Silero VAD v5.
 ///
 /// A lightweight (~260K params) VAD model that processes 512-sample chunks
 /// (32ms @ 16kHz) with sub-millisecond latency. Carries LSTM state across
 /// chunks for streaming operation.
 ///
+/// Supports two backends:
+/// - `.mlx`: GPU-based inference via MLX (default)
+/// - `.coreml`: Neural Engine inference via CoreML (lower power, frees GPU)
+///
 /// - Warning: This class is not thread-safe. Create separate instances for concurrent use.
 ///
 /// ```swift
-/// let vad = try await SileroVADModel.fromPretrained()
+/// let vad = try await SileroVADModel.fromPretrained(engine: .coreml)
 ///
 /// // Streaming: process one chunk at a time
 /// let prob = vad.processChunk(samples512)  // → 0.0...1.0
@@ -21,18 +37,38 @@ import AudioCommon
 /// ```
 public final class SileroVADModel {
 
-    /// The neural network
-    let network: SileroVADNetwork
+    /// The inference engine in use.
+    public let engine: SileroVADEngine
 
-    /// LSTM hidden state (carried across chunks)
+    /// The MLX neural network (nil when using CoreML engine).
+    let network: SileroVADNetwork?
+
+    // MARK: - MLX State
+
+    /// LSTM hidden state (carried across chunks) — MLX engine
     private var h: MLXArray?
-    /// LSTM cell state (carried across chunks)
+    /// LSTM cell state (carried across chunks) — MLX engine
     private var c: MLXArray?
+
+    // MARK: - CoreML State
+
+    #if canImport(CoreML)
+    /// CoreML compiled model (nil when using MLX engine).
+    var coremlModel: MLModel?
+    /// CoreML LSTM hidden state
+    var coremlH: MLMultiArray?
+    /// CoreML LSTM cell state
+    var coremlC: MLMultiArray?
+    #endif
+
     /// Context buffer: last 64 samples from previous chunk
     private var context: [Float]
 
-    /// Default HuggingFace model ID
+    /// Default HuggingFace model ID (MLX weights)
     public static let defaultModelId = "aufklarer/Silero-VAD-v5-MLX"
+
+    /// Default HuggingFace model ID (CoreML weights)
+    public static let defaultCoreMLModelId = "aufklarer/Silero-VAD-v5-CoreML"
 
     /// Number of audio samples per chunk (32ms @ 16kHz)
     public static let chunkSize = 512
@@ -44,9 +80,19 @@ public final class SileroVADModel {
     public static let sampleRate = 16000
 
     init(network: SileroVADNetwork) {
+        self.engine = .mlx
         self.network = network
         self.context = [Float](repeating: 0, count: Self.contextSize)
     }
+
+    #if canImport(CoreML)
+    init(coremlModel: MLModel) {
+        self.engine = .coreml
+        self.network = nil
+        self.coremlModel = coremlModel
+        self.context = [Float](repeating: 0, count: Self.contextSize)
+    }
+    #endif
 
     /// Process a single 512-sample audio chunk and return speech probability.
     ///
@@ -65,7 +111,22 @@ public final class SileroVADModel {
         // Save last 64 samples as context for next chunk
         context = Array(samples.suffix(Self.contextSize))
 
-        // Run network: [1, 576] → probability
+        switch engine {
+        case .mlx:
+            return processChunkMLX(fullSamples)
+        case .coreml:
+            #if canImport(CoreML)
+            return (try? processChunkCoreML(fullSamples)) ?? 0.0
+            #else
+            fatalError("CoreML not available on this platform")
+            #endif
+        }
+    }
+
+    /// MLX inference path.
+    private func processChunkMLX(_ fullSamples: [Float]) -> Float {
+        guard let network else { fatalError("MLX network not loaded") }
+
         let input = MLXArray(fullSamples).reshaped(1, fullSamples.count)
         let (prob, newH, newC) = network.forward(input, h: h, c: c)
 
@@ -83,6 +144,10 @@ public final class SileroVADModel {
     public func resetState() {
         h = nil
         c = nil
+        #if canImport(CoreML)
+        coremlH = nil
+        coremlC = nil
+        #endif
         context = [Float](repeating: 0, count: Self.contextSize)
     }
 
@@ -150,37 +215,82 @@ public final class SileroVADModel {
 
     /// Load a pre-trained Silero VAD model from HuggingFace.
     ///
-    /// Downloads model weights on first use, then caches locally at
-    /// `~/Library/Caches/qwen3-speech/aufklarer_Silero-VAD-v5-MLX/`.
+    /// Downloads model weights on first use, then caches locally.
     ///
     /// - Parameters:
-    ///   - modelId: HuggingFace model ID
+    ///   - modelId: HuggingFace model ID (auto-selected by engine if not specified)
+    ///   - engine: inference backend (`.mlx` or `.coreml`)
     ///   - progressHandler: callback for download progress
     /// - Returns: ready-to-use VAD model
     public static func fromPretrained(
-        modelId: String = defaultModelId,
+        modelId: String? = nil,
+        engine: SileroVADEngine = .mlx,
         progressHandler: ((Double, String) -> Void)? = nil
     ) async throws -> SileroVADModel {
+        let resolvedModelId = modelId ?? (engine == .coreml ? defaultCoreMLModelId : defaultModelId)
+
         progressHandler?(0.0, "Downloading model...")
 
-        let cacheDir = try HuggingFaceDownloader.getCacheDirectory(for: modelId)
+        let cacheDir = try HuggingFaceDownloader.getCacheDirectory(for: resolvedModelId)
 
-        try await HuggingFaceDownloader.downloadWeights(
-            modelId: modelId,
-            to: cacheDir,
-            progressHandler: { progress in
-                progressHandler?(progress * 0.8, "Downloading weights...")
+        switch engine {
+        case .mlx:
+            try await HuggingFaceDownloader.downloadWeights(
+                modelId: resolvedModelId,
+                to: cacheDir,
+                progressHandler: { progress in
+                    progressHandler?(progress * 0.8, "Downloading weights...")
+                }
+            )
+
+            progressHandler?(0.8, "Loading model...")
+
+            let network = SileroVADNetwork()
+            try SileroWeightLoader.loadWeights(model: network, from: cacheDir)
+
+            progressHandler?(1.0, "Ready")
+            return SileroVADModel(network: network)
+
+        case .coreml:
+            #if canImport(CoreML)
+            try await HuggingFaceDownloader.downloadWeights(
+                modelId: resolvedModelId,
+                to: cacheDir,
+                additionalFiles: ["silero_vad.mlmodelc/**", "config.json"],
+                progressHandler: { progress in
+                    progressHandler?(progress * 0.8, "Downloading CoreML model...")
+                }
+            )
+
+            progressHandler?(0.8, "Loading CoreML model...")
+
+            let modelURL = cacheDir.appendingPathComponent("silero_vad.mlmodelc", isDirectory: true)
+            guard FileManager.default.fileExists(atPath: modelURL.path) else {
+                throw AudioModelError.modelLoadFailed(
+                    modelId: resolvedModelId,
+                    reason: "CoreML model not found at \(modelURL.path)")
             }
-        )
 
-        progressHandler?(0.8, "Loading model...")
+            let mlConfig = MLModelConfiguration()
+            mlConfig.computeUnits = .cpuAndNeuralEngine
 
-        let network = SileroVADNetwork()
-        try SileroWeightLoader.loadWeights(model: network, from: cacheDir)
+            let model: MLModel
+            do {
+                model = try MLModel(contentsOf: modelURL, configuration: mlConfig)
+            } catch {
+                throw AudioModelError.modelLoadFailed(
+                    modelId: resolvedModelId,
+                    reason: "Failed to load CoreML model",
+                    underlying: error)
+            }
 
-        progressHandler?(1.0, "Ready")
-
-        return SileroVADModel(network: network)
+            progressHandler?(1.0, "Ready")
+            return SileroVADModel(coremlModel: model)
+            #else
+            throw AudioModelError.invalidConfiguration(
+                model: "SileroVAD", reason: "CoreML not available on this platform")
+            #endif
+        }
     }
 
     /// Simple linear resampling.

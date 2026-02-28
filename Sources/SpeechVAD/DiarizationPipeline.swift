@@ -101,12 +101,14 @@ public final class DiarizationPipeline {
     ///
     /// - Parameters:
     ///   - segModelId: HuggingFace model ID for segmentation
-    ///   - embModelId: HuggingFace model ID for speaker embeddings
+    ///   - embModelId: HuggingFace model ID for speaker embeddings (auto-selected by engine if nil)
+    ///   - embeddingEngine: inference backend for speaker embeddings (`.mlx` or `.coreml`)
     ///   - progressHandler: callback for download progress
     /// - Returns: ready-to-use diarization pipeline
     public static func fromPretrained(
         segModelId: String = PyannoteVADModel.defaultModelId,
-        embModelId: String = WeSpeakerModel.defaultModelId,
+        embModelId: String? = nil,
+        embeddingEngine: WeSpeakerEngine = .mlx,
         progressHandler: ((Double, String) -> Void)? = nil
     ) async throws -> DiarizationPipeline {
         progressHandler?(0.0, "Downloading segmentation model...")
@@ -130,6 +132,7 @@ public final class DiarizationPipeline {
         // Load embedding model
         let embModel = try await WeSpeakerModel.fromPretrained(
             modelId: embModelId,
+            engine: embeddingEngine,
             progressHandler: { progress, status in
                 progressHandler?(0.4 + progress * 0.5, status)
             }

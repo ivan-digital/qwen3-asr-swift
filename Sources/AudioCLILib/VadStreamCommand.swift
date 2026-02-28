@@ -12,8 +12,11 @@ public struct VadStreamCommand: ParsableCommand {
     @Argument(help: "Audio file to analyze (WAV, any sample rate)")
     public var audioFile: String
 
-    @Option(name: .shortAndLong, help: "Model ID on HuggingFace")
-    public var model: String = SileroVADModel.defaultModelId
+    @Option(name: .shortAndLong, help: "Model ID on HuggingFace (auto-selected by engine if omitted)")
+    public var model: String?
+
+    @Option(name: .long, help: "VAD engine: mlx (default) or coreml")
+    public var engine: String = "mlx"
 
     @Option(name: .long, help: "Onset threshold (speech start)")
     public var onset: Float = VADConfig.sileroDefault.onset
@@ -40,9 +43,16 @@ public struct VadStreamCommand: ParsableCommand {
             let duration = formatDuration(audio.count, sampleRate: 16000)
             print("  Loaded \(audio.count) samples (\(duration)s)")
 
-            print("Loading Silero VAD model: \(model)")
+            guard let vadEngine = SileroVADEngine(rawValue: engine) else {
+                print("Error: unknown engine '\(engine)'. Use 'mlx' or 'coreml'.")
+                return
+            }
+
+            let modelId = model ?? (vadEngine == .coreml ? SileroVADModel.defaultCoreMLModelId : SileroVADModel.defaultModelId)
+            print("Loading Silero VAD model: \(modelId) (engine: \(vadEngine.rawValue))")
             let vadModel = try await SileroVADModel.fromPretrained(
-                modelId: model,
+                modelId: modelId,
+                engine: vadEngine,
                 progressHandler: reportProgress
             )
 

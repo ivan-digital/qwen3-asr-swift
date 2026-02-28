@@ -21,6 +21,9 @@ public struct DiarizeCommand: ParsableCommand {
     @Option(name: .long, help: "Enrollment audio for target speaker extraction")
     public var targetSpeaker: String?
 
+    @Option(name: .long, help: "Speaker embedding engine: mlx (default) or coreml")
+    public var embeddingEngine: String = "mlx"
+
     @Flag(name: .long, help: "Output as JSON")
     public var json: Bool = false
 
@@ -34,13 +37,19 @@ public struct DiarizeCommand: ParsableCommand {
             let duration = formatDuration(audio.count, sampleRate: 16000)
             print("  Loaded \(audio.count) samples (\(duration)s)")
 
+            guard let embEngine = WeSpeakerEngine(rawValue: embeddingEngine) else {
+                print("Error: unknown embedding engine '\(embeddingEngine)'. Use 'mlx' or 'coreml'.")
+                return
+            }
+
             let config = DiarizationConfig(
                 clusteringThreshold: threshold,
                 maxSpeakers: maxSpeakers
             )
 
-            print("Loading diarization models...")
+            print("Loading diarization models (embedding engine: \(embEngine.rawValue))...")
             let pipeline = try await DiarizationPipeline.fromPretrained(
+                embeddingEngine: embEngine,
                 progressHandler: reportProgress
             )
 
