@@ -45,8 +45,8 @@ public struct ParakeetConfig: Codable, Sendable {
         subsamplingFactor: Int = 8,
         decoderHidden: Int = 640,
         decoderLayers: Int = 2,
-        vocabSize: Int = 8192,
-        blankTokenId: Int = 8192,
+        vocabSize: Int = 1024,
+        blankTokenId: Int = 1024,
         numDurationBins: Int = 5,
         durationBins: [Int] = [0, 1, 2, 3, 4]
     ) {

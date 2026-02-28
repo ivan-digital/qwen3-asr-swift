@@ -2,10 +2,11 @@ import CoreML
 import Foundation
 import AudioCommon
 
-/// Parakeet TDT 0.6B v3 — CoreML-based automatic speech recognition.
+/// Parakeet TDT 0.6B v2 — CoreML-based automatic speech recognition.
 ///
-/// Uses a FastConformer encoder with a Token-and-Duration Transducer (TDT) decoder,
-/// running entirely on CoreML with INT4-quantized encoder for Neural Engine acceleration.
+/// Uses a FastConformer encoder with a Token-and-Duration Transducer (TDT) decoder.
+/// Mel preprocessing is done in Swift using Accelerate/vDSP. The encoder, decoder, and
+/// joint network run on CoreML with INT4-quantized encoder for Neural Engine acceleration.
 ///
 /// - Warning: This class is not thread-safe. Create separate instances for concurrent use.
 public class ParakeetASRModel {
@@ -15,7 +16,7 @@ public class ParakeetASRModel {
     /// Default HuggingFace model ID.
     public static let defaultModelId = "aufklarer/Parakeet-TDT-v3-CoreML-INT4"
 
-    private let preprocessor: MLModel
+    private let melPreprocessor: MelPreprocessor
     private let encoder: MLModel
     private let decoder: MLModel
     private let joint: MLModel
@@ -23,14 +24,13 @@ public class ParakeetASRModel {
 
     private init(
         config: ParakeetConfig,
-        preprocessor: MLModel,
         encoder: MLModel,
         decoder: MLModel,
         joint: MLModel,
         vocabulary: ParakeetVocabulary
     ) {
         self.config = config
-        self.preprocessor = preprocessor
+        self.melPreprocessor = MelPreprocessor(config: config)
         self.encoder = encoder
         self.decoder = decoder
         self.joint = joint
@@ -56,21 +56,20 @@ public class ParakeetASRModel {
             samples = audio
         }
 
-        // Step 1: Preprocessor — raw audio → mel features
+        // Step 1: Mel spectrogram extraction (Swift/Accelerate)
         AudioLog.inference.debug("Parakeet: preprocessing \(samples.count) samples")
-        let melOutput = try runPreprocessor(samples: samples)
-        let mel = melOutput.featureValue(for: "mel")!.multiArrayValue!
+        let (mel, melLength) = try melPreprocessor.extract(samples)
 
         // Step 2: Encoder — mel → encoded representations
-        let melFrames = mel.shape[2].intValue
-        AudioLog.inference.debug("Parakeet: encoding \(melFrames) mel frames")
-        let encoderOutput = try runEncoder(mel: mel, length: melFrames)
+        // Pad mel to nearest enumerated shape (EnumeratedShapes avoids BNNS crash)
+        let paddedMel = try padMelToEnumeratedShape(mel: mel, actualLength: melLength)
+        AudioLog.inference.debug("Parakeet: encoding \(melLength) mel frames, padded to \(paddedMel.shape[2])")
+        let encoderOutput = try runEncoder(mel: paddedMel, length: melLength)
         let encoded = encoderOutput.featureValue(for: "encoded")!.multiArrayValue!
         let encodedLengthArray = encoderOutput.featureValue(for: "encoded_length")!.multiArrayValue!
         let encodedLength = encodedLengthArray[0].intValue
 
         // Step 3: TDT greedy decode
-        AudioLog.inference.debug("Parakeet: decoding \(encodedLength) encoded frames")
         let tdtDecoder = TDTGreedyDecoder(config: config, decoder: decoder, joint: joint)
         let tokenIds = try tdtDecoder.decode(encoded: encoded, encodedLength: encodedLength)
 
@@ -83,19 +82,42 @@ public class ParakeetASRModel {
 
     // MARK: - CoreML Inference Helpers
 
-    private func runPreprocessor(samples: [Float]) throws -> MLFeatureProvider {
-        let audioArray = try MLMultiArray(shape: [1, samples.count as NSNumber], dataType: .float32)
-        let dstPtr = UnsafeMutableBufferPointer(
-            start: audioArray.dataPointer.assumingMemoryBound(to: Float.self),
-            count: audioArray.count)
-        for i in 0..<samples.count {
-            dstPtr[i] = samples[i]
+    /// Enumerated mel frame lengths supported by the encoder CoreML model.
+    private static let enumeratedMelLengths = [100, 200, 300, 400, 500, 750, 1000, 1500, 2000, 3000]
+
+    /// Pad mel spectrogram to the nearest enumerated shape.
+    /// The encoder uses EnumeratedShapes to avoid a BNNS crash with dynamic shapes.
+    private func padMelToEnumeratedShape(mel: MLMultiArray, actualLength: Int) throws -> MLMultiArray {
+        let melFrames = mel.shape[2].intValue
+
+        // Find the smallest enumerated length >= melFrames
+        guard let targetLength = Self.enumeratedMelLengths.first(where: { $0 >= melFrames }) else {
+            throw AudioModelError.inferenceFailed(
+                operation: "mel padding",
+                reason: "Audio too long: \(melFrames) mel frames exceeds max \(Self.enumeratedMelLengths.last!) (30s)")
         }
 
-        let input = try MLDictionaryFeatureProvider(dictionary: [
-            "audio": MLFeatureValue(multiArray: audioArray)
-        ])
-        return try preprocessor.prediction(from: input)
+        if targetLength == melFrames {
+            return mel
+        }
+
+        // Create zero-padded mel array [1, 128, targetLength]
+        let padded = try MLMultiArray(
+            shape: [1, 128, targetLength as NSNumber], dataType: mel.dataType)
+        let srcPtr = mel.dataPointer.assumingMemoryBound(to: Float16.self)
+        let dstPtr = padded.dataPointer.assumingMemoryBound(to: Float16.self)
+
+        let numMelBins = config.numMelBins
+        for bin in 0..<numMelBins {
+            let srcOffset = bin * melFrames
+            let dstOffset = bin * targetLength
+            dstPtr.advanced(by: dstOffset)
+                .update(from: srcPtr.advanced(by: srcOffset), count: melFrames)
+            dstPtr.advanced(by: dstOffset + melFrames)
+                .update(repeating: Float16(0), count: targetLength - melFrames)
+        }
+
+        return padded
     }
 
     private func runEncoder(mel: MLMultiArray, length: Int) throws -> MLFeatureProvider {
@@ -132,14 +154,13 @@ public class ParakeetASRModel {
                 modelId: modelId, reason: "Failed to resolve cache directory", underlying: error)
         }
 
-        // Step 2: Download model files
+        // Step 2: Download model files (no preprocessor needed — mel is computed in Swift)
         progressHandler?(0.0, "Downloading model...")
         do {
             try await HuggingFaceDownloader.downloadWeights(
                 modelId: modelId,
                 to: cacheDir,
                 additionalFiles: [
-                    "preprocessor.mlmodelc/**",
                     "encoder.mlmodelc/**",
                     "decoder.mlmodelc/**",
                     "joint.mlmodelc/**",
@@ -179,13 +200,10 @@ public class ParakeetASRModel {
                 modelId: modelId, reason: "Failed to load vocabulary", underlying: error)
         }
 
-        // Step 5: Load CoreML models
+        // Step 5: Load CoreML models (encoder, decoder, joint — no preprocessor)
         progressHandler?(0.80, "Loading CoreML models...")
-        let preprocessor = try loadCoreMLModel(
-            name: "preprocessor", from: cacheDir, computeUnits: .cpuOnly)
-        progressHandler?(0.85, "Loading encoder...")
         let encoder = try loadCoreMLModel(
-            name: "encoder", from: cacheDir, computeUnits: .cpuAndNeuralEngine)
+            name: "encoder", from: cacheDir, computeUnits: .all)
         progressHandler?(0.90, "Loading decoder...")
         let decoder = try loadCoreMLModel(
             name: "decoder", from: cacheDir, computeUnits: .cpuAndNeuralEngine)
@@ -198,7 +216,6 @@ public class ParakeetASRModel {
 
         return ParakeetASRModel(
             config: config,
-            preprocessor: preprocessor,
             encoder: encoder,
             decoder: decoder,
             joint: joint,
