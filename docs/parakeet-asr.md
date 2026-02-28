@@ -10,7 +10,7 @@ CoreML-based automatic speech recognition using NVIDIA's Parakeet-TDT 0.6B v3.
 
 - **Prediction network**: 2-layer LSTM (640 hidden) predicts from previously emitted tokens
 - **Joint network**: Combines encoder and prediction outputs, produces dual logits:
-  - Token logits (1025 classes: 1024 SentencePiece tokens + 1 blank)
+  - Token logits (8193 classes: 8192 SentencePiece tokens + 1 blank)
   - Duration logits (5 classes: `[0, 1, 2, 3, 4]` frames to advance)
 
 ### TDT Decoding Algorithm

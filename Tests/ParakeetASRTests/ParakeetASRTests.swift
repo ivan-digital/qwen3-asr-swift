@@ -19,8 +19,8 @@ final class ParakeetASRTests: XCTestCase {
         XCTAssertEqual(config.subsamplingFactor, 8)
         XCTAssertEqual(config.decoderHidden, 640)
         XCTAssertEqual(config.decoderLayers, 2)
-        XCTAssertEqual(config.vocabSize, 1024)
-        XCTAssertEqual(config.blankTokenId, 1024)
+        XCTAssertEqual(config.vocabSize, 8192)
+        XCTAssertEqual(config.blankTokenId, 8192)
         XCTAssertEqual(config.numDurationBins, 5)
         XCTAssertEqual(config.durationBins, [0, 1, 2, 3, 4])
     }

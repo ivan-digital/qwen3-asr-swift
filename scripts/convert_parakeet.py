@@ -38,7 +38,7 @@ def load_nemo_model():
     import nemo.collections.asr as nemo_asr
 
     model = nemo_asr.models.EncDecRNNTBPEModel.from_pretrained(
-        "nvidia/parakeet-tdt-0.6b-v2"
+        "nvidia/parakeet-tdt-0.6b-v3"
     )
     model.eval()
     return model

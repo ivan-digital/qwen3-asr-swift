@@ -26,7 +26,7 @@ Papers: [Qwen3-ASR](https://arxiv.org/abs/2601.21337), [Qwen3-TTS](https://arxiv
 |-------|------|-----------|-----------|--------------|
 | Qwen3-ASR-0.6B (4-bit) | Speech → Text | No | 52 languages | ~400 MB |
 | Qwen3-ASR-1.7B (8-bit) | Speech → Text | No | 52 languages | ~2.5 GB |
-| Parakeet-TDT-0.6B (INT4, CoreML) | Speech → Text | No | EN | ~315 MB |
+| Parakeet-TDT-0.6B (INT4, CoreML) | Speech → Text | No | 25 European languages | ~315 MB |
 | Qwen3-ForcedAligner-0.6B (4-bit) | Audio + Text → Timestamps | No | Multi | ~979 MB |
 | Qwen3-TTS-0.6B Base (4-bit) | Text → Speech | Yes (~120ms) | 10 languages | ~1.7 GB |
 | Qwen3-TTS-0.6B CustomVoice (4-bit) | Text → Speech | Yes (~120ms) | 10 languages | ~1.7 GB |
@@ -118,7 +118,7 @@ let model = try await ParakeetASRModel.fromPretrained()
 let transcription = model.transcribe(audio: audioSamples, sampleRate: 16000)
 ```
 
-Runs on Neural Engine via CoreML — frees the GPU for concurrent workloads. English only, ~315 MB.
+Runs on Neural Engine via CoreML — frees the GPU for concurrent workloads. 25 European languages, ~315 MB.
 
 ### ASR CLI
 
@@ -687,7 +687,7 @@ PERSONAPLEX_E2E=1 swift test --filter PersonaPlexE2ETests
 | Model | Languages |
 |-------|-----------|
 | Qwen3-ASR | 52 languages (CN, EN, Cantonese, DE, FR, ES, JA, KO, RU, + 22 Chinese dialects, ...) |
-| Parakeet TDT | EN |
+| Parakeet TDT | 25 European languages (BG, CS, DA, DE, EL, EN, ES, ET, FI, FR, HR, HU, IT, LT, LV, MT, NL, PL, PT, RO, RU, SK, SL, SV, UK) |
 | Qwen3-TTS | EN, CN, DE, JA, ES, FR, KO, RU, IT, PT (+ Beijing/Sichuan dialects via CustomVoice) |
 | CosyVoice TTS | CN, EN, JA, KO, DE, ES, FR, IT, RU |
 | PersonaPlex | EN |

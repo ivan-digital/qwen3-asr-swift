@@ -2,7 +2,7 @@ import CoreML
 import Foundation
 import AudioCommon
 
-/// Parakeet TDT 0.6B v2 — CoreML-based automatic speech recognition.
+/// Parakeet TDT 0.6B v3 — CoreML-based automatic speech recognition.
 ///
 /// Uses a FastConformer encoder with a Token-and-Duration Transducer (TDT) decoder.
 /// Mel preprocessing is done in Swift using Accelerate/vDSP. The encoder, decoder, and
@@ -44,7 +44,7 @@ public class ParakeetASRModel {
     /// - Parameters:
     ///   - audio: PCM Float32 audio samples
     ///   - sampleRate: Sample rate of the input audio in Hz
-    ///   - language: Language hint (unused, Parakeet is English-only)
+    ///   - language: Language hint (unused, Parakeet auto-detects from 25 European languages)
     /// - Returns: Transcribed text
     /// - Throws: `AudioModelError` on CoreML inference failure
     public func transcribeAudio(_ audio: [Float], sampleRate: Int, language: String? = nil) throws -> String {
