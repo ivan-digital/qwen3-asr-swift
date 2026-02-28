@@ -6,6 +6,10 @@ DerivedData/
 *.xcodeproj/project.xcworkspace/
 *.xcodeproj/xcuserdata/
 
+# Python
+__pycache__/
+*.pyc
+
 # Model weights
 cosyvoice3-mlx-4bit/
 personaplex-mlx-4bit/

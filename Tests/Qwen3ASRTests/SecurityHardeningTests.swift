@@ -196,14 +196,14 @@ final class DownloadSecurityTests: XCTestCase {
     // MARK: - sanitizedCacheKey
 
     func testSanitizedCacheKeyNormal() {
-        let key = Qwen3ASRModel.sanitizedCacheKey(for: "mlx-community/Qwen3-ASR-0.6B-4bit")
-        XCTAssertEqual(key, "mlx-community_Qwen3-ASR-0.6B-4bit")
+        let key = Qwen3ASRModel.sanitizedCacheKey(for: "aufklarer/Qwen3-ASR-0.6B-MLX-4bit")
+        XCTAssertEqual(key, "aufklarer_Qwen3-ASR-0.6B-MLX-4bit")
     }
 
     func testSanitizedCacheKeyMatchesExistingCache() throws {
         // Verify the new sanitizedCacheKey produces a key compatible with the
         // existing cached model directory (previously used plain replacingOccurrences)
-        let modelId = "mlx-community/Qwen3-ASR-0.6B-4bit"
+        let modelId = "aufklarer/Qwen3-ASR-0.6B-MLX-4bit"
         let key = Qwen3ASRModel.sanitizedCacheKey(for: modelId)
         let legacyKey = modelId.replacingOccurrences(of: "/", with: "_")
         XCTAssertEqual(key, legacyKey, "New sanitized key should match legacy format for standard model IDs")

@@ -478,7 +478,7 @@ final class UtilityTests: XCTestCase {
 
     func testResolveASRModelId_passthrough() {
         XCTAssertEqual(resolveASRModelId("org/custom-model"), "org/custom-model")
-        XCTAssertEqual(resolveASRModelId("mlx-community/Qwen3-ASR-0.6B-4bit"), "mlx-community/Qwen3-ASR-0.6B-4bit")
+        XCTAssertEqual(resolveASRModelId("aufklarer/Qwen3-ASR-0.6B-MLX-4bit"), "aufklarer/Qwen3-ASR-0.6B-MLX-4bit")
     }
 
     func testFormatDuration() {

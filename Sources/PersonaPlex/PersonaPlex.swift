@@ -5,6 +5,9 @@ import AudioCommon
 
 // MARK: - PersonaPlex Model
 
+/// PersonaPlex speech-to-speech model.
+///
+/// - Warning: This class is not thread-safe. Create separate instances for concurrent use.
 public final class PersonaPlexModel: Module {
     public let cfg: PersonaPlexConfig
 
@@ -79,6 +82,7 @@ public final class PersonaPlexModel: Module {
                 voiceCache = nil
             }
         } catch {
+            AudioLog.modelLoading.warning("Voice preset '\(voice.rawValue)' failed to load: \(error)")
             voiceEmbeddings = nil
             voiceCache = nil
         }
@@ -519,7 +523,10 @@ public final class PersonaPlexModel: Module {
                         } else {
                             voiceEmbeddings = nil; voiceCache = nil
                         }
-                    } catch { voiceEmbeddings = nil; voiceCache = nil }
+                    } catch {
+                        AudioLog.modelLoading.warning("Voice preset '\(voice.rawValue)' failed to load: \(error)")
+                        voiceEmbeddings = nil; voiceCache = nil
+                    }
 
                     let voiceFrameCount = voiceEmbeddings?.shape[0] ?? 0
                     let silenceFrameCount = Int(0.5 * cfg.mimi.frameRate)
@@ -842,7 +849,10 @@ public final class PersonaPlexModel: Module {
                 voiceEmbeddings = weights["embeddings"]
                 voiceCache2 = weights["cache"]
             } else { voiceEmbeddings = nil; voiceCache2 = nil }
-        } catch { voiceEmbeddings = nil; voiceCache2 = nil }
+        } catch {
+            AudioLog.modelLoading.warning("Voice preset '\(voice.rawValue)' failed to load: \(error)")
+            voiceEmbeddings = nil; voiceCache2 = nil
+        }
 
         let voiceFrameCount = voiceEmbeddings?.shape[0] ?? 0
         let silenceFrameCount = Int(0.5 * cfg.mimi.frameRate)

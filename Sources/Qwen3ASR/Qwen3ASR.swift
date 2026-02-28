@@ -5,7 +5,7 @@ import MLXFast
 import AudioCommon
 
 /// Special token IDs for Qwen3-ASR
-public struct Qwen3ASRTokens {
+public struct Qwen3ASRTokens: Sendable {
     public static let audioTokenId = 151676        // <|audio_pad|>
     public static let audioStartTokenId = 151669   // <|audio_start|>
     public static let audioEndTokenId = 151670     // <|audio_end|>
@@ -16,7 +16,9 @@ public struct Qwen3ASRTokens {
     public static let timestampTokenId = 151705    // <|timestamp|>
 }
 
-/// Main Qwen3-ASR model for speech recognition
+/// Main Qwen3-ASR model for speech recognition.
+///
+/// - Warning: This class is not thread-safe. Create separate instances for concurrent use.
 public class Qwen3ASRModel {
     public let audioEncoder: Qwen3AudioEncoder
     public let featureExtractor: WhisperFeatureExtractor
@@ -226,8 +228,8 @@ public enum ASRModelSize {
     /// Default model IDs on HuggingFace
     public var defaultModelId: String {
         switch self {
-        case .small: return "mlx-community/Qwen3-ASR-0.6B-4bit"
-        case .large: return "mlx-community/Qwen3-ASR-1.7B-8bit"
+        case .small: return "aufklarer/Qwen3-ASR-0.6B-MLX-4bit"
+        case .large: return "aufklarer/Qwen3-ASR-1.7B-MLX-8bit"
         }
     }
 
@@ -261,7 +263,7 @@ public enum ASRModelSize {
 public extension Qwen3ASRModel {
     /// Load model from HuggingFace hub with automatic weight downloading
     static func fromPretrained(
-        modelId: String = "mlx-community/Qwen3-ASR-0.6B-4bit",
+        modelId: String = "aufklarer/Qwen3-ASR-0.6B-MLX-4bit",
         progressHandler: ((Double, String) -> Void)? = nil
     ) async throws -> Qwen3ASRModel {
         progressHandler?(0.0, "Downloading model...")

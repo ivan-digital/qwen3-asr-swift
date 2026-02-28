@@ -483,6 +483,80 @@ final class WeSpeakerTests: XCTestCase {
                                   "maxSpeakers=2 should produce at most 2 speakers, got \(result2.numSpeakers)")
     }
 
+    // MARK: - E2E: CoreML Embedding
+
+    func testE2ECoreMLEmbedding() async throws {
+        let model: WeSpeakerModel
+        do {
+            model = try await WeSpeakerModel.fromPretrained(engine: .coreml)
+        } catch {
+            throw XCTSkip("CoreML model not cached: \(error)")
+        }
+
+        let audioURL = URL(fileURLWithPath: "Tests/Qwen3ASRTests/Resources/test_audio.wav")
+        guard FileManager.default.fileExists(atPath: audioURL.path) else {
+            throw XCTSkip("Test audio file not found")
+        }
+
+        let (samples, sampleRate) = try AudioFileLoader.loadWAV(url: audioURL)
+        let embedding = model.embed(audio: samples, sampleRate: sampleRate)
+
+        // Should be 256-dim
+        XCTAssertEqual(embedding.count, 256)
+
+        // Should be L2 normalized (norm ~ 1.0)
+        let norm = sqrt(embedding.reduce(Float(0)) { $0 + $1 * $1 })
+        XCTAssertEqual(norm, 1.0, accuracy: 0.05)
+    }
+
+    func testE2ECoreMLEmbeddingConsistency() async throws {
+        let model: WeSpeakerModel
+        do {
+            model = try await WeSpeakerModel.fromPretrained(engine: .coreml)
+        } catch {
+            throw XCTSkip("CoreML model not cached: \(error)")
+        }
+
+        let audioURL = URL(fileURLWithPath: "Tests/Qwen3ASRTests/Resources/test_audio.wav")
+        guard FileManager.default.fileExists(atPath: audioURL.path) else {
+            throw XCTSkip("Test audio file not found")
+        }
+
+        let (samples, sampleRate) = try AudioFileLoader.loadWAV(url: audioURL)
+
+        let emb1 = model.embed(audio: samples, sampleRate: sampleRate)
+        let emb2 = model.embed(audio: samples, sampleRate: sampleRate)
+
+        // Same audio → same embedding
+        let similarity = WeSpeakerModel.cosineSimilarity(emb1, emb2)
+        XCTAssertEqual(similarity, 1.0, accuracy: 0.001)
+    }
+
+    func testE2ECoreMLDiarization() async throws {
+        let pipeline: DiarizationPipeline
+        do {
+            pipeline = try await DiarizationPipeline.fromPretrained(embeddingEngine: .coreml)
+        } catch {
+            throw XCTSkip("CoreML model not cached: \(error)")
+        }
+
+        let audioURL = URL(fileURLWithPath: "Tests/Qwen3ASRTests/Resources/test_audio.wav")
+        guard FileManager.default.fileExists(atPath: audioURL.path) else {
+            throw XCTSkip("Test audio file not found")
+        }
+
+        let (samples, sampleRate) = try AudioFileLoader.loadWAV(url: audioURL)
+        let result = pipeline.diarize(audio: samples, sampleRate: sampleRate, config: .default)
+
+        XCTAssertGreaterThan(result.segments.count, 0)
+        XCTAssertGreaterThanOrEqual(result.numSpeakers, 1)
+
+        for seg in result.segments {
+            XCTAssertGreaterThanOrEqual(seg.startTime, 0)
+            XCTAssertGreaterThan(seg.endTime, seg.startTime)
+        }
+    }
+
     // MARK: - E2E: Embedding Different Audio Produces Different Embeddings
 
     func testE2EEmbeddingDifferentAudio() async throws {

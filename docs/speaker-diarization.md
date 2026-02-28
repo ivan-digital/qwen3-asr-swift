@@ -47,6 +47,26 @@ Input: [B, T, 80, 1] log-mel spectrogram (80 fbank, 16kHz)
 
 BatchNorm is **fused into Conv2d at conversion time** — no BN layers in the Swift model. This simplifies the model and avoids train/eval mode differences.
 
+### CoreML Backend
+
+WeSpeaker supports a CoreML backend (`engine: .coreml`) that runs on the Neural Engine, freeing the GPU for concurrent workloads.
+
+```swift
+let model = try await WeSpeakerModel.fromPretrained(engine: .coreml)
+// Same API — embed(), cosineSimilarity()
+
+let pipeline = try await DiarizationPipeline.fromPretrained(embeddingEngine: .coreml)
+```
+
+The CoreML model uses EnumeratedShapes for variable mel lengths (20–2000 frames, covering ~0.3s–32s audio) and float16 I/O. Input: `[1, 1, T, 80]` NCHW mel spectrogram. Output: `[1, 256]` L2-normalized embedding.
+
+| Backend | Latency (20s audio) | Hardware | Model |
+|---------|-------------------|----------|-------|
+| MLX | ~310ms | GPU (Metal) | [aufklarer/WeSpeaker-ResNet34-LM-MLX](https://huggingface.co/aufklarer/WeSpeaker-ResNet34-LM-MLX) |
+| CoreML | ~430ms | Neural Engine + CPU | [aufklarer/WeSpeaker-ResNet34-LM-CoreML](https://huggingface.co/aufklarer/WeSpeaker-ResNet34-LM-CoreML) |
+
+MLX and CoreML embeddings are **not interchangeable** — NHWC vs NCHW layout causes stats pooling to flatten features in different orders. Each backend is self-consistent (cosine sim 1.0 for same input) but cross-backend similarity is low (~0.15). Use the same backend for enrollment and comparison.
+
 ### Mel Feature Extraction
 
 80-dim log-mel spectrogram via vDSP (same pipeline as WhisperFeatureExtractor but with different parameters):
@@ -99,10 +119,9 @@ let segments = pipeline.extractSpeaker(
 ```bash
 # Full diarization
 audio diarize meeting.wav
-# Speaker 0: [0.50s - 3.20s] (2.70s)
-# Speaker 1: [3.50s - 7.10s] (3.60s)
-# Speaker 0: [7.30s - 9.80s] (2.50s)
-# --- 2 speaker(s) ---
+
+# CoreML embeddings (Neural Engine)
+audio diarize meeting.wav --embedding-engine coreml
 
 # With options
 audio diarize meeting.wav --threshold 0.6 --max-speakers 3 --json
@@ -112,31 +131,19 @@ audio diarize meeting.wav --target-speaker enrollment.wav
 
 # Embed a speaker's voice
 audio embed-speaker enrollment.wav
-audio embed-speaker enrollment.wav --json
+audio embed-speaker enrollment.wav --engine coreml --json
 ```
 
 ## Model Weights
 
 - **Segmentation**: `aufklarer/Pyannote-Segmentation-MLX` (~5.7 MB)
-- **Speaker Embedding**: `aufklarer/WeSpeaker-ResNet34-LM-MLX` (~25 MB)
+- **Speaker Embedding (MLX)**: `aufklarer/WeSpeaker-ResNet34-LM-MLX` (~25 MB)
+- **Speaker Embedding (CoreML)**: `aufklarer/WeSpeaker-ResNet34-LM-CoreML` (~13 MB)
 - Cache: `~/Library/Caches/qwen3-speech/`
 
 ### Weight Conversion
 
-```bash
-# Convert WeSpeaker weights (requires HuggingFace token for gated model)
-python scripts/convert_wespeaker.py --token YOUR_HF_TOKEN
-
-# Upload to HuggingFace
-python scripts/convert_wespeaker.py --upload --repo-id aufklarer/WeSpeaker-ResNet34-LM-MLX
-```
-
-The conversion script:
-1. Downloads `pyannote/wespeaker-voxceleb-resnet34-LM`
-2. Fuses BatchNorm into Conv2d: `w_fused = w * γ/√(σ²+ε)`, `b_fused = β - μ·γ/√(σ²+ε)`
-3. Transposes Conv2d weights: `[O,I,H,W]` → `[O,H,W,I]` for MLX channels-last
-4. Renames `seg_1` → `embedding`
-5. Saves as safetensors + config.json
+Both backends fuse BatchNorm into Conv2d at conversion time: `w_fused = w * γ/√(σ²+ε)`, `b_fused = β - μ·γ/√(σ²+ε)`. MLX additionally transposes to channels-last `[O,H,W,I]`. Conversion scripts are in `scripts/`.
 
 ## Protocols
 
@@ -156,16 +163,18 @@ extension DiarizationPipeline: SpeakerDiarizationModel {
 
 ```
 Sources/SpeechVAD/
-├── MelFeatureExtractor.swift      80-dim fbank via vDSP
-├── WeSpeakerModel.swift           ResNet34 network (BN-fused Conv2d)
-├── WeSpeakerWeightLoading.swift   Weight loading from safetensors
-├── WeSpeaker.swift                Public API: embed(), fromPretrained()
-├── PowersetDecoder.swift          7-class powerset → per-speaker probs
-├── DiarizationPipeline.swift      Full pipeline + speaker extraction
-└── SpeechVAD+Protocols.swift      Protocol conformances
+├── MelFeatureExtractor.swift          80-dim fbank via vDSP (extractRaw() for CoreML)
+├── WeSpeakerModel.swift               ResNet34 network (BN-fused Conv2d)
+├── WeSpeakerWeightLoading.swift       Weight loading from safetensors
+├── WeSpeaker.swift                    Public API: embed(), fromPretrained(), engine selection
+├── CoreMLWeSpeakerInference.swift     CoreML inference (EnumeratedShapes, float16)
+├── PowersetDecoder.swift              7-class powerset → per-speaker probs
+├── DiarizationPipeline.swift          Full pipeline + speaker extraction
+└── SpeechVAD+Protocols.swift          Protocol conformances
 
 Sources/AudioCommon/Protocols.swift    DiarizedSegment, SpeakerEmbeddingModel, SpeakerDiarizationModel
-Sources/AudioCLILib/DiarizeCommand.swift       `audio diarize`
-Sources/AudioCLILib/EmbedSpeakerCommand.swift  `audio embed-speaker`
-scripts/convert_wespeaker.py                    Weight conversion
+Sources/AudioCLILib/DiarizeCommand.swift       `audio diarize` (--embedding-engine)
+Sources/AudioCLILib/EmbedSpeakerCommand.swift  `audio embed-speaker` (--engine)
+scripts/convert_wespeaker.py                    MLX weight conversion
+scripts/convert_wespeaker_coreml.py             CoreML weight conversion
 ```

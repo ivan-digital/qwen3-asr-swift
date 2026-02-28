@@ -121,10 +121,14 @@ class MelFeatureExtractor {
         self.melFilterbank = transposed
     }
 
-    /// Extract 80-dim log-mel features from audio.
+    /// Extract raw 80-dim log-mel features as a flat Float array.
+    ///
+    /// This avoids creating an MLXArray, useful for CoreML paths that need
+    /// raw floats without an MLX round-trip.
+    ///
     /// - Parameter audio: PCM Float32 samples at 16kHz
-    /// - Returns: `MLXArray [T, 80]` — time-major mel features
-    func extract(_ audio: [Float]) -> MLXArray {
+    /// - Returns: `(melSpec, nFrames)` where melSpec is a flat `[nFrames * 80]` array
+    func extractRaw(_ audio: [Float]) -> (melSpec: [Float], nFrames: Int) {
         let nBins = paddedFFT / 2 + 1
         let halfPadded = paddedFFT / 2
 
@@ -199,6 +203,14 @@ class MelFeatureExtractor {
         vDSP_vclip(melSpec, 1, &epsilon, [Float.greatestFiniteMagnitude], &melSpec, 1, vDSP_Length(count))
         vvlogf(&melSpec, melSpec, &countN)
 
+        return (melSpec, nFrames)
+    }
+
+    /// Extract 80-dim log-mel features from audio.
+    /// - Parameter audio: PCM Float32 samples at 16kHz
+    /// - Returns: `MLXArray [T, 80]` — time-major mel features
+    func extract(_ audio: [Float]) -> MLXArray {
+        let (melSpec, nFrames) = extractRaw(audio)
         return MLXArray(melSpec, [nFrames, nMels])
     }
 }

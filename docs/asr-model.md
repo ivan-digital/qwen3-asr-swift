@@ -5,8 +5,8 @@
 Qwen3-ASR is an encoder-decoder model: audio encoder extracts features, text decoder generates transcription tokens autoregressively.
 
 Two model sizes are supported:
-- **0.6B** (`mlx-community/Qwen3-ASR-0.6B-4bit`) — 4-bit quantized, ~0.4 GB
-- **1.7B** (`mlx-community/Qwen3-ASR-1.7B-8bit`) — 8-bit quantized, ~2.5 GB
+- **0.6B** (`aufklarer/Qwen3-ASR-0.6B-MLX-4bit`) — 4-bit quantized, ~0.4 GB
+- **1.7B** (`aufklarer/Qwen3-ASR-1.7B-MLX-8bit`) — 8-bit quantized, ~2.5 GB
 
 ```
 Audio (16kHz mono)

@@ -48,10 +48,10 @@ final class Qwen3ASRTests: XCTestCase {
 
     func testASRModelSizeDetection() {
         XCTAssertEqual(
-            ASRModelSize.detect(from: "mlx-community/Qwen3-ASR-0.6B-4bit"),
+            ASRModelSize.detect(from: "aufklarer/Qwen3-ASR-0.6B-MLX-4bit"),
             .small)
         XCTAssertEqual(
-            ASRModelSize.detect(from: "mlx-community/Qwen3-ASR-1.7B-8bit"),
+            ASRModelSize.detect(from: "aufklarer/Qwen3-ASR-1.7B-MLX-8bit"),
             .large)
         XCTAssertEqual(
             ASRModelSize.detect(from: "some-custom/model"),
@@ -158,7 +158,7 @@ final class Qwen3ASRTests: XCTestCase {
     func testTokenizerLoadsVocab() throws {
         let cacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
             .appendingPathComponent("qwen3-asr")
-            .appendingPathComponent("mlx-community_Qwen3-ASR-0.6B-4bit")
+            .appendingPathComponent("aufklarer_Qwen3-ASR-0.6B-MLX-4bit")
 
         let vocabPath = cacheDir.appendingPathComponent("vocab.json")
 
@@ -178,7 +178,7 @@ final class Qwen3ASRTests: XCTestCase {
     func testTokenizerLoadsAddedTokens() throws {
         let cacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
             .appendingPathComponent("qwen3-asr")
-            .appendingPathComponent("mlx-community_Qwen3-ASR-0.6B-4bit")
+            .appendingPathComponent("aufklarer_Qwen3-ASR-0.6B-MLX-4bit")
 
         let vocabPath = cacheDir.appendingPathComponent("vocab.json")
 
@@ -202,7 +202,7 @@ final class Qwen3ASRTests: XCTestCase {
     func testTokenizerDecodeWithASRMarker() throws {
         let cacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
             .appendingPathComponent("qwen3-asr")
-            .appendingPathComponent("mlx-community_Qwen3-ASR-0.6B-4bit")
+            .appendingPathComponent("aufklarer_Qwen3-ASR-0.6B-MLX-4bit")
 
         let vocabPath = cacheDir.appendingPathComponent("vocab.json")
 
@@ -236,7 +236,7 @@ final class Qwen3ASRTests: XCTestCase {
     func testTokenizerSkipsSpecialTokensWithPipes() throws {
         let cacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
             .appendingPathComponent("qwen3-asr")
-            .appendingPathComponent("mlx-community_Qwen3-ASR-0.6B-4bit")
+            .appendingPathComponent("aufklarer_Qwen3-ASR-0.6B-MLX-4bit")
 
         let vocabPath = cacheDir.appendingPathComponent("vocab.json")
 

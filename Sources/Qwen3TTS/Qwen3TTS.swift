@@ -19,7 +19,9 @@ public enum TTSError: Error, LocalizedError {
     }
 }
 
-/// Main Qwen3-TTS model for text-to-speech synthesis
+/// Main Qwen3-TTS model for text-to-speech synthesis.
+///
+/// - Warning: This class is not thread-safe. Create separate instances for concurrent use.
 public class Qwen3TTSModel {
     /// Default instruct text applied automatically for CustomVoice models when no explicit
     /// `--instruct` is provided. Prevents rambling output for short texts.
@@ -1413,7 +1415,7 @@ public class Qwen3TTSModel {
 public extension Qwen3TTSModel {
     /// Load model from HuggingFace hub
     static func fromPretrained(
-        modelId: String = "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit",
+        modelId: String = "aufklarer/Qwen3-TTS-12Hz-0.6B-Base-MLX-4bit",
         tokenizerModelId: String = "Qwen/Qwen3-TTS-Tokenizer-12Hz",
         progressHandler: ((Double, String) -> Void)? = nil
     ) async throws -> Qwen3TTSModel {

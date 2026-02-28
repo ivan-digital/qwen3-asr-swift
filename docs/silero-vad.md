@@ -111,18 +111,23 @@ minSilenceDuration: 0.1  // Ignore silence gaps shorter than 100ms
 
 ## Weight Conversion
 
-```bash
-python3 scripts/convert_silero_vad.py --upload
+Conversion scripts in `scripts/` handle weight format differences (PyTorch → MLX channels-last transpose, LSTM bias fusion). Both MLX and CoreML weights are hosted on HuggingFace and downloaded automatically.
+
+## CoreML Backend
+
+Silero VAD supports a CoreML backend (`engine: .coreml`) that runs on the Neural Engine + CPU, achieving **7.7x lower latency** than MLX while freeing the GPU.
+
+```swift
+let vad = try await SileroVADModel.fromPretrained(engine: .coreml)
+// Same API — processChunk(), detectSpeech(), resetState()
 ```
 
-The conversion script:
-1. Downloads the Silero VAD v5 JIT model via `torch.hub`
-2. Extracts the 16kHz model weights (ignoring the 8kHz variant)
-3. Transposes Conv1d weights from PyTorch `[O, I, K]` to MLX `[O, K, I]`
-4. Sums LSTM biases: `bias = bias_ih + bias_hh`
-5. Saves as `model.safetensors` + `config.json`
+The CoreML model uses float16 I/O with LSTM h/c state carried as `MLMultiArray` between chunks. Input shape: `[1, 1, 576]` (context + chunk). Probability agreement between backends is within 0.016 max diff.
 
-Weights hosted at [aufklarer/Silero-VAD-v5-MLX](https://huggingface.co/aufklarer/Silero-VAD-v5-MLX).
+| Backend | Per-chunk Latency | Hardware | Model |
+|---------|------------------|----------|-------|
+| MLX | ~2.1ms | GPU (Metal) | [aufklarer/Silero-VAD-v5-MLX](https://huggingface.co/aufklarer/Silero-VAD-v5-MLX) |
+| CoreML | ~0.27ms | Neural Engine + CPU | [aufklarer/Silero-VAD-v5-CoreML](https://huggingface.co/aufklarer/Silero-VAD-v5-CoreML) |
 
 ## Comparison with Pyannote VAD
 
@@ -134,7 +139,7 @@ Weights hosted at [aufklarer/Silero-VAD-v5-MLX](https://huggingface.co/aufklarer
 | **Architecture** | SincNet → BiLSTM(4L) → Linear → Softmax | STFT → Conv encoder → LSTM → Sigmoid |
 | **Output** | 7-class powerset → speech probability | Direct speech probability |
 | **Streaming** | No (requires full windows) | Yes (LSTM state across chunks) |
-| **Latency** | ~seconds (window aggregation) | ~40μs per chunk |
+| **Latency** | ~seconds (window aggregation) | ~0.27ms/chunk (CoreML), ~2.1ms (MLX) |
 | **Use case** | Offline/batch processing | Real-time microphone input |
 
 Both models conform to `VoiceActivityDetectionModel` and can be used interchangeably for the `detectSpeech(audio:sampleRate:)` batch API.

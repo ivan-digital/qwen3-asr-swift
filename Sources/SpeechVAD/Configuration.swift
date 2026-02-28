@@ -1,7 +1,7 @@
 import Foundation
 
 /// Model configuration for pyannote PyanNet segmentation.
-public struct SegmentationConfig {
+public struct SegmentationConfig: Sendable {
     /// Audio sample rate in Hz
     public let sampleRate: Int
 
@@ -43,7 +43,7 @@ public struct SegmentationConfig {
 }
 
 /// VAD pipeline configuration with default hysteresis thresholds.
-public struct VADConfig {
+public struct VADConfig: Sendable {
     /// Onset threshold (speech starts when probability exceeds this)
     public var onset: Float
     /// Offset threshold (speech ends when probability drops below this)

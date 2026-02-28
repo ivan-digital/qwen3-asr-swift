@@ -32,6 +32,10 @@ let package = Package(
             name: "SpeechVAD",
             targets: ["SpeechVAD"]
         ),
+        .library(
+            name: "ParakeetASR",
+            targets: ["ParakeetASR"]
+        ),
         .executable(
             name: "audio",
             targets: ["AudioCLI"]
@@ -56,6 +60,7 @@ let package = Package(
             name: "Qwen3ASR",
             dependencies: [
                 "AudioCommon",
+                "SpeechVAD",
                 .product(name: "MLX", package: "mlx-swift"),
                 .product(name: "MLXNN", package: "mlx-swift"),
                 .product(name: "MLXFast", package: "mlx-swift")
@@ -97,6 +102,12 @@ let package = Package(
             ]
         ),
         .target(
+            name: "ParakeetASR",
+            dependencies: [
+                "AudioCommon",
+            ]
+        ),
+        .target(
             name: "AudioCLILib",
             dependencies: [
                 "Qwen3ASR",
@@ -104,6 +115,7 @@ let package = Package(
                 "CosyVoiceTTS",
                 "PersonaPlex",
                 "SpeechVAD",
+                "ParakeetASR",
                 "AudioCommon",
                 .product(name: "MLX", package: "mlx-swift"),
                 .product(name: "ArgumentParser", package: "swift-argument-parser")
@@ -119,7 +131,7 @@ let package = Package(
         ),
         .testTarget(
             name: "Qwen3ASRTests",
-            dependencies: ["Qwen3ASR", "AudioCommon"],
+            dependencies: ["Qwen3ASR", "SpeechVAD", "AudioCommon"],
             resources: [
                 .copy("Resources/test_audio.wav")
             ]
@@ -138,6 +150,13 @@ let package = Package(
                 "SpeechVAD",
                 "AudioCommon",
                 .product(name: "MLX", package: "mlx-swift"),
+            ]
+        ),
+        .testTarget(
+            name: "ParakeetASRTests",
+            dependencies: ["ParakeetASR", "AudioCommon"],
+            resources: [
+                .copy("Resources/test_audio.wav")
             ]
         ),
         .testTarget(

@@ -16,6 +16,8 @@ public enum VADEvent: Sendable {
 /// runs the model, and applies hysteresis with duration filtering via a
 /// four-state machine.
 ///
+/// - Warning: This class is not thread-safe. Create separate instances for concurrent use.
+///
 /// ```swift
 /// let model = try await SileroVADModel.fromPretrained()
 /// let processor = StreamingVADProcessor(model: model)

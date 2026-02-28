@@ -7,6 +7,8 @@ import AudioCommon
 /// Detects speech regions in audio using a sliding-window segmentation model
 /// with hysteresis thresholding and duration filtering.
 ///
+/// - Warning: This class is not thread-safe. Create separate instances for concurrent use.
+///
 /// ```swift
 /// let vad = try await PyannoteVADModel.fromPretrained()
 /// let segments = vad.detectSpeech(audio: samples, sampleRate: 16000)

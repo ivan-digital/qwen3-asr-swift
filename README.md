@@ -3,6 +3,7 @@
 AI speech models for Apple Silicon, powered by [MLX Swift](https://github.com/ml-explore/mlx-swift).
 
 - **Qwen3-ASR** — Speech-to-text (automatic speech recognition)
+- **Parakeet TDT** — Speech-to-text via CoreML (Neural Engine, FastConformer + TDT decoder)
 - **Qwen3-ForcedAligner** — Word-level timestamp alignment (audio + text → timestamps)
 - **Qwen3-TTS** — Text-to-speech synthesis (highest quality, custom speakers)
 - **CosyVoice TTS** — Text-to-speech with streaming (9 languages, DiT flow matching)
@@ -25,14 +26,15 @@ Papers: [Qwen3-ASR](https://arxiv.org/abs/2601.21337), [Qwen3-TTS](https://arxiv
 |-------|------|-----------|-----------|--------------|
 | Qwen3-ASR-0.6B (4-bit) | Speech → Text | No | 52 languages | ~400 MB |
 | Qwen3-ASR-1.7B (8-bit) | Speech → Text | No | 52 languages | ~2.5 GB |
+| Parakeet-TDT-0.6B (INT4, CoreML) | Speech → Text | No | 25 European languages | ~315 MB |
 | Qwen3-ForcedAligner-0.6B (4-bit) | Audio + Text → Timestamps | No | Multi | ~979 MB |
 | Qwen3-TTS-0.6B Base (4-bit) | Text → Speech | Yes (~120ms) | 10 languages | ~1.7 GB |
 | Qwen3-TTS-0.6B CustomVoice (4-bit) | Text → Speech | Yes (~120ms) | 10 languages | ~1.7 GB |
 | CosyVoice3-0.5B (4-bit) | Text → Speech | Yes (~150ms) | 9 languages | ~1.9 GB |
 | PersonaPlex-7B (4-bit) | Speech → Speech | Yes (~2s chunks) | EN | ~5.3 GB |
-| Silero-VAD-v5 | Voice Activity Detection | Yes (32ms chunks) | Language-agnostic | ~1.2 MB |
+| Silero-VAD-v5 | Voice Activity Detection | Yes (32ms chunks) | Language-agnostic | ~1.2 MB (MLX or CoreML) |
 | Pyannote-Segmentation-3.0 | VAD + Speaker Segmentation | No (10s windows) | Language-agnostic | ~5.7 MB |
-| WeSpeaker-ResNet34-LM | Speaker Embedding (256-dim) | No | Language-agnostic | ~25 MB |
+| WeSpeaker-ResNet34-LM | Speaker Embedding (256-dim) | No | Language-agnostic | ~25 MB (MLX or CoreML) |
 
 ### When to Use Which TTS
 
@@ -71,8 +73,9 @@ dependencies: [
 Import the module you need:
 
 ```swift
-import Qwen3ASR     // Speech recognition
-import Qwen3TTS     // Text-to-speech (Qwen3)
+import Qwen3ASR      // Speech recognition (MLX)
+import ParakeetASR   // Speech recognition (CoreML)
+import Qwen3TTS      // Text-to-speech (Qwen3)
 import CosyVoiceTTS  // Text-to-speech (streaming)
 import PersonaPlex   // Speech-to-speech (full-duplex)
 import SpeechVAD     // Voice activity detection (pyannote + Silero)
@@ -98,7 +101,7 @@ let model = try await Qwen3ASRModel.fromPretrained()
 
 // Or use the larger 1.7B model for better accuracy
 let model = try await Qwen3ASRModel.fromPretrained(
-    modelId: "mlx-community/Qwen3-ASR-1.7B-8bit"
+    modelId: "aufklarer/Qwen3-ASR-1.7B-MLX-8bit"
 )
 
 // Audio can be any sample rate — automatically resampled to 16kHz internally
@@ -106,16 +109,30 @@ let transcription = model.transcribe(audio: audioSamples, sampleRate: 16000)
 print(transcription)
 ```
 
+### Parakeet TDT (CoreML)
+
+```swift
+import ParakeetASR
+
+let model = try await ParakeetASRModel.fromPretrained()
+let transcription = model.transcribe(audio: audioSamples, sampleRate: 16000)
+```
+
+Runs on Neural Engine via CoreML — frees the GPU for concurrent workloads. 25 European languages, ~315 MB.
+
 ### ASR CLI
 
 ```bash
 swift build -c release
 
-# Default (0.6B)
+# Default (Qwen3-ASR 0.6B, MLX)
 .build/release/audio transcribe audio.wav
 
 # Use 1.7B model
 .build/release/audio transcribe audio.wav --model 1.7B
+
+# Parakeet TDT (CoreML, Neural Engine)
+.build/release/audio transcribe --engine parakeet audio.wav
 ```
 
 ## Forced Alignment
@@ -429,7 +446,8 @@ Silero VAD v5 processes 32ms audio chunks with sub-millisecond latency — ideal
 import SpeechVAD
 
 let vad = try await SileroVADModel.fromPretrained()
-// Downloads ~1.2 MB on first run
+// Or use CoreML (Neural Engine, lower power):
+// let vad = try await SileroVADModel.fromPretrained(engine: .coreml)
 
 // Streaming: process 512-sample chunks (32ms @ 16kHz)
 let prob = vad.processChunk(samples)  // → 0.0...1.0
@@ -470,6 +488,9 @@ swift build -c release
 # Streaming Silero VAD (32ms chunks)
 .build/release/audio vad-stream audio.wav
 
+# CoreML backend (Neural Engine)
+.build/release/audio vad-stream audio.wav --engine coreml
+
 # With custom thresholds
 .build/release/audio vad-stream audio.wav --onset 0.6 --offset 0.4
 
@@ -488,7 +509,8 @@ swift build -c release
 import SpeechVAD
 
 let pipeline = try await DiarizationPipeline.fromPretrained()
-// Downloads pyannote (~5.7 MB) + WeSpeaker (~25 MB) on first run
+// Or use CoreML embeddings (Neural Engine, frees GPU):
+// let pipeline = try await DiarizationPipeline.fromPretrained(embeddingEngine: .coreml)
 
 let result = pipeline.diarize(audio: samples, sampleRate: 16000)
 for seg in result.segments {
@@ -501,6 +523,7 @@ print("\(result.numSpeakers) speakers detected")
 
 ```swift
 let model = try await WeSpeakerModel.fromPretrained()
+// Or: let model = try await WeSpeakerModel.fromPretrained(engine: .coreml)
 let embedding = model.embed(audio: samples, sampleRate: 16000)
 // embedding: [Float] of length 256, L2-normalized
 
@@ -529,6 +552,9 @@ swift build -c release
 # Speaker diarization
 .build/release/audio diarize meeting.wav
 
+# CoreML embeddings (Neural Engine)
+.build/release/audio diarize meeting.wav --embedding-engine coreml
+
 # With options
 .build/release/audio diarize meeting.wav --threshold 0.6 --max-speakers 3 --json
 
@@ -537,6 +563,7 @@ swift build -c release
 
 # Speaker embedding
 .build/release/audio embed-speaker enrollment.wav --json
+.build/release/audio embed-speaker enrollment.wav --engine coreml
 ```
 
 See [Speaker Diarization](docs/speaker-diarization.md) for architecture details.
@@ -545,10 +572,11 @@ See [Speaker Diarization](docs/speaker-diarization.md) for architecture details.
 
 ### ASR
 
-| Model | Framework | RTF | 10s audio processed in |
-|-------|-----------|-----|------------------------|
-| Qwen3-ASR-0.6B (4-bit) | MLX Swift | ~0.06 | ~0.6s |
-| Qwen3-ASR-1.7B (8-bit) | MLX Swift | ~0.11 | ~1.1s |
+| Model | Backend | RTF | 10s audio processed in |
+|-------|---------|-----|------------------------|
+| Qwen3-ASR-0.6B (4-bit) | MLX | ~0.06 | ~0.6s |
+| Qwen3-ASR-1.7B (8-bit) | MLX | ~0.11 | ~1.1s |
+| Parakeet-TDT-0.6B (INT4) | CoreML (Neural Engine) | ~0.07 | ~0.7s |
 | Whisper-large-v3 | whisper.cpp (Q5_0) | ~0.10 | ~1.0s |
 | Whisper-small | whisper.cpp (Q5_0) | ~0.04 | ~0.4s |
 
@@ -577,19 +605,37 @@ See [Speaker Diarization](docs/speaker-diarization.md) for architecture details.
 
 > PersonaPlex runs at ~68ms/step — well under the 80ms real-time threshold at 12.5 Hz, achieving **faster-than-real-time** inference (RTF < 1.0). Both temporal transformer and depformer are 4-bit quantized.
 
-### VAD
+### VAD & Speaker Embedding
 
-| Model | Framework | Chunk Size | 20s audio processed in | Throughput |
-|-------|-----------|-----------|------------------------|------------|
-| Silero-VAD-v5 | MLX Swift (release) | 32ms (512 samples) | ~0.87s | 23x real-time |
+| Model | Backend | Per-call Latency | RTF | Notes |
+|-------|---------|-----------------|-----|-------|
+| Silero-VAD-v5 | MLX | ~2.1ms / chunk | 0.065 | GPU (Metal) |
+| Silero-VAD-v5 | CoreML | ~0.27ms / chunk | 0.008 | Neural Engine, **7.7x faster** |
+| WeSpeaker ResNet34-LM | MLX | ~310ms / 20s audio | 0.016 | GPU (Metal) |
+| WeSpeaker ResNet34-LM | CoreML | ~430ms / 20s audio | 0.021 | Neural Engine, frees GPU |
 
-> Silero VAD processes each 32ms chunk in ~40μs after model load. The streaming `StreamingVADProcessor` applies hysteresis thresholding with configurable onset/offset thresholds and minimum duration filtering.
+> Silero VAD CoreML runs on the Neural Engine at 7.7x the speed of MLX, making it ideal for always-on microphone input. WeSpeaker MLX is faster on GPU, but CoreML frees the GPU for concurrent workloads (TTS, ASR). Both backends produce equivalent results.
 
 RTF = Real-Time Factor (lower is better, < 1.0 = faster than real-time).
 
+### MLX vs CoreML
+
+Both backends produce equivalent results. Choose based on your workload:
+
+| | MLX | CoreML |
+|---|---|---|
+| **Hardware** | GPU (Metal shaders) | Neural Engine + CPU |
+| **Best for** | Maximum throughput, single-model workloads | Multi-model pipelines, background tasks |
+| **Power** | Higher GPU utilization | Lower power, frees GPU |
+| **Latency** | Faster for large models (WeSpeaker) | Faster for small models (Silero VAD) |
+
+**Desktop inference**: MLX is the default — fastest single-model performance on Apple Silicon. Switch to CoreML when running multiple models concurrently (e.g., VAD + ASR + TTS) to avoid GPU contention, or for battery-sensitive workloads on laptops.
+
+CoreML models are available for Silero VAD and WeSpeaker. Pass `engine: .coreml` at construction time — inference API is identical.
+
 ## Architecture
 
-See [ASR Inference](docs/asr-inference.md), [ASR Model](docs/asr-model.md), [Forced Aligner](docs/forced-aligner.md), [Qwen3-TTS Inference](docs/qwen3-tts-inference.md), [TTS Model](docs/tts-model.md), [CosyVoice TTS](docs/cosyvoice-tts.md), [PersonaPlex](docs/personaplex.md), [Silero VAD](docs/silero-vad.md), [Speaker Diarization](docs/speaker-diarization.md), [Shared Protocols](docs/shared-protocols.md) for detailed architecture docs.
+See [ASR Inference](docs/asr-inference.md), [ASR Model](docs/asr-model.md), [Parakeet TDT ASR](docs/parakeet-asr.md), [Forced Aligner](docs/forced-aligner.md), [Qwen3-TTS Inference](docs/qwen3-tts-inference.md), [TTS Model](docs/tts-model.md), [CosyVoice TTS](docs/cosyvoice-tts.md), [PersonaPlex](docs/personaplex.md), [Silero VAD](docs/silero-vad.md), [Speaker Diarization](docs/speaker-diarization.md), [Shared Protocols](docs/shared-protocols.md) for detailed architecture docs.
 
 ## Cache Configuration
 
@@ -641,6 +687,7 @@ PERSONAPLEX_E2E=1 swift test --filter PersonaPlexE2ETests
 | Model | Languages |
 |-------|-----------|
 | Qwen3-ASR | 52 languages (CN, EN, Cantonese, DE, FR, ES, JA, KO, RU, + 22 Chinese dialects, ...) |
+| Parakeet TDT | 25 European languages (BG, CS, DA, DE, EL, EN, ES, ET, FI, FR, HR, HU, IT, LT, LV, MT, NL, PL, PT, RO, RU, SK, SL, SV, UK) |
 | Qwen3-TTS | EN, CN, DE, JA, ES, FR, KO, RU, IT, PT (+ Beijing/Sichuan dialects via CustomVoice) |
 | CosyVoice TTS | CN, EN, JA, KO, DE, ES, FR, IT, RU |
 | PersonaPlex | EN |

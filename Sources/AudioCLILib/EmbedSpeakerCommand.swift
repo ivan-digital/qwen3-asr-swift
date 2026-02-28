@@ -12,6 +12,9 @@ public struct EmbedSpeakerCommand: ParsableCommand {
     @Argument(help: "Audio file containing speaker voice (WAV, any sample rate)")
     public var audioFile: String
 
+    @Option(name: .long, help: "Inference engine: mlx (default) or coreml")
+    public var engine: String = "mlx"
+
     @Flag(name: .long, help: "Output as JSON")
     public var json: Bool = false
 
@@ -25,8 +28,14 @@ public struct EmbedSpeakerCommand: ParsableCommand {
             let duration = formatDuration(audio.count, sampleRate: 16000)
             print("  Loaded \(audio.count) samples (\(duration)s)")
 
-            print("Loading speaker embedding model...")
+            guard let embEngine = WeSpeakerEngine(rawValue: engine) else {
+                print("Error: unknown engine '\(engine)'. Use 'mlx' or 'coreml'.")
+                return
+            }
+
+            print("Loading speaker embedding model (engine: \(embEngine.rawValue))...")
             let model = try await WeSpeakerModel.fromPretrained(
+                engine: embEngine,
                 progressHandler: reportProgress
             )
 

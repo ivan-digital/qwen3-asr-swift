@@ -181,6 +181,8 @@ for model in ttsModels {
 Sources/
 ├── AudioCommon/               Shared types, protocols, utilities
 │   ├── Protocols.swift        AudioChunk, AlignedWord, SpeechSegment, 5 protocols
+│   ├── AudioModelError.swift  Unified error type for all model operations
+│   ├── Logging.swift          Centralized os.Logger instances (AudioLog)
 │   ├── AudioFileLoader.swift  WAV/audio file loading
 │   ├── WAVWriter.swift        WAV file writing
 │   ├── WeightLoading.swift    Safetensors loading, HuggingFace download
@@ -229,6 +231,66 @@ AudioCommon  ← Qwen3ASR      ─┐
 
 Each model target depends only on `AudioCommon` and MLX. No cross-dependencies between model targets.
 
+## Thread Safety
+
+All model classes are **not thread-safe** by design. ML inference is inherently sequential on a shared GPU, and MLX's `Module` system does not support actor isolation. Adding synchronization primitives would introduce overhead for a scenario no caller exercises.
+
+**Not thread-safe** (create separate instances for concurrent use):
+- `Qwen3ASRModel`, `StreamingASR`
+- `Qwen3TTSModel`
+- `CosyVoiceTTSModel`
+- `PersonaPlexModel`
+- `SileroVADModel`, `StreamingVADProcessor`, `PyannoteVADModel`
+- `DiarizationPipeline`
+
+**Thread-safe** (all `let` properties, pure computation):
+- `WeSpeakerModel`
+
+**Sendable config types** — The following value types conform to `Sendable` and can be safely passed across concurrency boundaries:
+`SegmentationConfig`, `VADConfig`, `DiarizationConfig`, `VADPipeline`, `Qwen3AudioEncoderConfig`, `Qwen3ASRTokens`, `SlottedText`, `TextChunker`
+
+## Error Handling
+
+### AudioModelError
+
+Unified error type in `AudioCommon` for cross-module error reporting:
+
+| Case | Fields | When |
+|------|--------|------|
+| `modelLoadFailed` | `modelId`, `reason`, `underlying?` | Model download or initialization fails |
+| `weightLoadingFailed` | `path`, `underlying?` | Safetensors file cannot be read |
+| `inferenceFailed` | `operation`, `reason` | Generation or decoding step fails |
+| `invalidConfiguration` | `model`, `reason` | Config values are incompatible |
+| `voiceNotFound` | `voice`, `searchPath` | Voice preset file missing |
+
+Each case produces a human-readable `errorDescription` with full context including underlying errors.
+
+### Per-module errors
+
+Modules may also define their own error types for domain-specific failures:
+- `TTSError` (Qwen3TTS) — tokenizer and language errors
+- `CosyVoiceTTSError` (CosyVoiceTTS) — load, download, input, generation errors
+- `DownloadError` (AudioCommon) — HuggingFace download failures
+
+## Logging
+
+Centralized structured logging via `os.Logger` (Apple's unified logging system):
+
+```swift
+import AudioCommon
+
+// Available loggers:
+AudioLog.modelLoading  // Weight loading, initialization, voice preset errors
+AudioLog.inference     // Generation, decoding, pipeline steps
+AudioLog.download      // HuggingFace downloads, cache operations
+```
+
+All loggers use subsystem `com.qwen3speech`. Messages are visible in Console.app and `log stream`.
+
+Used in:
+- `PersonaPlexModel` — voice preset loading failures (`.warning`)
+- `HuggingFaceDownloader` — directory listing errors (`.debug`)
+
 ## Design Decisions
 
 1. **`AnyObject` constraint** — All protocols require reference semantics since ML models hold large weight buffers
@@ -237,3 +299,5 @@ Each model target depends only on `AudioCommon` and MLX. No cross-dependencies b
 4. **No `ModelLoadable`** — Each model has different loading parameters (TTS needs `tokenizerModelId`, PersonaPlex needs voice presets), so loading stays on concrete types
 5. **Unified `AudioChunk`** — All streaming methods return the shared `AudioChunk` type directly. The previous per-model chunk types (`TTSAudioChunk`, `CosyVoiceAudioChunk`, `PersonaPlexAudioChunk`) were removed
 6. **Separate `ForcedAlignmentModel`** — Distinct from `SpeechRecognitionModel` because input/output differ (audio+text → timestamps vs audio → text)
+7. **Document-only thread safety** — No locks or actors; document the single-threaded contract instead. This matches standard ML library practice (PyTorch, Core ML)
+8. **Sendable on value types** — Config structs with only primitive fields get `Sendable` so they can cross `Task` boundaries without warnings

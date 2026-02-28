@@ -122,7 +122,7 @@ public enum AudioFileLoader {
     }
 
     /// Simple linear resampling
-    private static func resample(_ samples: [Float], from inputRate: Int, to outputRate: Int) -> [Float] {
+    public static func resample(_ samples: [Float], from inputRate: Int, to outputRate: Int) -> [Float] {
         let ratio = Double(outputRate) / Double(inputRate)
         let outputLength = Int(Double(samples.count) * ratio)
 

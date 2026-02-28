@@ -1,5 +1,6 @@
 import Foundation
 import Hub
+import os
 
 /// Download errors
 public enum DownloadError: Error, LocalizedError {
@@ -33,14 +34,14 @@ public enum HuggingFaceDownloader {
         let fm = FileManager.default
 
         // Check old (flat) cache path for backward compat:
-        //   ~/Library/Caches/qwen3-speech/mlx-community_Qwen3-ASR-0.6B-4bit/
+        //   ~/Library/Caches/qwen3-speech/aufklarer_Qwen3-ASR-0.6B-MLX-4bit/
         let oldDir = base.appendingPathComponent(sanitizedCacheKey(for: modelId), isDirectory: true)
         if weightsExist(in: oldDir) {
             return oldDir
         }
 
         // New Hub-style path:
-        //   ~/Library/Caches/qwen3-speech/models/mlx-community/Qwen3-ASR-0.6B-4bit/
+        //   ~/Library/Caches/qwen3-speech/models/aufklarer/Qwen3-ASR-0.6B-MLX-4bit/
         let hub = HubApi(downloadBase: base)
         let repo = Hub.Repo(id: modelId)
         let dir = hub.localRepoLocation(repo)
@@ -53,7 +54,13 @@ public enum HuggingFaceDownloader {
     /// Check if safetensors weights exist in a directory.
     public static func weightsExist(in directory: URL) -> Bool {
         let fm = FileManager.default
-        let contents = (try? fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
+        let contents: [URL]
+        do {
+            contents = try fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+        } catch {
+            AudioLog.download.debug("Could not list directory \(directory.path): \(error)")
+            contents = []
+        }
         return contents.contains { $0.pathExtension == "safetensors" }
     }
 

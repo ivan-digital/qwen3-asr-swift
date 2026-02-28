@@ -8,7 +8,7 @@ import MLX
 final class Qwen3ASRIntegrationTests: XCTestCase {
 
     // Use 4-bit quantized model for smaller download (680MB vs 1.5GB)
-    static let modelId = "mlx-community/Qwen3-ASR-0.6B-4bit"
+    static let modelId = "aufklarer/Qwen3-ASR-0.6B-MLX-4bit"
 
     override class func setUp() {
         super.setUp()

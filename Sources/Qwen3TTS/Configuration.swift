@@ -162,8 +162,8 @@ public struct StreamingConfig: Sendable {
 
 /// Well-known TTS model variants
 public enum TTSModelVariant: String, CaseIterable, Sendable {
-    case base = "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit"
-    case customVoice = "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-4bit"
+    case base = "aufklarer/Qwen3-TTS-12Hz-0.6B-Base-MLX-4bit"
+    case customVoice = "aufklarer/Qwen3-TTS-12Hz-0.6B-CustomVoice-MLX-4bit"
 }
 
 // MARK: - Combined TTS Config
