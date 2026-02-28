@@ -220,6 +220,7 @@ CLI: `audio respond --input audio.wav --compile --output response.wav`
 
 - [PersonaPlex paper](https://arxiv.org/abs/2602.06053)
 - [NVIDIA PersonaPlex](https://github.com/NVIDIA/personaplex)
+- [PersonaPlex on Apple Silicon — Full-Duplex Speech-to-Speech in Native Swift with MLX](https://blog.ivan.digital/nvidia-personaplex-7b-on-apple-silicon-full-duplex-speech-to-speech-in-native-swift-with-mlx-0aa5276f2e23)
 - [Moshi/Mimi paper](https://arxiv.org/abs/2410.00037)
 - [Kyutai Moshi](https://github.com/kyutai-labs/moshi)
 - [HuggingFace model](https://huggingface.co/nvidia/personaplex-7b-v1)

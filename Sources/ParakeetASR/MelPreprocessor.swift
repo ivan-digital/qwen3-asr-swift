@@ -53,8 +53,15 @@ struct MelPreprocessor {
         // Pre-emphasis: x[n] = audio[n] - 0.97 * audio[n-1]
         var preemphasized = [Float](repeating: 0, count: audio.count)
         preemphasized[0] = audio[0]
-        for i in 1..<audio.count {
-            preemphasized[i] = audio[i] - config.preEmphasis * audio[i - 1]
+        audio.withUnsafeBufferPointer { src in
+            preemphasized.withUnsafeMutableBufferPointer { dst in
+                var negCoeff = -config.preEmphasis  // -0.97
+                // dst[n] = audio[n] + (-0.97) * audio[n-1]
+                vDSP_vsma(src.baseAddress!, 1, &negCoeff,
+                          src.baseAddress! + 1, 1,
+                          dst.baseAddress! + 1, 1,
+                          vDSP_Length(audio.count - 1))
+            }
         }
 
         // Reflect padding (n_fft // 2 = 256 on each side, matching torch.stft center=True)
@@ -146,32 +153,27 @@ struct MelPreprocessor {
 
         // Per-feature normalization: for each mel bin, normalize over valid frames
         // NeMo: mean = x[:, :melLength].mean(dim=1), std = x[:, :melLength].std(dim=1)
-        for bin in 0..<config.numMelBins {
-            let offset = bin * nFrames
+        melSpec.withUnsafeMutableBufferPointer { buf in
+            for bin in 0..<config.numMelBins {
+                let base = buf.baseAddress! + bin * nFrames
 
-            // Mean
-            var sum: Float = 0
-            for t in 0..<melLength {
-                sum += melSpec[offset + t]
-            }
-            let mean = sum / Float(melLength)
+                // Mean
+                var mean: Float = 0
+                vDSP_meanv(base, 1, &mean, vDSP_Length(melLength))
 
-            // Std (Bessel's correction: N-1, matching torch.std)
-            var varSum: Float = 0
-            for t in 0..<melLength {
-                let diff = melSpec[offset + t] - mean
-                varSum += diff * diff
-            }
-            let std = sqrt(varSum / Float(melLength - 1))
-            let invStd = 1.0 / (std + 1e-5)
+                // Subtract mean in-place
+                var negMean = -mean
+                vDSP_vsadd(base, 1, &negMean, base, 1, vDSP_Length(melLength))
 
-            // Normalize valid frames
-            for t in 0..<melLength {
-                melSpec[offset + t] = (melSpec[offset + t] - mean) * invStd
-            }
-            // Zero out frames beyond melLength
-            for t in melLength..<nFrames {
-                melSpec[offset + t] = 0
+                // Bessel-corrected std from zero-centered data
+                var meanSq: Float = 0
+                vDSP_measqv(base, 1, &meanSq, vDSP_Length(melLength))
+                let std = sqrt(Float(melLength) * meanSq / Float(melLength - 1))
+                var invStd = 1.0 / (std + 1e-5)
+                vDSP_vsmul(base, 1, &invStd, base, 1, vDSP_Length(melLength))
+
+                // Zero pad frames beyond melLength
+                memset(base + melLength, 0, (nFrames - melLength) * MemoryLayout<Float>.stride)
             }
         }
 

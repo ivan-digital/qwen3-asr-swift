@@ -37,6 +37,18 @@ public class ParakeetASRModel {
         self.vocabulary = vocabulary
     }
 
+    // MARK: - Warmup
+
+    /// Warm up CoreML models by running a dummy inference.
+    ///
+    /// CoreML compiles computation graphs on the first `prediction()` call, which causes
+    /// a ~4x latency penalty on cold inference. Calling `warmUp()` triggers this compilation
+    /// on a minimal 1-second silence input so that subsequent real transcriptions run at full speed.
+    public func warmUp() throws {
+        let dummyAudio = [Float](repeating: 0, count: config.sampleRate)  // 1s silence
+        _ = try transcribeAudio(dummyAudio, sampleRate: config.sampleRate)
+    }
+
     // MARK: - Transcription
 
     /// Transcribe audio to text.
@@ -58,24 +70,35 @@ public class ParakeetASRModel {
 
         // Step 1: Mel spectrogram extraction (Swift/Accelerate)
         AudioLog.inference.debug("Parakeet: preprocessing \(samples.count) samples")
+        let tMel0 = CFAbsoluteTimeGetCurrent()
         let (mel, melLength) = try melPreprocessor.extract(samples)
+        let tMel1 = CFAbsoluteTimeGetCurrent()
 
         // Step 2: Encoder — mel → encoded representations
         // Pad mel to nearest enumerated shape (EnumeratedShapes avoids BNNS crash)
         let paddedMel = try padMelToEnumeratedShape(mel: mel, actualLength: melLength)
         AudioLog.inference.debug("Parakeet: encoding \(melLength) mel frames, padded to \(paddedMel.shape[2])")
+        let tEnc0 = CFAbsoluteTimeGetCurrent()
         let encoderOutput = try runEncoder(mel: paddedMel, length: melLength)
+        let tEnc1 = CFAbsoluteTimeGetCurrent()
         let encoded = encoderOutput.featureValue(for: "encoded")!.multiArrayValue!
         let encodedLengthArray = encoderOutput.featureValue(for: "encoded_length")!.multiArrayValue!
         let encodedLength = encodedLengthArray[0].intValue
 
         // Step 3: TDT greedy decode
         let tdtDecoder = TDTGreedyDecoder(config: config, decoder: decoder, joint: joint)
+        let tDec0 = CFAbsoluteTimeGetCurrent()
         let tokenIds = try tdtDecoder.decode(encoded: encoded, encodedLength: encodedLength)
+        let tDec1 = CFAbsoluteTimeGetCurrent()
 
         // Step 4: Vocabulary decode
         let text = vocabulary.decode(tokenIds)
-        AudioLog.inference.debug("Parakeet: decoded \(tokenIds.count) tokens → \"\(text)\"")
+
+        let melMs = (tMel1 - tMel0) * 1000
+        let encMs = (tEnc1 - tEnc0) * 1000
+        let decMs = (tDec1 - tDec0) * 1000
+        let totalMs = melMs + encMs + decMs
+        print("Parakeet timing: mel=\(String(format: "%.1f", melMs))ms, encoder=\(String(format: "%.1f", encMs))ms, decode=\(String(format: "%.1f", decMs))ms, total=\(String(format: "%.1f", totalMs))ms (\(tokenIds.count) tokens, \(encodedLength) frames)")
 
         return text
     }

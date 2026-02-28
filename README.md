@@ -576,7 +576,7 @@ See [Speaker Diarization](docs/speaker-diarization.md) for architecture details.
 |-------|---------|-----|------------------------|
 | Qwen3-ASR-0.6B (4-bit) | MLX | ~0.06 | ~0.6s |
 | Qwen3-ASR-1.7B (8-bit) | MLX | ~0.11 | ~1.1s |
-| Parakeet-TDT-0.6B (INT4) | CoreML (Neural Engine) | ~0.07 | ~0.7s |
+| Parakeet-TDT-0.6B (INT4) | CoreML (Neural Engine) | ~0.12 cold, ~0.03 warm | ~1.2s / ~0.3s |
 | Whisper-large-v3 | whisper.cpp (Q5_0) | ~0.10 | ~1.0s |
 | Whisper-small | whisper.cpp (Q5_0) | ~0.04 | ~0.4s |
 

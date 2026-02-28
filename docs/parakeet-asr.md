@@ -35,16 +35,15 @@ This variable-rate alignment is more accurate and efficient than fixed-rate RNN-
 
 ## CoreML Models
 
-The model is split into 4 CoreML sub-models for optimal compute unit placement:
+The model is split into 3 CoreML sub-models for optimal compute unit placement:
 
 | Model | Compute | Quantization | Purpose |
 |-------|---------|--------------|---------|
-| `preprocessor.mlmodelc` | CPU only | None | Raw audio → 128-dim mel features |
 | `encoder.mlmodelc` | CPU + Neural Engine | INT4 palettized | Mel → 1024-dim encoded features |
 | `decoder.mlmodelc` | CPU + Neural Engine | None | LSTM prediction network |
 | `joint.mlmodelc` | CPU + Neural Engine | None | Dual-head token + duration logits |
 
-The encoder is INT4 palettized (~75% size reduction) with minimal accuracy impact. Decoder and joint are small enough that quantization isn't necessary.
+Mel preprocessing (pre-emphasis, STFT, mel filterbank, normalization) is done in Swift using Accelerate/vDSP — no CoreML preprocessor model needed. The encoder is INT4 palettized (~75% size reduction) with minimal accuracy impact. Decoder and joint are small enough that quantization isn't necessary.
 
 ## Audio Preprocessing
 
@@ -52,7 +51,7 @@ The encoder is INT4 palettized (~75% size reduction) with minimal accuracy impac
 - Mel bins: 128
 - n_fft: 512, hop: 160, win: 400
 - Window: Hanning
-- Pre-emphasis: 0.97 (applied in the CoreML preprocessor model)
+- Pre-emphasis: 0.97 (applied in Swift via vDSP)
 
 ## CLI Usage
 
@@ -67,9 +66,11 @@ audio transcribe --engine qwen3 audio.wav
 
 ## Performance
 
-On Apple Silicon with Neural Engine:
-- ~110x real-time factor on M4 Pro
-- First inference includes CoreML compilation (~2-3s), subsequent runs are faster
+On Apple Silicon with Neural Engine (M2 Max, 20s audio):
+- Cold: RTF ~0.12 (first inference includes CoreML compilation)
+- Warm: RTF ~0.03 (subsequent inferences, ~32x real-time)
+- Mel preprocessing uses vectorized Accelerate/vDSP (pre-emphasis, normalization)
+- Decode loop uses memcpy, memset, and vDSP argmax to minimize scalar overhead
 - Encoder runs on Neural Engine for maximum throughput
 
 ## Model Weights
