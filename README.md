@@ -30,9 +30,9 @@ Papers: [Qwen3-ASR](https://arxiv.org/abs/2601.21337), [Qwen3-TTS](https://arxiv
 | Qwen3-TTS-0.6B CustomVoice (4-bit) | Text → Speech | Yes (~120ms) | 10 languages | ~1.7 GB |
 | CosyVoice3-0.5B (4-bit) | Text → Speech | Yes (~150ms) | 9 languages | ~1.9 GB |
 | PersonaPlex-7B (4-bit) | Speech → Speech | Yes (~2s chunks) | EN | ~5.3 GB |
-| Silero-VAD-v5 | Voice Activity Detection | Yes (32ms chunks) | Language-agnostic | ~1.2 MB |
+| Silero-VAD-v5 | Voice Activity Detection | Yes (32ms chunks) | Language-agnostic | ~1.2 MB (MLX or CoreML) |
 | Pyannote-Segmentation-3.0 | VAD + Speaker Segmentation | No (10s windows) | Language-agnostic | ~5.7 MB |
-| WeSpeaker-ResNet34-LM | Speaker Embedding (256-dim) | No | Language-agnostic | ~25 MB |
+| WeSpeaker-ResNet34-LM | Speaker Embedding (256-dim) | No | Language-agnostic | ~25 MB (MLX or CoreML) |
 
 ### When to Use Which TTS
 
@@ -429,7 +429,8 @@ Silero VAD v5 processes 32ms audio chunks with sub-millisecond latency — ideal
 import SpeechVAD
 
 let vad = try await SileroVADModel.fromPretrained()
-// Downloads ~1.2 MB on first run
+// Or use CoreML (Neural Engine, lower power):
+// let vad = try await SileroVADModel.fromPretrained(engine: .coreml)
 
 // Streaming: process 512-sample chunks (32ms @ 16kHz)
 let prob = vad.processChunk(samples)  // → 0.0...1.0
@@ -470,6 +471,9 @@ swift build -c release
 # Streaming Silero VAD (32ms chunks)
 .build/release/audio vad-stream audio.wav
 
+# CoreML backend (Neural Engine)
+.build/release/audio vad-stream audio.wav --engine coreml
+
 # With custom thresholds
 .build/release/audio vad-stream audio.wav --onset 0.6 --offset 0.4
 
@@ -488,7 +492,8 @@ swift build -c release
 import SpeechVAD
 
 let pipeline = try await DiarizationPipeline.fromPretrained()
-// Downloads pyannote (~5.7 MB) + WeSpeaker (~25 MB) on first run
+// Or use CoreML embeddings (Neural Engine, frees GPU):
+// let pipeline = try await DiarizationPipeline.fromPretrained(embeddingEngine: .coreml)
 
 let result = pipeline.diarize(audio: samples, sampleRate: 16000)
 for seg in result.segments {
@@ -501,6 +506,7 @@ print("\(result.numSpeakers) speakers detected")
 
 ```swift
 let model = try await WeSpeakerModel.fromPretrained()
+// Or: let model = try await WeSpeakerModel.fromPretrained(engine: .coreml)
 let embedding = model.embed(audio: samples, sampleRate: 16000)
 // embedding: [Float] of length 256, L2-normalized
 
@@ -529,6 +535,9 @@ swift build -c release
 # Speaker diarization
 .build/release/audio diarize meeting.wav
 
+# CoreML embeddings (Neural Engine)
+.build/release/audio diarize meeting.wav --embedding-engine coreml
+
 # With options
 .build/release/audio diarize meeting.wav --threshold 0.6 --max-speakers 3 --json
 
@@ -537,6 +546,7 @@ swift build -c release
 
 # Speaker embedding
 .build/release/audio embed-speaker enrollment.wav --json
+.build/release/audio embed-speaker enrollment.wav --engine coreml
 ```
 
 See [Speaker Diarization](docs/speaker-diarization.md) for architecture details.
@@ -577,15 +587,33 @@ See [Speaker Diarization](docs/speaker-diarization.md) for architecture details.
 
 > PersonaPlex runs at ~68ms/step — well under the 80ms real-time threshold at 12.5 Hz, achieving **faster-than-real-time** inference (RTF < 1.0). Both temporal transformer and depformer are 4-bit quantized.
 
-### VAD
+### VAD & Speaker Embedding
 
-| Model | Framework | Chunk Size | 20s audio processed in | Throughput |
-|-------|-----------|-----------|------------------------|------------|
-| Silero-VAD-v5 | MLX Swift (release) | 32ms (512 samples) | ~0.87s | 23x real-time |
+| Model | Backend | Per-call Latency | RTF | Notes |
+|-------|---------|-----------------|-----|-------|
+| Silero-VAD-v5 | MLX | ~2.1ms / chunk | 0.065 | GPU (Metal) |
+| Silero-VAD-v5 | CoreML | ~0.27ms / chunk | 0.008 | Neural Engine, **7.7x faster** |
+| WeSpeaker ResNet34-LM | MLX | ~310ms / 20s audio | 0.016 | GPU (Metal) |
+| WeSpeaker ResNet34-LM | CoreML | ~430ms / 20s audio | 0.021 | Neural Engine, frees GPU |
 
-> Silero VAD processes each 32ms chunk in ~40μs after model load. The streaming `StreamingVADProcessor` applies hysteresis thresholding with configurable onset/offset thresholds and minimum duration filtering.
+> Silero VAD CoreML runs on the Neural Engine at 7.7x the speed of MLX, making it ideal for always-on microphone input. WeSpeaker MLX is faster on GPU, but CoreML frees the GPU for concurrent workloads (TTS, ASR). Both backends produce equivalent results.
 
 RTF = Real-Time Factor (lower is better, < 1.0 = faster than real-time).
+
+### MLX vs CoreML
+
+Both backends produce equivalent results. Choose based on your workload:
+
+| | MLX | CoreML |
+|---|---|---|
+| **Hardware** | GPU (Metal shaders) | Neural Engine + CPU |
+| **Best for** | Maximum throughput, single-model workloads | Multi-model pipelines, background tasks |
+| **Power** | Higher GPU utilization | Lower power, frees GPU |
+| **Latency** | Faster for large models (WeSpeaker) | Faster for small models (Silero VAD) |
+
+**Desktop inference**: MLX is the default — fastest single-model performance on Apple Silicon. Switch to CoreML when running multiple models concurrently (e.g., VAD + ASR + TTS) to avoid GPU contention, or for battery-sensitive workloads on laptops.
+
+CoreML models are available for Silero VAD and WeSpeaker. Pass `engine: .coreml` at construction time — inference API is identical.
 
 ## Architecture
 
