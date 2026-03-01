@@ -131,12 +131,15 @@ public class Qwen3ASRModel {
         // <|im_start|>assistant\n
         inputIds.append(contentsOf: [imStartId, assistantId, newlineId].map { Int32($0) })
 
+        // Add language hint if specified, then always add <|asr_text|> marker.
+        // Without <|asr_text|>, the model doesn't know it should transcribe.
+        // Without language hint, the model auto-detects and prepends "language XX" to output.
         if let lang = language, let tokenizer = tokenizer {
             let langPrefix = "language \(lang)"
             let langTokens = tokenizer.encode(langPrefix)
             inputIds.append(contentsOf: langTokens.map { Int32($0) })
-            inputIds.append(Int32(asrTextId))
         }
+        inputIds.append(Int32(asrTextId))
 
         // Get text embeddings for all tokens
         let inputIdsTensor = MLXArray(inputIds).expandedDimensions(axis: 0)

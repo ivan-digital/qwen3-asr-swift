@@ -1,31 +1,26 @@
 import AVFoundation
+import SpeechVAD
 
 @Observable
 final class AudioRecorder {
     private(set) var isRecording = false
     private(set) var audioLevel: Float = 0
 
-    /// Called (on main thread) when speech is detected followed by sustained silence.
-    var onSilenceAfterSpeech: (() -> Void)?
-
-    /// RMS threshold below which audio is considered silence.
-    var silenceThreshold: Float = 0.015
-
-    /// Seconds of continuous silence after speech before firing callback.
-    var silenceDuration: TimeInterval = 1.5
+    /// Called (on main thread) when speech ends (silence after speech detected by VAD).
+    var onSpeechEnded: (() -> Void)?
 
     private var audioEngine: AVAudioEngine?
     private var samples: [Float] = []
     private let lock = NSLock()
     private let targetSampleRate: Double
 
-    // Silence detection state
-    private var speechDetected = false
-    private var silenceStartTime: Date?
-    private var silenceCallbackFired = false
+    // VAD
+    private let vadProcessor: StreamingVADProcessor
+    private var speechActive = false
 
-    init(targetSampleRate: Double = 24000) {
+    init(targetSampleRate: Double = 24000, vadProcessor: StreamingVADProcessor) {
         self.targetSampleRate = targetSampleRate
+        self.vadProcessor = vadProcessor
     }
 
     func startRecording() {
@@ -33,9 +28,8 @@ final class AudioRecorder {
         samples.removeAll()
         lock.unlock()
 
-        speechDetected = false
-        silenceStartTime = nil
-        silenceCallbackFired = false
+        speechActive = false
+        vadProcessor.reset()
 
         let engine = AVAudioEngine()
         let inputNode = engine.inputNode
@@ -48,10 +42,21 @@ final class AudioRecorder {
             interleaved: false
         ) else { return }
 
+        // 16kHz format for VAD
+        guard let vadFormat = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: 16000,
+            channels: 1,
+            interleaved: false
+        ) else { return }
+
         guard let converter = AVAudioConverter(from: hwFormat, to: targetFormat) else { return }
+        guard let vadConverter = AVAudioConverter(from: hwFormat, to: vadFormat) else { return }
 
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: hwFormat) { [weak self] buffer, _ in
             guard let self else { return }
+
+            // Convert to target sample rate (24kHz) for recording
             let frameCount = AVAudioFrameCount(
                 Double(buffer.frameLength) * self.targetSampleRate / hwFormat.sampleRate
             )
@@ -71,7 +76,7 @@ final class AudioRecorder {
                 let ptr = UnsafeBufferPointer(start: channelData, count: count)
                 let chunk = Array(ptr)
 
-                // RMS level
+                // RMS for visual level
                 var sum: Float = 0
                 for s in chunk { sum += s * s }
                 let rms = sqrt(sum / max(Float(count), 1))
@@ -80,30 +85,43 @@ final class AudioRecorder {
                 self.samples.append(contentsOf: chunk)
                 self.lock.unlock()
 
-                // Silence detection
-                let speechThreshold = self.silenceThreshold * 2
-                if rms > speechThreshold {
-                    if !self.speechDetected {
-                        print("[AudioRecorder] Speech detected (rms=\(String(format: "%.4f", rms)))")
-                    }
-                    self.speechDetected = true
-                    self.silenceStartTime = nil
-                } else if self.speechDetected && rms < self.silenceThreshold {
-                    if self.silenceStartTime == nil {
-                        self.silenceStartTime = Date()
-                        print("[AudioRecorder] Silence started (rms=\(String(format: "%.4f", rms)))")
-                    } else if !self.silenceCallbackFired,
-                              Date().timeIntervalSince(self.silenceStartTime!) >= self.silenceDuration {
-                        self.silenceCallbackFired = true
-                        print("[AudioRecorder] Silence callback fired after \(self.silenceDuration)s")
-                        DispatchQueue.main.async {
-                            self.onSilenceAfterSpeech?()
-                        }
-                    }
-                }
-
                 DispatchQueue.main.async {
                     self.audioLevel = rms
+                }
+            }
+
+            // Convert to 16kHz for VAD
+            let vadFrameCount = AVAudioFrameCount(
+                Double(buffer.frameLength) * 16000.0 / hwFormat.sampleRate
+            )
+            guard vadFrameCount > 0,
+                  let vadBuffer = AVAudioPCMBuffer(pcmFormat: vadFormat, frameCapacity: vadFrameCount)
+            else { return }
+
+            var vadError: NSError?
+            vadConverter.convert(to: vadBuffer, error: &vadError) { _, outStatus in
+                outStatus.pointee = .haveData
+                return buffer
+            }
+            if vadError != nil { return }
+
+            if let vadData = vadBuffer.floatChannelData?[0] {
+                let vadCount = Int(vadBuffer.frameLength)
+                let vadChunk = Array(UnsafeBufferPointer(start: vadData, count: vadCount))
+
+                let events = self.vadProcessor.process(samples: vadChunk)
+                for event in events {
+                    switch event {
+                    case .speechStarted(let time):
+                        print("[VAD] Speech started at \(String(format: "%.2f", time))s")
+                        self.speechActive = true
+                    case .speechEnded(let segment):
+                        print("[VAD] Speech ended at \(String(format: "%.2f", segment.endTime))s (duration: \(String(format: "%.2f", segment.duration))s)")
+                        self.speechActive = false
+                        DispatchQueue.main.async {
+                            self.onSpeechEnded?()
+                        }
+                    }
                 }
             }
         }

@@ -15,6 +15,23 @@ struct DictateView: View {
             .disabled(vm.isRecording || vm.isTranscribing)
             .frame(maxWidth: 300)
 
+            // Language picker (Qwen3-ASR only)
+            if vm.selectedEngine == .qwen3 {
+                Picker("Language", selection: $vm.selectedLanguage) {
+                    Text("Auto-detect").tag("auto")
+                    Text("English").tag("en")
+                    Text("Chinese").tag("zh")
+                    Text("Japanese").tag("ja")
+                    Text("Korean").tag("ko")
+                    Text("French").tag("fr")
+                    Text("Spanish").tag("es")
+                    Text("German").tag("de")
+                    Text("Russian").tag("ru")
+                }
+                .frame(maxWidth: 200)
+                .disabled(vm.isRecording || vm.isTranscribing)
+            }
+
             // Load model button
             if !vm.modelLoaded && !vm.isLoading {
                 Button("Load \(vm.selectedEngine.rawValue)") {
@@ -82,30 +99,23 @@ struct DictateView: View {
     @ViewBuilder
     private var recordButton: some View {
         VStack(spacing: 8) {
-            Button(action: {}) {
+            Button {
+                if vm.isRecording {
+                    Task { await vm.stopAndTranscribe() }
+                } else if !vm.isTranscribing {
+                    vm.startRecording()
+                }
+            } label: {
                 VStack(spacing: 4) {
-                    Image(systemName: vm.isRecording ? "mic.fill" : "mic")
+                    Image(systemName: vm.isRecording ? "stop.fill" : "mic.fill")
                         .font(.system(size: 32))
-                    Text(vm.isRecording ? "Recording..." : "Hold to Record")
+                    Text(vm.isRecording ? "Stop" : "Record")
                         .font(.caption)
                 }
                 .frame(width: 120, height: 80)
             }
             .buttonStyle(.borderedProminent)
             .tint(vm.isRecording ? .red : .accentColor)
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { _ in
-                        if !vm.isRecording && !vm.isTranscribing {
-                            vm.startRecording()
-                        }
-                    }
-                    .onEnded { _ in
-                        if vm.isRecording {
-                            Task { await vm.stopAndTranscribe() }
-                        }
-                    }
-            )
             .disabled(vm.isTranscribing)
 
             // Audio level indicator

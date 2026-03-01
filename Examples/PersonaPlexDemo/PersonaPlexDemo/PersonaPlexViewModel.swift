@@ -2,6 +2,7 @@ import Foundation
 import PersonaPlex
 import Qwen3ASR
 import AudioCommon
+import SpeechVAD
 
 enum ConversationState: String {
     case inactive
@@ -43,16 +44,17 @@ final class PersonaPlexViewModel {
 
     private var model: PersonaPlexModel?
     private var asrModel: Qwen3ASRModel?
-    private let recorder = AudioRecorder(targetSampleRate: 24000)
+    private var recorder: AudioRecorder?
     private let player = StreamingAudioPlayer()
     private var spmDecoder: SentencePieceDecoder?
+    private var vadModel: SileroVADModel?
     private var conversationTask: Task<Void, Never>?
 
     // MARK: - Computed
 
     var modelLoaded: Bool { model != nil }
     var isActive: Bool { conversationState != .inactive }
-    var audioLevel: Float { recorder.audioLevel }
+    var audioLevel: Float { recorder?.audioLevel ?? 0 }
     var isBusy: Bool { isLoading }
 
     // MARK: - Model Loading
@@ -93,6 +95,17 @@ final class PersonaPlexViewModel {
             }
             asrModel = asr
 
+            loadingStatus = "Loading VAD model..."
+            let vad = try await SileroVADModel.fromPretrained()
+            vadModel = vad
+            let vadConfig = VADConfig(
+                onset: 0.5, offset: 0.35,
+                minSpeechDuration: 0.25, minSilenceDuration: 1.0,
+                windowDuration: 0.032, stepRatio: 1.0
+            )
+            let processor = StreamingVADProcessor(model: vad, config: vadConfig)
+            recorder = AudioRecorder(targetSampleRate: 24000, vadProcessor: processor)
+
             let loadTime = CFAbsoluteTimeGetCurrent() - loadStart
             latencyInfo = String(format: "Models loaded in %.1fs (warmup %.1fs)", loadTime, warmTime)
             loadingStatus = nil
@@ -118,15 +131,15 @@ final class PersonaPlexViewModel {
         errorMessage = nil
         debugInfo = "Listening..."
 
-        recorder.onSilenceAfterSpeech = { [weak self] in
+        recorder?.onSpeechEnded = { [weak self] in
             Task { @MainActor [weak self] in
-                self?.onSilenceDetected()
+                self?.onSpeechEnded()
             }
         }
-        recorder.startRecording()
+        recorder?.startRecording()
     }
 
-    private func onSilenceDetected() {
+    private func onSpeechEnded() {
         guard conversationState == .listening else { return }
         debugInfo = "Processing..."
         conversationTask = Task { await processAndRespond() }
@@ -135,9 +148,9 @@ final class PersonaPlexViewModel {
     private func stopConversation() {
         conversationTask?.cancel()
         conversationTask = nil
-        recorder.onSilenceAfterSpeech = nil
-        if recorder.isRecording {
-            _ = recorder.stopRecording()
+        recorder?.onSpeechEnded = nil
+        if recorder?.isRecording == true {
+            _ = recorder?.stopRecording()
         }
         player.stop()
         conversationState = .inactive
@@ -147,7 +160,7 @@ final class PersonaPlexViewModel {
     // MARK: - Process & Respond
 
     private func processAndRespond() async {
-        let rawAudio = recorder.stopRecording()
+        let rawAudio = recorder?.stopRecording() ?? []
 
         guard rawAudio.count > 2400 else {
             startListening()
@@ -198,8 +211,13 @@ final class PersonaPlexViewModel {
 
             // Decode model transcript
             var transcript = ""
+            print("[Transcript] textTokens count: \(textTokens.count), spmDecoder: \(spmDec != nil)")
+            if !textTokens.isEmpty {
+                print("[Transcript] tokens: \(textTokens.prefix(20))...")
+            }
             if let dec = spmDec, !textTokens.isEmpty {
                 transcript = dec.decode(textTokens)
+                print("[Transcript] decoded: \(transcript)")
             } else if !textTokens.isEmpty {
                 transcript = "(\(textTokens.count) text tokens)"
             }

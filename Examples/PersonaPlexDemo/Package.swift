@@ -15,6 +15,7 @@ let package = Package(
                 .product(name: "PersonaPlex", package: "qwen3-asr-swift"),
                 .product(name: "Qwen3ASR", package: "qwen3-asr-swift"),
                 .product(name: "AudioCommon", package: "qwen3-asr-swift"),
+                .product(name: "SpeechVAD", package: "qwen3-asr-swift"),
             ],
             path: "PersonaPlexDemo",
             exclude: ["PersonaPlexDemo.entitlements", "Info.plist"]

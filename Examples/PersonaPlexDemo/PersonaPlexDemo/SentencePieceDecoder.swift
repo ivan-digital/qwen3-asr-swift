@@ -68,9 +68,14 @@ struct SentencePieceDecoder {
         self.vocab = v
     }
 
+    /// Text padding token ID used by PersonaPlex (generated when model is producing audio but not text)
+    private static let textPaddingId: Int32 = 3
+
     func decode(_ tokens: [Int32]) -> String {
         var result = ""
         for token in tokens {
+            // Skip padding tokens (most steps are padding when model generates audio)
+            if token == Self.textPaddingId { continue }
             guard let piece = vocab[Int(token)] else { continue }
             // Skip control tokens (e.g. <s>, </s>, <unk>)
             if piece.hasPrefix("<") && piece.hasSuffix(">") { continue }

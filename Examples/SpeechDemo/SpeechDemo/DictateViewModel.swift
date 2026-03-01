@@ -20,6 +20,7 @@ final class DictateViewModel {
     var loadingStatus = ""
     var errorMessage: String?
     var selectedEngine: ASREngine = .parakeet
+    var selectedLanguage: String = "auto"
 
     private var parakeetModel: ParakeetASRModel?
     private var qwen3Model: Qwen3ASRModel?
@@ -108,7 +109,8 @@ final class DictateViewModel {
                     isTranscribing = false
                     return
                 }
-                text = model.transcribe(audio: audio, sampleRate: 16000)
+                let lang: String? = selectedLanguage == "auto" ? nil : selectedLanguage
+                text = model.transcribe(audio: audio, sampleRate: 16000, language: lang)
             }
             transcription = text
         } catch {
