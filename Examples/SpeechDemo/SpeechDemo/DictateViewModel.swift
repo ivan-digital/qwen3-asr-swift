@@ -42,26 +42,30 @@ final class DictateViewModel {
             switch selectedEngine {
             case .parakeet:
                 if parakeetModel == nil {
-                    let model = try await ParakeetASRModel.fromPretrained { [weak self] progress, status in
-                        Task { @MainActor in
-                            self?.loadingStatus = status.isEmpty
-                                ? "Downloading... \(Int(progress * 100))%"
-                                : status
+                    let model = try await Task.detached {
+                        try await ParakeetASRModel.fromPretrained { [weak self] progress, status in
+                            DispatchQueue.main.async {
+                                self?.loadingStatus = status.isEmpty
+                                    ? "Downloading... \(Int(progress * 100))%"
+                                    : "\(status) (\(Int(progress * 100))%)"
+                            }
                         }
-                    }
+                    }.value
                     loadingStatus = "Compiling CoreML model..."
                     try model.warmUp()
                     parakeetModel = model
                 }
             case .qwen3:
                 if qwen3Model == nil {
-                    let model = try await Qwen3ASRModel.fromPretrained { [weak self] progress, status in
-                        Task { @MainActor in
-                            self?.loadingStatus = status.isEmpty
-                                ? "Downloading... \(Int(progress * 100))%"
-                                : status
+                    let model = try await Task.detached {
+                        try await Qwen3ASRModel.fromPretrained { [weak self] progress, status in
+                            DispatchQueue.main.async {
+                                self?.loadingStatus = status.isEmpty
+                                    ? "Downloading... \(Int(progress * 100))%"
+                                    : "\(status) (\(Int(progress * 100))%)"
+                            }
                         }
-                    }
+                    }.value
                     qwen3Model = model
                 }
             }

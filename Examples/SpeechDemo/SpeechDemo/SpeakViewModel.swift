@@ -27,15 +27,16 @@ final class SpeakViewModel {
 
         do {
             if ttsModel == nil {
-                let model = try await Qwen3TTSModel.fromPretrained { [weak self] progress, status in
-                    Task { @MainActor in
-                        self?.loadingStatus = status.isEmpty
-                            ? "Downloading... \(Int(progress * 100))%"
-                            : status
+                // Run on background thread so progress updates can reach the main run loop
+                let model = try await Task.detached {
+                    try await Qwen3TTSModel.fromPretrained { [weak self] progress, status in
+                        DispatchQueue.main.async {
+                            self?.loadingStatus = status.isEmpty
+                                ? "Downloading... \(Int(progress * 100))%"
+                                : "\(status) (\(Int(progress * 100))%)"
+                        }
                     }
-                }
-                loadingStatus = "Warming up..."
-                model.warmUp()
+                }.value
                 ttsModel = model
             }
             loadingStatus = ""
