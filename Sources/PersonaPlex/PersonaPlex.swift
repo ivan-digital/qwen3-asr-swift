@@ -51,7 +51,7 @@ public final class PersonaPlexModel: Module {
         systemPromptTokens: [Int32]? = nil,
         maxSteps: Int = 500,
         verbose: Bool = false
-    ) -> [Float] {
+    ) -> (audio: [Float], textTokens: [Int32]) {
         let startTime = CFAbsoluteTimeGetCurrent()
 
         // 1. Encode user audio with Mimi
@@ -284,6 +284,7 @@ public final class PersonaPlexModel: Module {
         // from transformer layers (compiled — pure matmuls/attention).
         let useCompiledStep = temporal.compiledStep != nil
         let b = 1  // batch size
+        var allTextTokens: [Int32] = []
 
         for step in promptLen..<(prefillLen + maxSteps) {
             // Build input tokens for this step.
@@ -384,6 +385,7 @@ public final class PersonaPlexModel: Module {
             if step < totalLen {
                 tokenCache[0][step] = textVal
             }
+            if step >= prefillLen { allTextTokens.append(textVal) }
 
             // Agent audio tokens → streams 1-8
             let agentArr = agentCodes[0]  // [numSteps]
@@ -423,7 +425,7 @@ public final class PersonaPlexModel: Module {
         // Original PersonaPlex: mimi.set_num_codebooks(8); pcm = mimi.decode(tokens[:, 1:9])
         let decStart = CFAbsoluteTimeGetCurrent()
         let numAgentFrames = agentTokens[0].count
-        guard numAgentFrames > 0 else { return [] }
+        guard numAgentFrames > 0 else { return ([], allTextTokens) }
 
         let numDecodeCodebooks = nQ  // 8 (matching set_num_codebooks(8) in original)
         var codeMatrix = [[Int32]](repeating: [Int32](repeating: 0, count: numAgentFrames),
@@ -454,7 +456,7 @@ public final class PersonaPlexModel: Module {
             print("  Total: \(String(format: "%.2f", totalTime))s, audio: \(String(format: "%.2f", audioDuration))s, RTF: \(String(format: "%.2f", totalTime / max(audioDuration, 0.001)))")
         }
 
-        return samples
+        return (samples, allTextTokens)
     }
 
     // MARK: - Streaming Inference
@@ -664,6 +666,7 @@ public final class PersonaPlexModel: Module {
                     // 6. Generation loop with streaming decode
                     var agentTokens: [[Int32]] = Array(repeating: [], count: cfg.depformer.numSteps)
                     var pendingCodes: [[Int32]] = Array(repeating: [], count: nQ)
+                    var allTextTokens: [Int32] = []
                     var totalEmittedFrames = 0
                     let useCompiledStep = temporal.compiledStep != nil
                     let b = 1
@@ -733,6 +736,7 @@ public final class PersonaPlexModel: Module {
                         // Extract tokens and write to cache
                         let textVal = textToken[0].item(Int32.self)
                         if step < totalLen { tokenCache[0][step] = textVal }
+                        if step >= prefillLen { allTextTokens.append(textVal) }
                         let agentArr = agentCodes[0]
                         for cb in 0..<nQ {
                             let tok = agentArr[cb].item(Int32.self)
@@ -794,7 +798,8 @@ public final class PersonaPlexModel: Module {
                             sampleRate: cfg.sampleRate,
                             frameIndex: totalEmittedFrames,
                             isFinal: true,
-                            elapsedTime: elapsed))
+                            elapsedTime: elapsed,
+                            textTokens: allTextTokens))
 
                         if verbose {
                             print("  Final chunk: \(samples.count) samples (\(String(format: "%.2f", elapsed))s)")
