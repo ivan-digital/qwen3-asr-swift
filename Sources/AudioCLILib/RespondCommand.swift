@@ -143,7 +143,7 @@ public struct RespondCommand: ParsableCommand {
                 try WAVWriter.write(samples: allSamples, sampleRate: 24000, to: outputURL)
                 print("Saved to \(output)")
             } else {
-                let response = model.respond(
+                let (response, textTokens) = model.respond(
                     userAudio: audio,
                     voice: selectedVoice,
                     systemPromptTokens: selectedPrompt.tokens,
@@ -153,7 +153,7 @@ public struct RespondCommand: ParsableCommand {
                 let elapsed = CFAbsoluteTimeGetCurrent() - startTime
                 let responseDuration = Double(response.count) / 24000.0
 
-                print("Response: \(String(format: "%.2f", responseDuration))s")
+                print("Response: \(String(format: "%.2f", responseDuration))s (\(textTokens.count) text tokens)")
                 print("Time: \(String(format: "%.2f", elapsed))s")
                 if responseDuration > 0 {
                     print("RTF: \(String(format: "%.2f", elapsed / responseDuration))")

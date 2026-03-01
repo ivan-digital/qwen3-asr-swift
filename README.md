@@ -89,6 +89,15 @@ import AudioCommon   // Shared utilities
 - Apple Silicon (M1/M2/M3/M4)
 - Xcode 15+
 
+## Demo Apps
+
+Ready-to-run SwiftUI macOS apps in the `Examples/` directory:
+
+- **[PersonaPlexDemo](Examples/PersonaPlexDemo/)** — Conversational voice assistant powered by PersonaPlex 7B. Toggle-based conversation loop with Silero VAD speech detection, Qwen3-ASR transcription, and inner monologue transcript. RTF ~0.94 on M2 Max.
+- **[SpeechDemo](Examples/SpeechDemo/)** — Dictation (Parakeet TDT / Qwen3-ASR with language auto-detect) and text-to-speech synthesis (Qwen3-TTS) in a tabbed interface.
+
+Build and run as a macOS `.app` bundle — see each demo's README for instructions.
+
 ## ASR Usage
 
 ### Basic Transcription

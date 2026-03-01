@@ -295,7 +295,7 @@ final class PersonaPlexE2ETests: XCTestCase {
             testAudio[i] = sin(2 * .pi * 440 * Float(i) / Float(sampleRate)) * 0.5
         }
 
-        let response = model.respond(
+        let (response, _) = model.respond(
             userAudio: testAudio,
             voice: .NATM0,
             maxSteps: 10,  // Very short, just verify pipeline works
@@ -318,7 +318,7 @@ final class PersonaPlexE2ETests: XCTestCase {
             testAudio[i] = sin(2 * .pi * 440 * Float(i) / 24000.0) * 0.5
         }
 
-        let response = model.respond(
+        let (response, _) = model.respond(
             userAudio: testAudio,
             voice: .NATF0,
             maxSteps: 15,
@@ -346,7 +346,7 @@ final class PersonaPlexE2ETests: XCTestCase {
             testAudio[i] = sin(2 * .pi * 440 * Float(i) / 24000.0) * 0.3
         }
 
-        let response = model.respond(
+        let (response, _) = model.respond(
             userAudio: testAudio,
             voice: .NATM0,
             maxSteps: 25,
@@ -417,7 +417,7 @@ final class PersonaPlexE2ETests: XCTestCase {
             testAudio[i] = sin(2 * .pi * 440 * Float(i) / 24000.0) * 0.5
         }
 
-        let response = model.respond(
+        let (response, _) = model.respond(
             userAudio: testAudio,
             voice: .NATM0,
             maxSteps: 10,
@@ -453,7 +453,7 @@ final class PersonaPlexE2ETests: XCTestCase {
         print("Input audio: \(String(format: "%.2f", inputDuration))s (\(audio.count) samples)")
 
         let startTime = CFAbsoluteTimeGetCurrent()
-        let response = model.respond(
+        let (response, _) = model.respond(
             userAudio: audio,
             voice: .NATM0,
             maxSteps: 50,
@@ -489,7 +489,7 @@ final class PersonaPlexE2ETests: XCTestCase {
         // Test a few different voices produce non-empty output
         let voices: [PersonaPlexVoice] = [.NATM0, .NATF0, .VARM0, .VARF0]
         for voice in voices {
-            let response = model.respond(
+            let (response, _) = model.respond(
                 userAudio: testAudio,
                 voice: voice,
                 maxSteps: 5,
@@ -638,7 +638,7 @@ final class PersonaPlexE2ETests: XCTestCase {
         print("Input: \(String(format: "%.2f", inputDuration))s (\(userAudio.count) samples)")
 
         // Generate PersonaPlex response (200 gen steps ≈ 16s at 12.5Hz)
-        let response = ppModel.respond(
+        let (response, _) = ppModel.respond(
             userAudio: userAudio, voice: .NATM0, maxSteps: 200, verbose: true)
         XCTAssertFalse(response.isEmpty, "Should produce response audio")
         let responseDuration = Double(response.count) / 24000.0
@@ -697,7 +697,7 @@ final class PersonaPlexE2ETests: XCTestCase {
         let userAudio = try AudioFileLoader.load(url: url, targetSampleRate: 24000)
 
         // Short response (100 steps ≈ 8s)
-        let response = ppModel.respond(
+        let (response, _) = ppModel.respond(
             userAudio: userAudio, voice: .NATF0, maxSteps: 100, verbose: true)
         XCTAssertFalse(response.isEmpty, "Should produce response audio")
 
@@ -1024,7 +1024,7 @@ final class PersonaPlexE2ETests: XCTestCase {
         // Generate response. maxSteps=0 means generate only during user audio
         // (matching Python reference which also generates exactly len(user_audio) steps).
         // Post-user-audio generation degenerates without continuous user input.
-        let response = ppModel.respond(
+        let (response, _) = ppModel.respond(
             userAudio: userAudio,
             voice: .NATM0,
             systemPromptTokens: refPromptTokens,

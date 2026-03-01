@@ -97,12 +97,11 @@ public final class TemporalAttention: Module {
         let qkv = applyLinear(in_proj, xs)
         // T=1: [B, 1, 3*dim] → [B, 1, 3, H, D]
         let qkvR = qkv.reshaped([-1, 1, 3, cfg.numHeads, cfg.headDim])
-
-        // Extract Q, K, V via split on axis 2 (avoids dynamic Slice)
-        let qkvParts = split(qkvR, parts: 3, axis: 2)
-        var q = qkvParts[0].squeezed(axis: 2).transposed(0, 2, 1, 3) // [B, H, 1, D]
-        var k = qkvParts[1].squeezed(axis: 2).transposed(0, 2, 1, 3)
-        let v = qkvParts[2].squeezed(axis: 2).transposed(0, 2, 1, 3)
+        // Use take (Gather) instead of split/slice — compile(shapeless:true) compatible.
+        // take with scalar index removes the axis: [B,1,3,H,D] → [B,1,H,D]
+        var q = qkvR.take(MLXArray(Int32(0)), axis: 2).transposed(0, 2, 1, 3) // [B,H,1,D]
+        var k = qkvR.take(MLXArray(Int32(1)), axis: 2).transposed(0, 2, 1, 3)
+        let v = qkvR.take(MLXArray(Int32(2)), axis: 2).transposed(0, 2, 1, 3)
 
         q = rope(q, offset: offset)
         k = rope(k, offset: offset)
@@ -124,8 +123,10 @@ public final class TemporalAttention: Module {
 public final class TemporalFFN: Module {
     @ModuleInfo public var linear_in: Module   // QuantizedLinear: dim -> 2 * intermediateSize
     @ModuleInfo public var linear_out: Module   // QuantizedLinear: intermediateSize -> dim
+    let ffnDim: Int
 
     public init(cfg: TemporalTransformerConfig) {
+        self.ffnDim = cfg.intermediateSize
         let ffnDim = cfg.intermediateSize
         self._linear_in = ModuleInfo(wrappedValue:
             makeLinear(cfg.dim, 2 * ffnDim, bias: false, groupSize: cfg.groupSize, bits: cfg.bits))
@@ -134,16 +135,15 @@ public final class TemporalFFN: Module {
     }
 
     public func callAsFunction(_ xs: MLXArray) -> MLXArray {
-        let b = xs.shape[0], t = xs.shape[1]
         let doubled = applyLinear(linear_in, xs)
-        let ffnDim = doubled.shape[2] / 2
-        let split2 = doubled.reshaped([b, t, 2, ffnDim])
-        let parts = split(split2, indices: [1], axis: 2)
-        let gate = parts[0]
-        let value = parts[1]
+        // [B, T, 2*ffnDim] → [B, T, 2, ffnDim]
+        let split2 = doubled.reshaped([-1, xs.shape[1], 2, ffnDim])
+        // Use take (Gather) instead of split — compile(shapeless:true) compatible.
+        // take with scalar index removes axis: [B,T,2,ffnDim] → [B,T,ffnDim]
+        let gate = split2.take(MLXArray(Int32(0)), axis: 2)
+        let value = split2.take(MLXArray(Int32(1)), axis: 2)
         let gated = silu(gate) * value
-        let flat = gated.reshaped([b, t, ffnDim])
-        return applyLinear(linear_out, flat)
+        return applyLinear(linear_out, gated)
     }
 }
 

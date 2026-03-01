@@ -14,19 +14,23 @@ public struct AudioChunk: Sendable {
     public let isFinal: Bool
     /// Wall-clock seconds since generation started (nil if not tracked)
     public let elapsedTime: Double?
+    /// Text tokens generated alongside audio (populated on final chunk if available)
+    public let textTokens: [Int32]
 
     public init(
         samples: [Float],
         sampleRate: Int,
         frameIndex: Int,
         isFinal: Bool,
-        elapsedTime: Double? = nil
+        elapsedTime: Double? = nil,
+        textTokens: [Int32] = []
     ) {
         self.samples = samples
         self.sampleRate = sampleRate
         self.frameIndex = frameIndex
         self.isFinal = isFinal
         self.elapsedTime = elapsedTime
+        self.textTokens = textTokens
     }
 }
 
