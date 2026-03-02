@@ -244,7 +244,17 @@ public enum ASRModelSize {
         }
     }
 
-    /// Text decoder config for this model size
+    /// Text decoder config for this model size and quantization bits
+    public func textConfig(bits: Int) -> TextDecoderConfig {
+        switch (self, bits) {
+        case (.small, 8): return .small8bit
+        case (.small, _): return .small
+        case (.large, 8): return .large8bit
+        case (.large, _): return .large
+        }
+    }
+
+    /// Text decoder config for this model size (default bits)
     public var textConfig: TextDecoderConfig {
         switch self {
         case .small: return .small
@@ -259,6 +269,21 @@ public enum ASRModelSize {
         }
         return .small
     }
+
+    /// Detect quantization bits from a HuggingFace model ID.
+    /// Returns 4 by default for 0.6B, 8 for 1.7B if not specified.
+    public static func detectBits(from modelId: String) -> Int {
+        let lower = modelId.lowercased()
+        if lower.contains("8bit") || lower.contains("8-bit") {
+            return 8
+        }
+        if lower.contains("4bit") || lower.contains("4-bit") {
+            return 4
+        }
+        // Default: 4 for small, 8 for large (backwards-compatible)
+        let size = detect(from: modelId)
+        return size == .large ? 8 : 4
+    }
 }
 
 // MARK: - Model Loading
@@ -271,8 +296,9 @@ public extension Qwen3ASRModel {
     ) async throws -> Qwen3ASRModel {
         progressHandler?(0.0, "Downloading model...")
 
-        // Auto-detect model size from model ID
+        // Auto-detect model size and quantization bits from model ID
         let modelSize = ASRModelSize.detect(from: modelId)
+        let detectedBits = ASRModelSize.detectBits(from: modelId)
 
         // Get cache directory
         let cacheDir = try HuggingFaceDownloader.getCacheDirectory(for: modelId)
@@ -290,10 +316,10 @@ public extension Qwen3ASRModel {
 
         progressHandler?(0.80, "Loading tokenizer...")
 
-        // Create model with appropriate config for detected size
+        // Create model with appropriate config for detected size and bits
         let model = Qwen3ASRModel(
             audioConfig: modelSize.audioConfig,
-            textConfig: modelSize.textConfig
+            textConfig: modelSize.textConfig(bits: detectedBits)
         )
 
         // Load tokenizer from vocab.json

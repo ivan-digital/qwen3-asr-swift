@@ -96,6 +96,103 @@ final class Qwen3TTSConfigTests: XCTestCase {
         XCTAssertEqual(config.speechTokenizerDecoder.sampleRate, 24000)
     }
 
+    // MARK: - TTSModelSize Detection
+
+    func testTTSModelSizeDetection() {
+        XCTAssertEqual(TTSModelSize.detect(from: "aufklarer/Qwen3-TTS-12Hz-0.6B-Base-MLX-4bit"), .small)
+        XCTAssertEqual(TTSModelSize.detect(from: "aufklarer/Qwen3-TTS-12Hz-1.7B-Base-MLX-4bit"), .large)
+        XCTAssertEqual(TTSModelSize.detect(from: "some/custom-1.7b-model"), .large)
+        XCTAssertEqual(TTSModelSize.detect(from: "some/custom-model"), .small)
+    }
+
+    func testTTSModelSizeBitsDetection() {
+        XCTAssertEqual(TTSModelSize.detectBits(from: "aufklarer/Qwen3-TTS-12Hz-0.6B-Base-MLX-4bit"), 4)
+        XCTAssertEqual(TTSModelSize.detectBits(from: "aufklarer/Qwen3-TTS-12Hz-0.6B-Base-MLX-8bit"), 8)
+        XCTAssertEqual(TTSModelSize.detectBits(from: "some/model-8bit"), 8)
+        XCTAssertEqual(TTSModelSize.detectBits(from: "some/model"), 4)  // defaults to 4
+    }
+
+    // MARK: - 8-bit and 1.7B Config Presets
+
+    func testTalkerSmall8bit() {
+        let config = TalkerConfig.small8bit
+        XCTAssertEqual(config.hiddenSize, 1024)
+        XCTAssertEqual(config.intermediateSize, 3072)
+        XCTAssertEqual(config.bits, 8)
+        XCTAssertEqual(config.numLayers, 28)
+    }
+
+    func testTalkerLarge4bit() {
+        let config = TalkerConfig.large4bit
+        XCTAssertEqual(config.hiddenSize, 2048)
+        XCTAssertEqual(config.intermediateSize, 6144)
+        XCTAssertEqual(config.textHiddenSize, 2048)
+        XCTAssertEqual(config.bits, 4)
+        XCTAssertEqual(config.numLayers, 28)
+    }
+
+    func testTalkerLarge8bit() {
+        let config = TalkerConfig.large8bit
+        XCTAssertEqual(config.hiddenSize, 2048)
+        XCTAssertEqual(config.intermediateSize, 6144)
+        XCTAssertEqual(config.bits, 8)
+    }
+
+    func testCodePredictorSmall8bit() {
+        let config = CodePredictorConfig.small8bit
+        XCTAssertEqual(config.hiddenSize, 1024)
+        XCTAssertEqual(config.bits, 8)
+    }
+
+    func testCodePredictorLarge4bit() {
+        let config = CodePredictorConfig.large4bit
+        XCTAssertEqual(config.hiddenSize, 2048)
+        XCTAssertEqual(config.intermediateSize, 6144)
+        XCTAssertEqual(config.bits, 4)
+    }
+
+    func testCodePredictorLarge8bit() {
+        let config = CodePredictorConfig.large8bit
+        XCTAssertEqual(config.hiddenSize, 2048)
+        XCTAssertEqual(config.bits, 8)
+    }
+
+    func testQwen3TTSConfigBuilder() {
+        // Small 4-bit (default)
+        let small4 = Qwen3TTSConfig.config(for: .small, bits: 4)
+        XCTAssertEqual(small4.talker.hiddenSize, 1024)
+        XCTAssertEqual(small4.talker.bits, 4)
+        XCTAssertEqual(small4.codePredictor.bits, 4)
+
+        // Small 8-bit
+        let small8 = Qwen3TTSConfig.config(for: .small, bits: 8)
+        XCTAssertEqual(small8.talker.hiddenSize, 1024)
+        XCTAssertEqual(small8.talker.bits, 8)
+        XCTAssertEqual(small8.codePredictor.bits, 8)
+
+        // Large 4-bit
+        let large4 = Qwen3TTSConfig.config(for: .large, bits: 4)
+        XCTAssertEqual(large4.talker.hiddenSize, 2048)
+        XCTAssertEqual(large4.talker.bits, 4)
+        XCTAssertEqual(large4.codePredictor.bits, 4)
+
+        // Large 8-bit
+        let large8 = Qwen3TTSConfig.config(for: .large, bits: 8)
+        XCTAssertEqual(large8.talker.hiddenSize, 2048)
+        XCTAssertEqual(large8.talker.bits, 8)
+        XCTAssertEqual(large8.codePredictor.bits, 8)
+    }
+
+    // MARK: - Model Variants
+
+    func testTTSModelVariants() {
+        XCTAssertEqual(TTSModelVariant.base.rawValue, "aufklarer/Qwen3-TTS-12Hz-0.6B-Base-MLX-4bit")
+        XCTAssertEqual(TTSModelVariant.base8bit.rawValue, "aufklarer/Qwen3-TTS-12Hz-0.6B-Base-MLX-8bit")
+        XCTAssertEqual(TTSModelVariant.base17B.rawValue, "aufklarer/Qwen3-TTS-12Hz-1.7B-Base-MLX-4bit")
+        XCTAssertEqual(TTSModelVariant.base17B8bit.rawValue, "aufklarer/Qwen3-TTS-12Hz-1.7B-Base-MLX-8bit")
+        XCTAssertEqual(TTSModelVariant.customVoice.rawValue, "aufklarer/Qwen3-TTS-12Hz-0.6B-CustomVoice-MLX-4bit")
+    }
+
     func testUpsampleRateProduct() {
         let config = SpeechTokenizerDecoderConfig()
         // Total upsample = product(upsampleRates) * product(upsamplingRatios)

@@ -13,8 +13,11 @@ public class ParakeetASRModel {
     /// Model configuration.
     public let config: ParakeetConfig
 
-    /// Default HuggingFace model ID.
+    /// Default HuggingFace model ID (INT4 quantized encoder).
     public static let defaultModelId = "aufklarer/Parakeet-TDT-v3-CoreML-INT4"
+
+    /// INT8 quantized variant (higher accuracy, larger size).
+    public static let int8ModelId = "aufklarer/Parakeet-TDT-v3-CoreML-INT8"
 
     private let melPreprocessor: MelPreprocessor
     private let encoder: MLModel

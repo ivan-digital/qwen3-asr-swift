@@ -64,7 +64,7 @@ public struct TextDecoderConfig: Codable, Sendable {
 
     public init() {}
 
-    /// Config for Qwen3-ASR-0.6B decoder (from HuggingFace model config)
+    /// Config for Qwen3-ASR-0.6B decoder, 4-bit (from HuggingFace model config)
     public static var small: TextDecoderConfig {
         var config = TextDecoderConfig()
         config.hiddenSize = 1024
@@ -78,7 +78,14 @@ public struct TextDecoderConfig: Codable, Sendable {
         return config
     }
 
-    /// Config for Qwen3-ASR-1.7B decoder
+    /// Config for Qwen3-ASR-0.6B decoder, 8-bit
+    public static var small8bit: TextDecoderConfig {
+        var config = small
+        config.bits = 8
+        return config
+    }
+
+    /// Config for Qwen3-ASR-1.7B decoder, 4-bit
     public static var large: TextDecoderConfig {
         var config = TextDecoderConfig()
         config.hiddenSize = 2048
@@ -88,6 +95,13 @@ public struct TextDecoderConfig: Codable, Sendable {
         config.headDim = 128
         config.intermediateSize = 6144
         config.groupSize = 64
+        config.bits = 4
+        return config
+    }
+
+    /// Config for Qwen3-ASR-1.7B decoder, 8-bit
+    public static var large8bit: TextDecoderConfig {
+        var config = large
         config.bits = 8
         return config
     }

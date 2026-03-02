@@ -33,7 +33,7 @@ public struct SpeakCommand: ParsableCommand {
     @Option(name: .long, help: "[qwen3] Style instruction (requires CustomVoice model)")
     public var instruct: String?
 
-    @Option(name: .long, help: "[qwen3] Model variant: base (default), customVoice, or full HF model ID")
+    @Option(name: .long, help: "[qwen3] Model variant: base (default), base-8bit, 1.7b, 1.7b-8bit, customVoice, or full HF model ID")
     public var model: String = "base"
 
     @Flag(name: .long, help: "[qwen3] List available speakers and exit")
@@ -97,6 +97,12 @@ public struct SpeakCommand: ParsableCommand {
             switch model.lowercased() {
             case "base":
                 resolvedModelId = TTSModelVariant.base.rawValue
+            case "base-8bit", "base8bit":
+                resolvedModelId = TTSModelVariant.base8bit.rawValue
+            case "1.7b", "large":
+                resolvedModelId = TTSModelVariant.base17B.rawValue
+            case "1.7b-8bit", "large-8bit":
+                resolvedModelId = TTSModelVariant.base17B8bit.rawValue
             case "customvoice", "custom_voice", "custom-voice":
                 resolvedModelId = TTSModelVariant.customVoice.rawValue
             default:

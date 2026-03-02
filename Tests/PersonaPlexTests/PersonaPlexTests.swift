@@ -92,6 +92,11 @@ final class PersonaPlexTests: XCTestCase {
         XCTAssertNil(PersonaPlexVoice(rawValue: "INVALID"))
     }
 
+    func testModelVariantConstants() {
+        XCTAssertEqual(PersonaPlexModel.defaultModelId, "aufklarer/PersonaPlex-7B-MLX-4bit")
+        XCTAssertEqual(PersonaPlexModel.modelId8bit, "aufklarer/PersonaPlex-7B-MLX-8bit")
+    }
+
     func testHiddenScaleCalculation() {
         let cfg = TemporalTransformerConfig.default
         // dim=4096, hiddenScale=4.125, LLaMA-style: dim * 2/3 * hiddenScale
