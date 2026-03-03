@@ -13,6 +13,11 @@ __pycache__/
 # Model weights
 cosyvoice3-mlx-4bit/
 personaplex-mlx-4bit/
+personaplex-mlx-8bit/
+qwen3-tts-0.6b-8bit/
+qwen3-tts-1.7b-4bit/
+qwen3-tts-1.7b-8bit/
+qwen3-asr-0.6b-8bit/
 forced-aligner-4bit/
 *.safetensors
 *.pt
