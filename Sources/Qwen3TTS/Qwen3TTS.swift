@@ -1421,7 +1421,9 @@ public extension Qwen3TTSModel {
     ) async throws -> Qwen3TTSModel {
         progressHandler?(0.05, "Preparing download...")
 
-        let model = Qwen3TTSModel()
+        // Auto-detect model size and quantization from model ID
+        let detectedSize = TTSModelSize.detect(from: modelId)
+        var detectedBits = TTSModelSize.detectBits(from: modelId)
 
         // Download main model weights
         let mainCacheDir = try HuggingFaceDownloader.getCacheDirectory(for: modelId)
@@ -1448,8 +1450,22 @@ public extension Qwen3TTSModel {
                 })
         }
 
-        // Parse config.json for speaker config
+        // Parse config.json for speaker config and quantization fallback
         let configPath = mainCacheDir.appendingPathComponent("config.json")
+        if FileManager.default.fileExists(atPath: configPath.path) {
+            if let data = try? Data(contentsOf: configPath),
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let quantConfig = json["quantization_config"] as? [String: Any],
+               let configBits = quantConfig["bits"] as? Int {
+                detectedBits = configBits
+            }
+        }
+
+        // Create model with detected config
+        let ttsConfig = Qwen3TTSConfig.config(for: detectedSize, bits: detectedBits)
+        let model = Qwen3TTSModel(config: ttsConfig)
+
+        // Parse speaker config
         if FileManager.default.fileExists(atPath: configPath.path) {
             model.speakerConfig = try? parseSpeakerConfig(from: configPath)
         }

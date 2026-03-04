@@ -4,9 +4,11 @@
 
 Qwen3-ASR is an encoder-decoder model: audio encoder extracts features, text decoder generates transcription tokens autoregressively.
 
-Two model sizes are supported:
-- **0.6B** (`aufklarer/Qwen3-ASR-0.6B-MLX-4bit`) — 4-bit quantized, ~0.4 GB
-- **1.7B** (`aufklarer/Qwen3-ASR-1.7B-MLX-8bit`) — 8-bit quantized, ~2.5 GB
+Two model sizes are supported, each available in 4-bit and 8-bit quantization:
+- **0.6B 4-bit** (`aufklarer/Qwen3-ASR-0.6B-MLX-4bit`) — ~0.4 GB
+- **0.6B 8-bit** (`aufklarer/Qwen3-ASR-0.6B-MLX-8bit`) — ~0.7 GB
+- **1.7B 4-bit** (`aufklarer/Qwen3-ASR-1.7B-MLX-4bit`) — ~1.5 GB
+- **1.7B 8-bit** (`aufklarer/Qwen3-ASR-1.7B-MLX-8bit`) — ~2.5 GB
 
 ```
 Audio (16kHz mono)
@@ -70,7 +72,7 @@ Audio (16kHz mono)
 | Vocab size | 151936 | 151936 |
 | RoPE base | 1,000,000 | 1,000,000 |
 | RoPE type | MRoPE [24,20,20]* | MRoPE [24,20,20]* |
-| Quantization | 4-bit (group=64) | 8-bit (group=64) |
+| Quantization | 4-bit or 8-bit (group=64) | 4-bit or 8-bit (group=64) |
 | Activation | SwiGLU | SwiGLU |
 | Norm | RMSNorm (eps=1e-6) | RMSNorm |
 | Q/K normalization | RMSNorm per head | RMSNorm per head |
@@ -103,4 +105,4 @@ x -> RMSNorm -> Attention(Q/K/V projections, Q/K RMSNorm, RoPE, GQA via SDPA) ->
 | `vocab.json` | Token-to-ID mapping |
 | `tokenizer_config.json` | Tokenizer settings + added tokens |
 
-Total size: ~0.4 GB (0.6B 4-bit), ~2.5 GB (1.7B 8-bit)
+Total size: ~0.4 GB (0.6B 4-bit), ~0.7 GB (0.6B 8-bit), ~1.5 GB (1.7B 4-bit), ~2.5 GB (1.7B 8-bit)

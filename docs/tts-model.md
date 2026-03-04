@@ -47,12 +47,12 @@ The primary autoregressive transformer. Generates the first codebook of speech t
 | Attention heads (Q) | 16 | 16 |
 | KV heads (GQA) | 8 | 8 |
 | Head dimension | 128 | 128 |
-| Intermediate size | 3072 | 8192 |
+| Intermediate size | 3072 | 6144 |
 | Codec vocab size | 3072 | 3072 |
 | Text vocab size | 151936 | 151936 |
 | RoPE type | **MRoPE** (3D sections [24,20,20], interleaved) | MRoPE |
 | RoPE base | 1,000,000 | 1,000,000 |
-| Quantization | 4-bit | 4-bit |
+| Quantization | 4-bit or 8-bit | 4-bit or 8-bit |
 | Q/K normalization | RMSNorm per head | RMSNorm per head |
 
 **MRoPE (Multimodal RoPE):** Unlike ASR's standard 1D RoPE, the Talker uses 3D position encoding with sections `[24, 20, 20]` across the 64 rotation dimensions (head_dim/2 = 64). Positions are interleaved as `[T, H, W, T, H, W, ...]` across the dimension.
@@ -159,12 +159,15 @@ Audio (24kHz) -> SeanetEncoder (Conv1d downsampling, residual blocks)
 
 ## Model Variants
 
-Qwen3-TTS ships in two variants with identical architecture (Talker + Code Predictor + Speech Tokenizer). The difference is fine-tuning and how speaker identity is provided.
+Qwen3-TTS ships in two variants with identical architecture (Talker + Code Predictor + Speech Tokenizer). The difference is fine-tuning and how speaker identity is provided. Both variants are available in 4-bit and 8-bit quantization, and in 0.6B and 1.7B sizes.
 
-| Variant | HuggingFace ID (0.6B, 4-bit) | Speaker Selection |
-|---------|-------------------------------|-------------------|
-| **Base** | `aufklarer/Qwen3-TTS-12Hz-0.6B-Base-MLX-4bit` | None (single default voice) |
-| **CustomVoice** | `aufklarer/Qwen3-TTS-12Hz-0.6B-CustomVoice-MLX-4bit` | 9 preset voices + instruction control |
+| Variant | Size | Quantization | HuggingFace ID | Speaker Selection |
+|---------|------|--------------|----------------|-------------------|
+| **Base** | 0.6B | 4-bit | `aufklarer/Qwen3-TTS-12Hz-0.6B-Base-MLX-4bit` | None (single default voice) |
+| **Base** | 0.6B | 8-bit | `aufklarer/Qwen3-TTS-12Hz-0.6B-Base-MLX-8bit` | None (single default voice) |
+| **Base** | 1.7B | 4-bit | `aufklarer/Qwen3-TTS-12Hz-1.7B-Base-MLX-4bit` | None (single default voice) |
+| **Base** | 1.7B | 8-bit | `aufklarer/Qwen3-TTS-12Hz-1.7B-Base-MLX-8bit` | None (single default voice) |
+| **CustomVoice** | 0.6B | 4-bit | `aufklarer/Qwen3-TTS-12Hz-0.6B-CustomVoice-MLX-4bit` | 9 preset voices + instruction control |
 
 ### CustomVoice Speakers
 

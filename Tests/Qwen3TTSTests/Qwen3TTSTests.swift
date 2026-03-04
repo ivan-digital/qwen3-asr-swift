@@ -96,6 +96,103 @@ final class Qwen3TTSConfigTests: XCTestCase {
         XCTAssertEqual(config.speechTokenizerDecoder.sampleRate, 24000)
     }
 
+    // MARK: - TTSModelSize Detection
+
+    func testTTSModelSizeDetection() {
+        XCTAssertEqual(TTSModelSize.detect(from: "aufklarer/Qwen3-TTS-12Hz-0.6B-Base-MLX-4bit"), .small)
+        XCTAssertEqual(TTSModelSize.detect(from: "aufklarer/Qwen3-TTS-12Hz-1.7B-Base-MLX-4bit"), .large)
+        XCTAssertEqual(TTSModelSize.detect(from: "some/custom-1.7b-model"), .large)
+        XCTAssertEqual(TTSModelSize.detect(from: "some/custom-model"), .small)
+    }
+
+    func testTTSModelSizeBitsDetection() {
+        XCTAssertEqual(TTSModelSize.detectBits(from: "aufklarer/Qwen3-TTS-12Hz-0.6B-Base-MLX-4bit"), 4)
+        XCTAssertEqual(TTSModelSize.detectBits(from: "aufklarer/Qwen3-TTS-12Hz-0.6B-Base-MLX-8bit"), 8)
+        XCTAssertEqual(TTSModelSize.detectBits(from: "some/model-8bit"), 8)
+        XCTAssertEqual(TTSModelSize.detectBits(from: "some/model"), 4)  // defaults to 4
+    }
+
+    // MARK: - 8-bit and 1.7B Config Presets
+
+    func testTalkerSmall8bit() {
+        let config = TalkerConfig.small8bit
+        XCTAssertEqual(config.hiddenSize, 1024)
+        XCTAssertEqual(config.intermediateSize, 3072)
+        XCTAssertEqual(config.bits, 8)
+        XCTAssertEqual(config.numLayers, 28)
+    }
+
+    func testTalkerLarge4bit() {
+        let config = TalkerConfig.large4bit
+        XCTAssertEqual(config.hiddenSize, 2048)
+        XCTAssertEqual(config.intermediateSize, 6144)
+        XCTAssertEqual(config.textHiddenSize, 2048)
+        XCTAssertEqual(config.bits, 4)
+        XCTAssertEqual(config.numLayers, 28)
+    }
+
+    func testTalkerLarge8bit() {
+        let config = TalkerConfig.large8bit
+        XCTAssertEqual(config.hiddenSize, 2048)
+        XCTAssertEqual(config.intermediateSize, 6144)
+        XCTAssertEqual(config.bits, 8)
+    }
+
+    func testCodePredictorSmall8bit() {
+        let config = CodePredictorConfig.small8bit
+        XCTAssertEqual(config.hiddenSize, 1024)
+        XCTAssertEqual(config.bits, 8)
+    }
+
+    func testCodePredictorLarge4bit() {
+        let config = CodePredictorConfig.large4bit
+        XCTAssertEqual(config.hiddenSize, 2048)
+        XCTAssertEqual(config.intermediateSize, 6144)
+        XCTAssertEqual(config.bits, 4)
+    }
+
+    func testCodePredictorLarge8bit() {
+        let config = CodePredictorConfig.large8bit
+        XCTAssertEqual(config.hiddenSize, 2048)
+        XCTAssertEqual(config.bits, 8)
+    }
+
+    func testQwen3TTSConfigBuilder() {
+        // Small 4-bit (default)
+        let small4 = Qwen3TTSConfig.config(for: .small, bits: 4)
+        XCTAssertEqual(small4.talker.hiddenSize, 1024)
+        XCTAssertEqual(small4.talker.bits, 4)
+        XCTAssertEqual(small4.codePredictor.bits, 4)
+
+        // Small 8-bit
+        let small8 = Qwen3TTSConfig.config(for: .small, bits: 8)
+        XCTAssertEqual(small8.talker.hiddenSize, 1024)
+        XCTAssertEqual(small8.talker.bits, 8)
+        XCTAssertEqual(small8.codePredictor.bits, 8)
+
+        // Large 4-bit
+        let large4 = Qwen3TTSConfig.config(for: .large, bits: 4)
+        XCTAssertEqual(large4.talker.hiddenSize, 2048)
+        XCTAssertEqual(large4.talker.bits, 4)
+        XCTAssertEqual(large4.codePredictor.bits, 4)
+
+        // Large 8-bit
+        let large8 = Qwen3TTSConfig.config(for: .large, bits: 8)
+        XCTAssertEqual(large8.talker.hiddenSize, 2048)
+        XCTAssertEqual(large8.talker.bits, 8)
+        XCTAssertEqual(large8.codePredictor.bits, 8)
+    }
+
+    // MARK: - Model Variants
+
+    func testTTSModelVariants() {
+        XCTAssertEqual(TTSModelVariant.base.rawValue, "aufklarer/Qwen3-TTS-12Hz-0.6B-Base-MLX-4bit")
+        XCTAssertEqual(TTSModelVariant.base8bit.rawValue, "aufklarer/Qwen3-TTS-12Hz-0.6B-Base-MLX-8bit")
+        XCTAssertEqual(TTSModelVariant.base17B.rawValue, "aufklarer/Qwen3-TTS-12Hz-1.7B-Base-MLX-4bit")
+        XCTAssertEqual(TTSModelVariant.base17B8bit.rawValue, "aufklarer/Qwen3-TTS-12Hz-1.7B-Base-MLX-8bit")
+        XCTAssertEqual(TTSModelVariant.customVoice.rawValue, "aufklarer/Qwen3-TTS-12Hz-0.6B-CustomVoice-MLX-4bit")
+    }
+
     func testUpsampleRateProduct() {
         let config = SpeechTokenizerDecoderConfig()
         // Total upsample = product(upsampleRates) * product(upsamplingRatios)
@@ -823,6 +920,199 @@ final class TTSE2ETests: XCTestCase {
 
     private func fmt(_ value: Double) -> String {
         String(format: "%.2f", value)
+    }
+}
+
+// MARK: - TTS 8-bit E2E Tests
+
+/// End-to-end tests for 8-bit TTS model variant.
+final class TTS8bitE2ETests: XCTestCase {
+
+    static let ttsModelId = "aufklarer/Qwen3-TTS-12Hz-0.6B-Base-MLX-8bit"
+    static let ttsTokenizerModelId = "Qwen/Qwen3-TTS-Tokenizer-12Hz"
+    static let asrModelId = "aufklarer/Qwen3-ASR-0.6B-MLX-4bit"
+    private static var _sharedTTSModel: Qwen3TTSModel?
+    private static var _sharedASRModel: Qwen3ASRModel?
+
+    /// 8-bit TTS: model loads with correct config
+    func testModelLoading8bit() async throws {
+        let model = try await loadTTSModel()
+        XCTAssertEqual(model.config.talker.bits, 8, "Should load as 8-bit model")
+        XCTAssertEqual(model.config.talker.hiddenSize, 1024, "Should be 0.6B (hidden=1024)")
+    }
+
+    /// 8-bit TTS: English synthesis produces valid audio
+    func testEnglishSynthesis8bit() async throws {
+        let ttsModel = try await loadTTSModel()
+
+        let text = "The quick brown fox jumps over the lazy dog."
+        let start = Date()
+        let samples = ttsModel.synthesize(text: text, language: "english")
+        let elapsed = Date().timeIntervalSince(start)
+        let duration = Double(samples.count) / 24000.0
+
+        print("8-bit TTS: \(String(format: "%.2f", duration))s audio in \(String(format: "%.2f", elapsed))s (RTF: \(String(format: "%.2f", elapsed / max(duration, 0.001))))")
+
+        XCTAssertGreaterThan(duration, 1.0, "Audio should be at least 1s for this sentence")
+        XCTAssertLessThan(duration, 30.0, "Audio should be less than 30s")
+
+        let maxAmp = samples.map { abs($0) }.max() ?? 0
+        XCTAssertGreaterThan(maxAmp, 0.001, "Audio should not be silent")
+        XCTAssertLessThanOrEqual(maxAmp, 1.0, "Samples should be in [-1, 1]")
+    }
+
+    /// 8-bit TTS -> ASR round-trip: verify intelligible speech
+    func testEnglishRoundTrip8bit() async throws {
+        let ttsModel = try await loadTTSModel()
+        let asrModel = try await loadASRModel()
+
+        let inputText = "Hello world, this is a test."
+        let samples = ttsModel.synthesize(text: inputText, language: "english")
+        let transcription = asrModel.transcribe(audio: samples, sampleRate: 24000)
+
+        print("8-bit Input:  \"\(inputText)\"")
+        print("8-bit Output: \"\(transcription)\"")
+
+        let lowerTranscription = transcription.lowercased()
+        let expectedWords = ["hello", "world", "test"]
+        let matchedWords = expectedWords.filter { lowerTranscription.contains($0) }
+        print("Matched \(matchedWords.count)/\(expectedWords.count) words: \(matchedWords)")
+
+        XCTAssertGreaterThanOrEqual(matchedWords.count, 2,
+            "At least 2 of \(expectedWords) should appear in: \"\(transcription)\"")
+    }
+
+    // MARK: - Helpers
+
+    private func loadTTSModel() async throws -> Qwen3TTSModel {
+        if let model = Self._sharedTTSModel { return model }
+        print("Loading 8-bit TTS model...")
+        let model = try await Qwen3TTSModel.fromPretrained(
+            modelId: Self.ttsModelId,
+            tokenizerModelId: Self.ttsTokenizerModelId
+        ) { progress, status in
+            print("[TTS-8bit \(Int(progress * 100))%] \(status)")
+        }
+        Self._sharedTTSModel = model
+        return model
+    }
+
+    private func loadASRModel() async throws -> Qwen3ASRModel {
+        if let model = Self._sharedASRModel { return model }
+        print("Loading ASR model for verification...")
+        let model = try await Qwen3ASRModel.fromPretrained(
+            modelId: Self.asrModelId
+        ) { progress, status in
+            print("[ASR \(Int(progress * 100))%] \(status)")
+        }
+        Self._sharedASRModel = model
+        return model
+    }
+}
+
+// MARK: - 1.7B TTS Tests
+
+final class TTS17BE2ETests: XCTestCase {
+
+    static let ttsModelId4bit = "aufklarer/Qwen3-TTS-12Hz-1.7B-Base-MLX-4bit"
+    static let ttsModelId8bit = "aufklarer/Qwen3-TTS-12Hz-1.7B-Base-MLX-8bit"
+    static let ttsTokenizerModelId = "Qwen/Qwen3-TTS-Tokenizer-12Hz"
+    static let asrModelId = "aufklarer/Qwen3-ASR-0.6B-MLX-4bit"
+    private static var _shared4bitModel: Qwen3TTSModel?
+    private static var _shared8bitModel: Qwen3TTSModel?
+    private static var _sharedASRModel: Qwen3ASRModel?
+
+    /// 1.7B 4-bit: model loads with correct config
+    func testModelLoading17B4bit() async throws {
+        let model = try await load4bitModel()
+        XCTAssertEqual(model.config.talker.bits, 4, "Should load as 4-bit model")
+        XCTAssertEqual(model.config.talker.hiddenSize, 2048, "Should be 1.7B (hidden=2048)")
+        XCTAssertEqual(model.config.talker.intermediateSize, 6144, "1.7B intermediate size")
+    }
+
+    /// 1.7B 8-bit: model loads with correct config
+    func testModelLoading17B8bit() async throws {
+        let model = try await load8bitModel()
+        XCTAssertEqual(model.config.talker.bits, 8, "Should load as 8-bit model")
+        XCTAssertEqual(model.config.talker.hiddenSize, 2048, "Should be 1.7B (hidden=2048)")
+    }
+
+    /// 1.7B 4-bit -> ASR round-trip
+    func testRoundTrip17B4bit() async throws {
+        let ttsModel = try await load4bitModel()
+        let asrModel = try await loadASRModel()
+
+        let inputText = "Hello world, this is a test."
+        let samples = ttsModel.synthesize(text: inputText, language: "english")
+        let transcription = asrModel.transcribe(audio: samples, sampleRate: 24000)
+
+        print("1.7B 4-bit Input:  \"\(inputText)\"")
+        print("1.7B 4-bit Output: \"\(transcription)\"")
+
+        let lowerTranscription = transcription.lowercased()
+        let expectedWords = ["hello", "world", "test"]
+        let matchedWords = expectedWords.filter { lowerTranscription.contains($0) }
+        XCTAssertGreaterThanOrEqual(matchedWords.count, 2,
+            "At least 2 of \(expectedWords) should appear in: \"\(transcription)\"")
+    }
+
+    /// 1.7B 8-bit -> ASR round-trip
+    func testRoundTrip17B8bit() async throws {
+        let ttsModel = try await load8bitModel()
+        let asrModel = try await loadASRModel()
+
+        let inputText = "Hello world, this is a test."
+        let samples = ttsModel.synthesize(text: inputText, language: "english")
+        let transcription = asrModel.transcribe(audio: samples, sampleRate: 24000)
+
+        print("1.7B 8-bit Input:  \"\(inputText)\"")
+        print("1.7B 8-bit Output: \"\(transcription)\"")
+
+        let lowerTranscription = transcription.lowercased()
+        let expectedWords = ["hello", "world", "test"]
+        let matchedWords = expectedWords.filter { lowerTranscription.contains($0) }
+        XCTAssertGreaterThanOrEqual(matchedWords.count, 2,
+            "At least 2 of \(expectedWords) should appear in: \"\(transcription)\"")
+    }
+
+    // MARK: - Helpers
+
+    private func load4bitModel() async throws -> Qwen3TTSModel {
+        if let model = Self._shared4bitModel { return model }
+        print("Loading 1.7B 4-bit TTS model...")
+        let model = try await Qwen3TTSModel.fromPretrained(
+            modelId: Self.ttsModelId4bit,
+            tokenizerModelId: Self.ttsTokenizerModelId
+        ) { progress, status in
+            print("[TTS-1.7B-4bit \(Int(progress * 100))%] \(status)")
+        }
+        Self._shared4bitModel = model
+        return model
+    }
+
+    private func load8bitModel() async throws -> Qwen3TTSModel {
+        if let model = Self._shared8bitModel { return model }
+        print("Loading 1.7B 8-bit TTS model...")
+        let model = try await Qwen3TTSModel.fromPretrained(
+            modelId: Self.ttsModelId8bit,
+            tokenizerModelId: Self.ttsTokenizerModelId
+        ) { progress, status in
+            print("[TTS-1.7B-8bit \(Int(progress * 100))%] \(status)")
+        }
+        Self._shared8bitModel = model
+        return model
+    }
+
+    private func loadASRModel() async throws -> Qwen3ASRModel {
+        if let model = Self._sharedASRModel { return model }
+        print("Loading ASR model for verification...")
+        let model = try await Qwen3ASRModel.fromPretrained(
+            modelId: Self.asrModelId
+        ) { progress, status in
+            print("[ASR \(Int(progress * 100))%] \(status)")
+        }
+        Self._sharedASRModel = model
+        return model
     }
 }
 

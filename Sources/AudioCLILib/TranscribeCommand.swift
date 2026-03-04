@@ -17,7 +17,7 @@ public struct TranscribeCommand: ParsableCommand {
     @Option(name: .long, help: "ASR engine: qwen3 (default) or parakeet")
     public var engine: String = "qwen3"
 
-    @Option(name: .shortAndLong, help: "[qwen3] Model: 0.6B (default), 1.7B, or full HuggingFace model ID")
+    @Option(name: .shortAndLong, help: "[qwen3] Model: 0.6B (default), 0.6B-8bit, 1.7B, 1.7B-4bit, or full HuggingFace model ID")
     public var model: String = "0.6B"
 
     @Option(name: .long, help: "Language hint (optional)")
@@ -145,8 +145,12 @@ public func resolveASRModelId(_ specifier: String) -> String {
     switch specifier.lowercased() {
     case "0.6b", "small":
         return ASRModelSize.small.defaultModelId
+    case "0.6b-8bit", "small-8bit":
+        return "aufklarer/Qwen3-ASR-0.6B-MLX-8bit"
     case "1.7b", "large":
         return ASRModelSize.large.defaultModelId
+    case "1.7b-4bit", "large-4bit":
+        return "aufklarer/Qwen3-ASR-1.7B-MLX-4bit"
     default:
         return specifier
     }

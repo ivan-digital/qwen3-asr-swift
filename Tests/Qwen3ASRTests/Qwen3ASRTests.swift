@@ -43,7 +43,49 @@ final class Qwen3ASRTests: XCTestCase {
         XCTAssertEqual(largeConfig.numHeads, 16)
         XCTAssertEqual(largeConfig.numKVHeads, 8)
         XCTAssertEqual(largeConfig.intermediateSize, 6144)
-        XCTAssertEqual(largeConfig.bits, 8)
+        XCTAssertEqual(largeConfig.bits, 4)
+    }
+
+    func testTextDecoderConfig8bit() {
+        let small8 = TextDecoderConfig.small8bit
+        XCTAssertEqual(small8.hiddenSize, 1024)
+        XCTAssertEqual(small8.intermediateSize, 3072)
+        XCTAssertEqual(small8.bits, 8)
+
+        let large8 = TextDecoderConfig.large8bit
+        XCTAssertEqual(large8.hiddenSize, 2048)
+        XCTAssertEqual(large8.intermediateSize, 6144)
+        XCTAssertEqual(large8.bits, 8)
+    }
+
+    func testASRModelSizeBitsDetection() {
+        // Explicit bits in model ID
+        XCTAssertEqual(ASRModelSize.detectBits(from: "aufklarer/Qwen3-ASR-0.6B-MLX-8bit"), 8)
+        XCTAssertEqual(ASRModelSize.detectBits(from: "aufklarer/Qwen3-ASR-0.6B-MLX-4bit"), 4)
+        XCTAssertEqual(ASRModelSize.detectBits(from: "aufklarer/Qwen3-ASR-1.7B-MLX-4bit"), 4)
+        // Default: 4 for small, 8 for large (backwards-compatible)
+        XCTAssertEqual(ASRModelSize.detectBits(from: "some-custom/small-model"), 4)
+        XCTAssertEqual(ASRModelSize.detectBits(from: "some/1.7B-model"), 8)
+    }
+
+    func testASRModelSizeTextConfigWithBits() {
+        let small = ASRModelSize.small
+        let small4 = small.textConfig(bits: 4)
+        XCTAssertEqual(small4.bits, 4)
+        XCTAssertEqual(small4.hiddenSize, 1024)
+
+        let small8 = small.textConfig(bits: 8)
+        XCTAssertEqual(small8.bits, 8)
+        XCTAssertEqual(small8.hiddenSize, 1024)
+
+        let large = ASRModelSize.large
+        let large4 = large.textConfig(bits: 4)
+        XCTAssertEqual(large4.bits, 4)
+        XCTAssertEqual(large4.hiddenSize, 2048)
+
+        let large8 = large.textConfig(bits: 8)
+        XCTAssertEqual(large8.bits, 8)
+        XCTAssertEqual(large8.hiddenSize, 2048)
     }
 
     func testASRModelSizeDetection() {

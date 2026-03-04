@@ -326,6 +326,24 @@ final class SpeakCommandTests: XCTestCase {
         XCTAssertEqual(speak.model, "customVoice")
     }
 
+    func testModel8bitOption() throws {
+        let cmd = try AudioCLI.parseAsRoot(["speak", "hi", "--model", "base-8bit"])
+        let speak = try XCTUnwrap(cmd as? SpeakCommand)
+        XCTAssertEqual(speak.model, "base-8bit")
+    }
+
+    func testModel17BOption() throws {
+        let cmd = try AudioCLI.parseAsRoot(["speak", "hi", "--model", "1.7b"])
+        let speak = try XCTUnwrap(cmd as? SpeakCommand)
+        XCTAssertEqual(speak.model, "1.7b")
+    }
+
+    func testModel17B8bitOption() throws {
+        let cmd = try AudioCLI.parseAsRoot(["speak", "hi", "--model", "1.7b-8bit"])
+        let speak = try XCTUnwrap(cmd as? SpeakCommand)
+        XCTAssertEqual(speak.model, "1.7b-8bit")
+    }
+
     func testChunkFramesOptions() throws {
         let cmd = try AudioCLI.parseAsRoot([
             "speak", "hi", "--stream",
@@ -378,7 +396,7 @@ final class RespondCommandTests: XCTestCase {
         XCTAssertEqual(respond.output, "response.wav")
         XCTAssertEqual(respond.voice, "NATM0")
         XCTAssertEqual(respond.systemPrompt, "assistant")
-        XCTAssertEqual(respond.maxSteps, 500)
+        XCTAssertEqual(respond.maxSteps, 200)
         XCTAssertEqual(respond.modelId, "aufklarer/PersonaPlex-7B-MLX-4bit")
         XCTAssertFalse(respond.stream)
         XCTAssertEqual(respond.chunkFrames, 25)
@@ -474,6 +492,24 @@ final class UtilityTests: XCTestCase {
         XCTAssertTrue(resolveASRModelId("1.7b").contains("1.7B"))
         XCTAssertTrue(resolveASRModelId("1.7B").contains("1.7B"))
         XCTAssertTrue(resolveASRModelId("large").contains("1.7B"))
+    }
+
+    func testResolveASRModelId_8bit() {
+        let small8 = resolveASRModelId("0.6B-8bit")
+        XCTAssertTrue(small8.contains("0.6B"))
+        XCTAssertTrue(small8.contains("8bit"))
+
+        let small8alt = resolveASRModelId("small-8bit")
+        XCTAssertTrue(small8alt.contains("0.6B"))
+        XCTAssertTrue(small8alt.contains("8bit"))
+
+        let large4 = resolveASRModelId("1.7B-4bit")
+        XCTAssertTrue(large4.contains("1.7B"))
+        XCTAssertTrue(large4.contains("4bit"))
+
+        let large4alt = resolveASRModelId("large-4bit")
+        XCTAssertTrue(large4alt.contains("1.7B"))
+        XCTAssertTrue(large4alt.contains("4bit"))
     }
 
     func testResolveASRModelId_passthrough() {

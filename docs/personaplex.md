@@ -4,7 +4,11 @@
 
 PersonaPlex is NVIDIA's 7B parameter full-duplex speech-to-speech model built on Kyutai's [Moshi](https://github.com/kyutai-labs/moshi) architecture. It enables simultaneous listening and speaking with controllable voice and role.
 
-This implementation ports inference to Swift/MLX with 4-bit quantization (~3.5 GB temporal transformer, ~650 MB depformer), supporting both offline and streaming output.
+This implementation ports inference to Swift/MLX with 4-bit or 8-bit quantization (~3.5 GB / ~6 GB temporal transformer, ~650 MB / ~1.2 GB depformer), supporting both offline and streaming output.
+
+Two quantization variants are available:
+- **4-bit** (`aufklarer/PersonaPlex-7B-MLX-4bit`) — ~5.5 GB total, fits 16 GB RAM
+- **8-bit** (`aufklarer/PersonaPlex-7B-MLX-8bit`) — ~9 GB total, higher accuracy
 
 ## Architecture
 

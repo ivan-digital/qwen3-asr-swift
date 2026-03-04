@@ -9,7 +9,16 @@ import AudioCommon
 ///
 /// - Warning: This class is not thread-safe. Create separate instances for concurrent use.
 public final class PersonaPlexModel: Module {
+    /// Default HuggingFace model ID (4-bit quantized).
+    public static let defaultModelId = "aufklarer/PersonaPlex-7B-MLX-4bit"
+
+    /// 8-bit quantized variant (higher accuracy, larger size).
+    public static let modelId8bit = "aufklarer/PersonaPlex-7B-MLX-8bit"
+
     public let cfg: PersonaPlexConfig
+
+    /// Model ID used to load this instance (for resolving voice files etc.)
+    public private(set) var modelId: String = defaultModelId
 
     @ModuleInfo public var temporal: TemporalTransformer
     @ModuleInfo public var depformer: Depformer
@@ -70,7 +79,7 @@ public final class PersonaPlexModel: Module {
         let voiceEmbeddings: MLXArray?
         let voiceCache: MLXArray?  // [1, 17, CT] ring buffer with voice prompt tokens
         do {
-            let modelDir = try HuggingFaceDownloader.getCacheDirectory(for: "aufklarer/PersonaPlex-7B-MLX-4bit")
+            let modelDir = try HuggingFaceDownloader.getCacheDirectory(for: modelId)
             let voiceDir = modelDir.appendingPathComponent("voices")
             let voiceFile = voiceDir.appendingPathComponent("\(voice.rawValue).safetensors")
             if FileManager.default.fileExists(atPath: voiceFile.path) {
@@ -515,7 +524,7 @@ public final class PersonaPlexModel: Module {
                     let voiceCache: MLXArray?
                     do {
                         let modelDir = try HuggingFaceDownloader.getCacheDirectory(
-                            for: "aufklarer/PersonaPlex-7B-MLX-4bit")
+                            for: modelId)
                         let voiceFile = modelDir.appendingPathComponent("voices")
                             .appendingPathComponent("\(voice.rawValue).safetensors")
                         if FileManager.default.fileExists(atPath: voiceFile.path) {
@@ -846,7 +855,7 @@ public final class PersonaPlexModel: Module {
         let voiceEmbeddings: MLXArray?
         let voiceCache2: MLXArray?
         do {
-            let modelDir = try HuggingFaceDownloader.getCacheDirectory(for: "aufklarer/PersonaPlex-7B-MLX-4bit")
+            let modelDir = try HuggingFaceDownloader.getCacheDirectory(for: modelId)
             let voiceDir = modelDir.appendingPathComponent("voices")
             let voiceFile = voiceDir.appendingPathComponent("\(voice.rawValue).safetensors")
             if FileManager.default.fileExists(atPath: voiceFile.path) {
@@ -1054,7 +1063,7 @@ public final class PersonaPlexModel: Module {
     // MARK: - Model Loading
 
     public static func fromPretrained(
-        modelId: String = "aufklarer/PersonaPlex-7B-MLX-4bit",
+        modelId: String = defaultModelId,
         progressHandler: ((Double, String) -> Void)? = nil
     ) async throws -> PersonaPlexModel {
         // Download weights first to get config
@@ -1110,6 +1119,7 @@ public final class PersonaPlexModel: Module {
             cfg.depformer.groupSize = 1
         }
         let model = PersonaPlexModel(cfg: cfg)
+        model.modelId = modelId
 
         // Load weights
         progressHandler?(0.55, "Loading model weights...")

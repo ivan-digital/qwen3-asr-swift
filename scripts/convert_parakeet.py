@@ -1,24 +1,25 @@
 #!/usr/bin/env python3
 """
-Convert NVIDIA Parakeet-TDT 0.6B v3 from NeMo to CoreML with INT4 encoder.
+Convert NVIDIA Parakeet-TDT 0.6B v3 from NeMo to CoreML with quantized encoder.
 
 Pipeline:
   NeMo .nemo → extract 4 sub-modules → torch.jit.trace → save .pt
-  → load .pt → coremltools.convert() → INT4 palettize encoder
+  → load .pt → coremltools.convert() → palettize encoder (INT4 or INT8)
   → save .mlpackage/.mlmodelc + vocab.json + config.json
 
 Requires coremltools 8.1 (9.0 crashes with SIGSEGV on encoder save):
   pip install nemo_toolkit[asr] 'coremltools==8.1'
   python scripts/convert_parakeet.py --output-dir ./parakeet-coreml
+  python scripts/convert_parakeet.py --nbits 8 --output-dir ./parakeet-coreml-int8
 
-Four CoreML models are produced:
-  preprocessor.mlpackage  - audio → mel (CPU only)
-  encoder.mlpackage       - mel → encoded (CPU + Neural Engine, INT4)
+Three CoreML models are produced:
+  encoder.mlpackage       - mel → encoded (CPU + Neural Engine, quantized)
   decoder.mlpackage       - token + LSTM state → output (CPU + Neural Engine)
   joint.mlpackage         - encoder + decoder → logits (CPU + Neural Engine)
 
 Publish to HuggingFace:
   huggingface-cli upload aufklarer/Parakeet-TDT-v3-CoreML-INT4 ./parakeet-coreml
+  huggingface-cli upload aufklarer/Parakeet-TDT-v3-CoreML-INT8 ./parakeet-coreml-int8
 """
 
 import argparse
@@ -134,15 +135,15 @@ def convert_to_coreml(traced_path, name, input_specs, output_names, compute_unit
     return mlmodel
 
 
-def quantize_encoder(mlmodel):
-    """Apply INT4 palettization to the encoder for Neural Engine efficiency."""
+def quantize_encoder(mlmodel, nbits=4):
+    """Apply palettization to the encoder for Neural Engine efficiency."""
     from coremltools.optimize.coreml import (
         OpPalettizerConfig,
         OptimizationConfig,
         palettize_weights,
     )
 
-    op_config = OpPalettizerConfig(mode="kmeans", nbits=4)
+    op_config = OpPalettizerConfig(mode="kmeans", nbits=nbits)
     config = OptimizationConfig(global_config=op_config)
     return palettize_weights(mlmodel, config)
 
@@ -215,9 +216,16 @@ def main():
         help="Output directory for CoreML models",
     )
     parser.add_argument(
+        "--nbits",
+        type=int,
+        choices=[4, 8],
+        default=4,
+        help="Quantization bits for encoder palettization (default: 4)",
+    )
+    parser.add_argument(
         "--no-quantize",
         action="store_true",
-        help="Skip INT4 quantization of encoder",
+        help="Skip quantization of encoder",
     )
     parser.add_argument(
         "--compile",
@@ -326,8 +334,8 @@ def main():
         ct.ComputeUnit.CPU_AND_NE,
     )
     if not args.no_quantize:
-        print("  Quantizing encoder to INT4...")
-        enc_ml = quantize_encoder(enc_ml)
+        print(f"  Quantizing encoder to INT{args.nbits}...")
+        enc_ml = quantize_encoder(enc_ml, nbits=args.nbits)
     enc_ml.save(str(output_dir / "encoder.mlpackage"))
     del enc_ml
     gc.collect()
