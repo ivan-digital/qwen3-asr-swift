@@ -13,6 +13,7 @@ public struct AudioCLI: ParsableCommand {
             VadStreamCommand.self,
             DiarizeCommand.self,
             EmbedSpeakerCommand.self,
+            DenoiseCommand.self,
         ]
     )
 

@@ -8,6 +8,7 @@ AI speech models for Apple Silicon, powered by [MLX Swift](https://github.com/ml
 - **Qwen3-TTS** — Text-to-speech synthesis (highest quality, custom speakers)
 - **CosyVoice TTS** — Text-to-speech with streaming (9 languages, DiT flow matching)
 - **PersonaPlex** — Full-duplex speech-to-speech (7B, audio in → audio out)
+- **DeepFilterNet3** — Speech enhancement / noise suppression (2.1M params, real-time 48kHz)
 - **Silero VAD** — Streaming voice activity detection (32ms chunks, ~309K params)
 - **Pyannote VAD** — Offline voice activity detection (10s windows, multi-speaker overlap)
 - **Speaker Diarization** — Who spoke when (pyannote segmentation + WeSpeaker embedding + clustering)
@@ -34,6 +35,7 @@ Papers: [Qwen3-ASR](https://arxiv.org/abs/2601.21337), [Qwen3-TTS](https://arxiv
 | PersonaPlex-7B (4-bit) | Speech → Speech | Yes (~2s chunks) | EN | ~5.3 GB |
 | Silero-VAD-v5 | Voice Activity Detection | Yes (32ms chunks) | Language-agnostic | ~1.2 MB (MLX or CoreML) |
 | Pyannote-Segmentation-3.0 | VAD + Speaker Segmentation | No (10s windows) | Language-agnostic | ~5.7 MB |
+| DeepFilterNet3 | Speech Enhancement | Yes (10ms frames) | Language-agnostic | ~4.2 MB (CoreML FP16) |
 | WeSpeaker-ResNet34-LM | Speaker Embedding (256-dim) | No | Language-agnostic | ~25 MB (MLX or CoreML) |
 
 ### When to Use Which TTS
@@ -78,8 +80,9 @@ import ParakeetASR   // Speech recognition (CoreML)
 import Qwen3TTS      // Text-to-speech (Qwen3)
 import CosyVoiceTTS  // Text-to-speech (streaming)
 import PersonaPlex   // Speech-to-speech (full-duplex)
-import SpeechVAD     // Voice activity detection (pyannote + Silero)
-import AudioCommon   // Shared utilities
+import SpeechVAD          // Voice activity detection (pyannote + Silero)
+import SpeechEnhancement  // Noise suppression (DeepFilterNet3)
+import AudioCommon        // Shared utilities
 ```
 
 ### Requirements
@@ -577,6 +580,35 @@ swift build -c release
 
 See [Speaker Diarization](docs/speaker-diarization.md) for architecture details.
 
+## Speech Enhancement
+
+### Noise Suppression
+
+```swift
+import SpeechEnhancement
+import AudioCommon  // for WAVWriter
+
+let enhancer = try await SpeechEnhancer.fromPretrained()
+// Downloads ~4.3 MB on first run (Core ML FP16 model + auxiliary data)
+
+let cleanAudio = try enhancer.enhance(audio: noisyAudio, sampleRate: 48000)
+try WAVWriter.write(samples: cleanAudio, sampleRate: 48000, to: outputURL)
+```
+
+### Denoise CLI
+
+```bash
+swift build -c release
+
+# Basic noise removal
+.build/release/audio denoise noisy.wav
+
+# Custom output path
+.build/release/audio denoise noisy.wav --output clean.wav
+```
+
+See [Speech Enhancement](docs/speech-enhancement.md) for architecture details.
+
 ## Latency (M2 Max, 64 GB)
 
 ### ASR
@@ -625,7 +657,15 @@ See [Speaker Diarization](docs/speaker-diarization.md) for architecture details.
 
 > Silero VAD CoreML runs on the Neural Engine at 7.7x the speed of MLX, making it ideal for always-on microphone input. WeSpeaker MLX is faster on GPU, but CoreML frees the GPU for concurrent workloads (TTS, ASR). Both backends produce equivalent results.
 
-RTF = Real-Time Factor (lower is better, < 1.0 = faster than real-time).
+### Speech Enhancement
+
+| Model | Backend | Duration | Latency | RTF |
+|-------|---------|----------|---------|-----|
+| DeepFilterNet3 (FP16) | CoreML | 5s | 0.65s | 0.13 |
+| DeepFilterNet3 (FP16) | CoreML | 10s | 1.2s | 0.12 |
+| DeepFilterNet3 (FP16) | CoreML | 20s | 4.8s | 0.24 |
+
+RTF = Real-Time Factor (lower is better, < 1.0 = faster than real-time). GRU cost scales ~O(n²).
 
 ### MLX vs CoreML
 
@@ -644,7 +684,7 @@ CoreML models are available for Silero VAD and WeSpeaker. Pass `engine: .coreml`
 
 ## Architecture
 
-See [ASR Inference](docs/asr-inference.md), [ASR Model](docs/asr-model.md), [Parakeet TDT ASR](docs/parakeet-asr.md), [Forced Aligner](docs/forced-aligner.md), [Qwen3-TTS Inference](docs/qwen3-tts-inference.md), [TTS Model](docs/tts-model.md), [CosyVoice TTS](docs/cosyvoice-tts.md), [PersonaPlex](docs/personaplex.md), [Silero VAD](docs/silero-vad.md), [Speaker Diarization](docs/speaker-diarization.md), [Shared Protocols](docs/shared-protocols.md) for detailed architecture docs.
+See [ASR Inference](docs/asr-inference.md), [ASR Model](docs/asr-model.md), [Parakeet TDT ASR](docs/parakeet-asr.md), [Forced Aligner](docs/forced-aligner.md), [Qwen3-TTS Inference](docs/qwen3-tts-inference.md), [TTS Model](docs/tts-model.md), [CosyVoice TTS](docs/cosyvoice-tts.md), [PersonaPlex](docs/personaplex.md), [Silero VAD](docs/silero-vad.md), [Speaker Diarization](docs/speaker-diarization.md), [Speech Enhancement](docs/speech-enhancement.md), [Shared Protocols](docs/shared-protocols.md) for detailed architecture docs.
 
 ## Cache Configuration
 

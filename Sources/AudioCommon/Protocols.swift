@@ -148,6 +148,16 @@ public protocol SpeakerEmbeddingModel: AnyObject {
     func embed(audio: [Float], sampleRate: Int) -> [Float]
 }
 
+// MARK: - Speech Enhancement
+
+/// A model that enhances speech by removing noise.
+public protocol SpeechEnhancementModel: AnyObject {
+    /// Expected input sample rate in Hz
+    var inputSampleRate: Int { get }
+    /// Enhance audio by removing noise
+    func enhance(audio: [Float], sampleRate: Int) throws -> [Float]
+}
+
 /// A model that assigns speaker identities to speech segments.
 public protocol SpeakerDiarizationModel: AnyObject {
     /// Expected input sample rate in Hz

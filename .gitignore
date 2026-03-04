@@ -17,7 +17,12 @@ forced-aligner-4bit/
 *.safetensors
 *.pt
 *.onnx
+*.mlpackage
 tokenizer_spm_32k_3.model
+
+# Quantized model directories
+*-4bit/
+*-8bit/
 
 # Generated test audio (PersonaPlex output artifacts)
 Tests/**/test_audio_response.wav

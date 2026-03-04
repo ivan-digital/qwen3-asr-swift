@@ -33,6 +33,10 @@ let package = Package(
             targets: ["SpeechVAD"]
         ),
         .library(
+            name: "SpeechEnhancement",
+            targets: ["SpeechEnhancement"]
+        ),
+        .library(
             name: "ParakeetASR",
             targets: ["ParakeetASR"]
         ),
@@ -102,6 +106,12 @@ let package = Package(
             ]
         ),
         .target(
+            name: "SpeechEnhancement",
+            dependencies: [
+                "AudioCommon",
+            ]
+        ),
+        .target(
             name: "ParakeetASR",
             dependencies: [
                 "AudioCommon",
@@ -115,6 +125,7 @@ let package = Package(
                 "CosyVoiceTTS",
                 "PersonaPlex",
                 "SpeechVAD",
+                "SpeechEnhancement",
                 "ParakeetASR",
                 "AudioCommon",
                 .product(name: "MLX", package: "mlx-swift"),
@@ -157,6 +168,14 @@ let package = Package(
             dependencies: ["ParakeetASR", "AudioCommon"],
             resources: [
                 .copy("Resources/test_audio.wav")
+            ]
+        ),
+        .testTarget(
+            name: "SpeechEnhancementTests",
+            dependencies: [
+                "SpeechEnhancement",
+                "AudioCommon",
+                .product(name: "MLX", package: "mlx-swift"),
             ]
         ),
         .testTarget(
