@@ -117,7 +117,9 @@ Several built-in presets are available (`--list-prompts` to see all). The defaul
 ## Sampling
 
 - **Audio**: temperature=0.8, top_k=250, repetition_penalty=1.2 (window=30)
-- **Text**: temperature=0.7, top_k=25
+- **Text**: temperature=0.7, top_k=25, repetition_penalty=1.2
+- **Silence early stop**: 15 consecutive silence frames → stop generation (disable with 0)
+- **Text entropy early stop**: Monitors text logit entropy; stops if entropy drops below threshold for N consecutive steps (disabled by default, enable with `entropyEarlyStopThreshold > 0`)
 
 ## Weight Files
 
@@ -189,7 +191,11 @@ let stream = model.respondStream(
 )
 for try await chunk in stream {
     playAudio(chunk.samples)  // 24kHz mono
-    if chunk.isFinal { break }
+    // chunk.textTokens contains text generated during this chunk (per-chunk streaming)
+    if chunk.isFinal {
+        // chunk.textTokens on final chunk contains ALL text tokens
+        let transcript = spmDecoder.decode(chunk.textTokens)
+    }
 }
 ```
 

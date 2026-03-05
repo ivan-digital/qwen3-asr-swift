@@ -392,6 +392,7 @@ print(transcript)  // e.g. "Sure, I can help you with that..."
 let stream = model.respondStream(userAudio: audio, voice: .NATM0)
 for try await chunk in stream {
     playAudio(chunk.samples)  // play immediately, 24kHz mono
+    // chunk.textTokens has this chunk's text; final chunk has all tokens
     if chunk.isFinal { break }
 }
 ```
@@ -438,6 +439,9 @@ swift build -c release
 
 # Tune sampling parameters
 .build/release/audio respond --input question.wav --audio-temp 0.6 --repetition-penalty 1.5
+
+# Enable text entropy early stopping (stops if text collapses)
+.build/release/audio respond --input question.wav --entropy-threshold 1.0 --entropy-window 5
 
 # List available voices and prompts
 .build/release/audio respond --list-voices
@@ -701,6 +705,33 @@ for seg in result.segments {
 ```
 
 See [Shared Protocols](docs/shared-protocols.md) for the full protocol reference.
+
+## HTTP API Server
+
+A standalone HTTP server exposes all models via REST endpoints. Models are loaded lazily on first request.
+
+```bash
+swift build -c release
+.build/release/audio-server --port 8080
+
+# Transcribe audio
+curl -X POST http://localhost:8080/transcribe --data-binary @audio.wav -H "Content-Type: audio/wav"
+
+# Text-to-speech
+curl -X POST http://localhost:8080/speak -H "Content-Type: application/json" \
+  -d '{"text": "Hello world", "engine": "cosyvoice"}' -o output.wav
+
+# Speech-to-speech (PersonaPlex)
+curl -X POST http://localhost:8080/respond --data-binary @question.wav -o response.wav
+
+# Speech enhancement
+curl -X POST http://localhost:8080/enhance --data-binary @noisy.wav -o clean.wav
+
+# Preload all models on startup
+.build/release/audio-server --preload --port 8080
+```
+
+The server is a separate `AudioServer` module and `audio-server` executable — it does not add Hummingbird to the main `audio` CLI.
 
 ## Latency (M2 Max, 64 GB)
 

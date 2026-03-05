@@ -103,8 +103,11 @@ public struct AudioChunk: Sendable {
     public let frameIndex: Int     // First frame index in this chunk
     public let isFinal: Bool       // Last chunk flag
     public let elapsedTime: Double? // Wall-clock seconds (nil if not tracked)
+    public let textTokens: [Int32] // Text tokens for this chunk (PersonaPlex streaming)
 }
 ```
+
+**Note on `textTokens`**: In `PersonaPlexModel.respondStream()`, each non-final chunk contains the text tokens generated during that chunk. The final chunk contains all text tokens from the entire generation. For non-PersonaPlex streams, this field defaults to empty.
 
 ### SpeechSegment
 
