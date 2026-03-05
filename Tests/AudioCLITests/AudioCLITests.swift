@@ -458,6 +458,54 @@ final class RespondCommandTests: XCTestCase {
         let respond = try XCTUnwrap(cmd as? RespondCommand)
         XCTAssertEqual(respond.systemPrompt, "customer-service")
     }
+
+    // MARK: Sampling overrides
+
+    func testSamplingOverrides() throws {
+        let cmd = try AudioCLI.parseAsRoot([
+            "respond", "-i", "a.wav",
+            "--audio-temp", "0.5",
+            "--text-temp", "0.3",
+            "--audio-top-k", "100",
+            "--repetition-penalty", "1.5",
+            "--text-repetition-penalty", "1.8",
+            "--repetition-window", "20",
+            "--silence-early-stop", "10"
+        ])
+        let respond = try XCTUnwrap(cmd as? RespondCommand)
+        XCTAssertEqual(respond.audioTemp, 0.5)
+        XCTAssertEqual(respond.textTemp, 0.3)
+        XCTAssertEqual(respond.audioTopK, 100)
+        XCTAssertEqual(respond.repetitionPenalty, 1.5)
+        XCTAssertEqual(respond.textRepetitionPenalty, 1.8)
+        XCTAssertEqual(respond.repetitionWindow, 20)
+        XCTAssertEqual(respond.silenceEarlyStop, 10)
+    }
+
+    func testEntropyOptions() throws {
+        let cmd = try AudioCLI.parseAsRoot([
+            "respond", "-i", "a.wav",
+            "--entropy-threshold", "1.5",
+            "--entropy-window", "5"
+        ])
+        let respond = try XCTUnwrap(cmd as? RespondCommand)
+        XCTAssertEqual(respond.entropyThreshold, 1.5)
+        XCTAssertEqual(respond.entropyWindow, 5)
+    }
+
+    func testEntropyOptionsDefaultNil() throws {
+        let cmd = try AudioCLI.parseAsRoot(["respond", "-i", "a.wav"])
+        let respond = try XCTUnwrap(cmd as? RespondCommand)
+        XCTAssertNil(respond.entropyThreshold)
+        XCTAssertNil(respond.entropyWindow)
+    }
+
+    func testTranscriptAndJsonFlags() throws {
+        let cmd = try AudioCLI.parseAsRoot(["respond", "-i", "a.wav", "--transcript", "--json"])
+        let respond = try XCTUnwrap(cmd as? RespondCommand)
+        XCTAssertTrue(respond.transcript)
+        XCTAssertTrue(respond.json)
+    }
 }
 
 // MARK: - Utility Functions

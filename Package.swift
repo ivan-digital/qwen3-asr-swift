@@ -43,12 +43,17 @@ let package = Package(
         .executable(
             name: "audio",
             targets: ["AudioCLI"]
+        ),
+        .executable(
+            name: "audio-server",
+            targets: ["AudioServerCLI"]
         )
     ],
     dependencies: [
         .package(url: "https://github.com/ml-explore/mlx-swift", from: "0.30.0"),
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.5.0"),
-        .package(url: "https://github.com/huggingface/swift-transformers", from: "1.1.6")
+        .package(url: "https://github.com/huggingface/swift-transformers", from: "1.1.6"),
+        .package(url: "https://github.com/hummingbird-project/hummingbird.git", from: "2.5.0")
     ],
     targets: [
         .target(
@@ -135,6 +140,25 @@ let package = Package(
         .executableTarget(
             name: "AudioCLI",
             dependencies: ["AudioCLILib"]
+        ),
+        .target(
+            name: "AudioServer",
+            dependencies: [
+                "Qwen3ASR",
+                "Qwen3TTS",
+                "CosyVoiceTTS",
+                "PersonaPlex",
+                "SpeechEnhancement",
+                "AudioCommon",
+                .product(name: "Hummingbird", package: "hummingbird")
+            ]
+        ),
+        .executableTarget(
+            name: "AudioServerCLI",
+            dependencies: [
+                "AudioServer",
+                .product(name: "ArgumentParser", package: "swift-argument-parser")
+            ]
         ),
         .testTarget(
             name: "PersonaPlexTests",

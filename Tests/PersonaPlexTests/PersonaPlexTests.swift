@@ -70,11 +70,28 @@ final class PersonaPlexTests: XCTestCase {
         let cfg = PersonaPlexSamplingConfig(
             audioTemp: 0.6, audioTopK: 100, textTemp: 0.5, textTopK: 10,
             audioRepetitionPenalty: 1.5, textRepetitionPenalty: 1.3,
-            repetitionWindow: 50, silenceEarlyStopFrames: 0
+            repetitionWindow: 50, silenceEarlyStopFrames: 0,
+            entropyEarlyStopThreshold: 1.5, entropyWindow: 5
         )
         XCTAssertEqual(cfg.audioTemp, 0.6)
         XCTAssertEqual(cfg.textRepetitionPenalty, 1.3)
         XCTAssertEqual(cfg.silenceEarlyStopFrames, 0)
+        XCTAssertEqual(cfg.entropyEarlyStopThreshold, 1.5)
+        XCTAssertEqual(cfg.entropyWindow, 5)
+    }
+
+    func testEntropyConfigDefaults() {
+        let cfg = PersonaPlexSamplingConfig.default
+        XCTAssertEqual(cfg.entropyEarlyStopThreshold, 0, "Entropy early stop should be disabled by default")
+        XCTAssertEqual(cfg.entropyWindow, 10)
+    }
+
+    func testEntropyConfigMutation() {
+        var cfg = PersonaPlexConfig.default
+        cfg.sampling.entropyEarlyStopThreshold = 1.0
+        cfg.sampling.entropyWindow = 5
+        XCTAssertEqual(cfg.sampling.entropyEarlyStopThreshold, 1.0)
+        XCTAssertEqual(cfg.sampling.entropyWindow, 5)
     }
 
     // MARK: - Text Repetition Penalty Tests
@@ -143,6 +160,16 @@ final class PersonaPlexTests: XCTestCase {
     }
 
     // MARK: - Silence Early Stop Config Tests
+
+    func testAudioChunkTextTokensDefault() {
+        let chunk = AudioChunk(samples: [0.1, 0.2], sampleRate: 24000, frameIndex: 0, isFinal: false)
+        XCTAssertTrue(chunk.textTokens.isEmpty, "Default textTokens should be empty")
+
+        let chunkWithText = AudioChunk(
+            samples: [0.1], sampleRate: 24000, frameIndex: 0, isFinal: false,
+            textTokens: [42, 100, 3])
+        XCTAssertEqual(chunkWithText.textTokens, [42, 100, 3])
+    }
 
     func testSilenceTokensAreValid() {
         let card = TemporalTransformerConfig.default.card

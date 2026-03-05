@@ -273,6 +273,12 @@ public struct PersonaPlexSamplingConfig: Sendable {
     public var repetitionWindow: Int
     /// Number of consecutive silence frames before early stopping (0 = disabled)
     public var silenceEarlyStopFrames: Int
+    /// Minimum text logit entropy before early stopping (0 = disabled).
+    /// When text entropy drops below this threshold for `entropyWindow` consecutive steps,
+    /// generation stops. Typical range: 0.5-2.0. Default 0 (disabled).
+    public var entropyEarlyStopThreshold: Float
+    /// Number of consecutive low-entropy steps before triggering early stop
+    public var entropyWindow: Int
 
     public init(
         audioTemp: Float = 0.8,
@@ -282,7 +288,9 @@ public struct PersonaPlexSamplingConfig: Sendable {
         audioRepetitionPenalty: Float = 1.2,
         textRepetitionPenalty: Float = 1.2,
         repetitionWindow: Int = 30,
-        silenceEarlyStopFrames: Int = 15
+        silenceEarlyStopFrames: Int = 15,
+        entropyEarlyStopThreshold: Float = 0,
+        entropyWindow: Int = 10
     ) {
         self.audioTemp = audioTemp
         self.audioTopK = audioTopK
@@ -292,6 +300,8 @@ public struct PersonaPlexSamplingConfig: Sendable {
         self.textRepetitionPenalty = textRepetitionPenalty
         self.repetitionWindow = repetitionWindow
         self.silenceEarlyStopFrames = silenceEarlyStopFrames
+        self.entropyEarlyStopThreshold = entropyEarlyStopThreshold
+        self.entropyWindow = entropyWindow
     }
 
     public static var `default`: PersonaPlexSamplingConfig { PersonaPlexSamplingConfig() }

@@ -287,6 +287,9 @@ public final class PersonaPlexModel: Module {
         var allTextTokens: [Int32] = []
         var consecutiveSilenceFrames = 0
         let silenceEarlyStop = cfg.sampling.silenceEarlyStopFrames
+        var consecutiveLowEntropySteps = 0
+        let entropyThreshold = cfg.sampling.entropyEarlyStopThreshold
+        let entropyWindow = cfg.sampling.entropyWindow
 
         for step in promptLen..<(prefillLen + maxSteps) {
             // Build input tokens for this step.
@@ -338,6 +341,25 @@ public final class PersonaPlexModel: Module {
                 penalty: cfg.sampling.textRepetitionPenalty
             )
             eval(textToken)
+
+            // Text entropy early stopping: detect token collapse
+            if step >= prefillLen, entropyThreshold > 0 {
+                let tl = textLogits.squeezed(axes: [0, 1])
+                let probs = softmax(tl, axis: -1)
+                let logProbs = log(probs + MLXArray(Float(1e-10)))
+                let entropy = -(probs * logProbs).sum().item(Float.self)
+                if entropy < entropyThreshold {
+                    consecutiveLowEntropySteps += 1
+                    if consecutiveLowEntropySteps >= entropyWindow {
+                        if verbose {
+                            print("  Early stop: text entropy \(String(format: "%.3f", entropy)) < \(entropyThreshold) for \(entropyWindow) steps at step \(step - prefillLen)/\(maxSteps)")
+                        }
+                        break
+                    }
+                } else {
+                    consecutiveLowEntropySteps = 0
+                }
+            }
 
             // Build provided tokens for depformer conditioning during user audio.
             // In Python Moshi, the depformer uses real user audio tokens (from the cache
@@ -693,6 +715,10 @@ public final class PersonaPlexModel: Module {
                     let genStart = CFAbsoluteTimeGetCurrent()
                     var consecutiveSilenceFrames = 0
                     let silenceEarlyStop = cfg.sampling.silenceEarlyStopFrames
+                    var consecutiveLowEntropySteps = 0
+                    let entropyThreshold = cfg.sampling.entropyEarlyStopThreshold
+                    let entropyWindow = cfg.sampling.entropyWindow
+                    var pendingTextTokens: [Int32] = []
 
                     for step in promptLen..<(prefillLen + maxSteps) {
                         let readIdx = step - 1
@@ -761,7 +787,6 @@ public final class PersonaPlexModel: Module {
                         // Extract tokens and write to cache
                         let textVal = textToken[0].item(Int32.self)
                         if step < totalLen { tokenCache[0][step] = textVal }
-                        if step >= prefillLen { allTextTokens.append(textVal) }
                         let agentArr = agentCodes[0]
                         for cb in 0..<nQ {
                             let tok = agentArr[cb].item(Int32.self)
@@ -777,6 +802,12 @@ public final class PersonaPlexModel: Module {
                             agentTokens[cb].append(tok)
                         }
 
+                        // Track text tokens for per-chunk streaming
+                        if step >= prefillLen {
+                            allTextTokens.append(textVal)
+                            pendingTextTokens.append(textVal)
+                        }
+
                         // Silence early stopping
                         if step >= prefillLen, silenceEarlyStop > 0 {
                             let isSilence = (0..<nQ).allSatisfy { cb in
@@ -788,6 +819,25 @@ public final class PersonaPlexModel: Module {
                                     print("  Early stop: \(silenceEarlyStop) consecutive silence frames")
                                 }
                                 break
+                            }
+                        }
+
+                        // Text entropy early stopping
+                        if step >= prefillLen, entropyThreshold > 0 {
+                            let tl = textLogits.squeezed(axes: [0, 1])
+                            let probs = softmax(tl, axis: -1)
+                            let logProbs = log(probs + MLXArray(Float(1e-10)))
+                            let entropy = -(probs * logProbs).sum().item(Float.self)
+                            if entropy < entropyThreshold {
+                                consecutiveLowEntropySteps += 1
+                                if consecutiveLowEntropySteps >= entropyWindow {
+                                    if verbose {
+                                        print("  Early stop: text entropy \(String(format: "%.3f", entropy)) < \(entropyThreshold) for \(entropyWindow) steps")
+                                    }
+                                    break
+                                }
+                            } else {
+                                consecutiveLowEntropySteps = 0
                             }
                         }
 
@@ -810,7 +860,8 @@ public final class PersonaPlexModel: Module {
                                 sampleRate: cfg.sampleRate,
                                 frameIndex: totalEmittedFrames,
                                 isFinal: false,
-                                elapsedTime: elapsed))
+                                elapsedTime: elapsed,
+                                textTokens: pendingTextTokens))
 
                             if verbose {
                                 print("  Chunk: \(samples.count) samples at frame \(totalEmittedFrames) (\(String(format: "%.2f", elapsed))s)")
@@ -818,6 +869,7 @@ public final class PersonaPlexModel: Module {
 
                             totalEmittedFrames += chunkFrames
                             pendingCodes = Array(repeating: [], count: nQ)
+                            pendingTextTokens = []
                         }
                     }
 

@@ -74,6 +74,12 @@ public struct RespondCommand: ParsableCommand {
     @Option(name: .long, help: "Silence frames before early stop (default: 15, 0 = disabled)")
     public var silenceEarlyStop: Int?
 
+    @Option(name: .long, help: "Text entropy threshold for early stop (default: 0 = disabled, try 1.0)")
+    public var entropyThreshold: Float?
+
+    @Option(name: .long, help: "Consecutive low-entropy steps before early stop (default: 10)")
+    public var entropyWindow: Int?
+
     public init() {}
 
     public func run() throws {
@@ -126,6 +132,8 @@ public struct RespondCommand: ParsableCommand {
             if let v = textRepetitionPenalty { model.cfg.sampling.textRepetitionPenalty = v }
             if let v = repetitionWindow { model.cfg.sampling.repetitionWindow = v }
             if let v = silenceEarlyStop { model.cfg.sampling.silenceEarlyStopFrames = v }
+            if let v = entropyThreshold { model.cfg.sampling.entropyEarlyStopThreshold = v }
+            if let v = entropyWindow { model.cfg.sampling.entropyWindow = v }
 
             if compile {
                 print("Warming up compiled temporal transformer...")
