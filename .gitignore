@@ -34,3 +34,6 @@ docs/blog-*.md
 
 # Built app bundles
 *.app/
+
+# Benchmark data (downloaded at runtime)
+benchmarks/

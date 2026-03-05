@@ -27,6 +27,12 @@ public struct DiarizeCommand: ParsableCommand {
     @Flag(name: .long, help: "Output as JSON")
     public var json: Bool = false
 
+    @Flag(name: .long, help: "Output as RTTM (standard diarization evaluation format)")
+    public var rttm: Bool = false
+
+    @Option(name: .long, help: "Reference RTTM file to score against (computes DER)")
+    public var scoreAgainst: String?
+
     public init() {}
 
     public func run() throws {
@@ -96,7 +102,11 @@ public struct DiarizeCommand: ParsableCommand {
                     audio: audio, sampleRate: 16000, config: config)
                 let elapsed = Date().timeIntervalSince(start)
 
-                if json {
+                if rttm {
+                    let basename = URL(fileURLWithPath: audioFile).deletingPathExtension().lastPathComponent
+                    let rttmSegments = toRTTM(segments: result.segments, filename: basename)
+                    print(formatRTTM(rttmSegments))
+                } else if json {
                     printDiarizeJSON(result)
                 } else {
                     if result.segments.isEmpty {
@@ -111,6 +121,21 @@ public struct DiarizeCommand: ParsableCommand {
                         print("\n--- \(result.numSpeakers) speaker(s) ---")
                     }
                     print("Diarization took \(String(format: "%.2f", elapsed))s")
+                }
+
+                // DER scoring against reference
+                if let refFile = scoreAgainst {
+                    let refContent = try String(contentsOfFile: refFile, encoding: .utf8)
+                    let refSegments = parseRTTM(refContent)
+                    let derResult = computeDERWithOptimalMapping(
+                        reference: refSegments, hypothesis: result.segments
+                    )
+                    print("\n--- DER Scoring ---")
+                    print("Total speech: \(String(format: "%.2f", derResult.totalSpeech))s")
+                    print("Missed speech: \(String(format: "%.2f", derResult.missedSpeech))s")
+                    print("False alarm: \(String(format: "%.2f", derResult.falseAlarm))s")
+                    print("Confusion: \(String(format: "%.2f", derResult.confusion))s")
+                    print("DER: \(String(format: "%.1f", derResult.derPercent))%")
                 }
             }
         }
