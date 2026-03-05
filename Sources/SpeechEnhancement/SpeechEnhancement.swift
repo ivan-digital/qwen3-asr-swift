@@ -81,27 +81,15 @@ public final class SpeechEnhancer {
         resetState()
 
         let hop = config.hopSize
+        let freqBins = config.freqBins  // 481 (960/2 + 1)
 
         // Pad audio so inverse STFT captures the full signal
         let paddedSamples = samples + [Float](repeating: 0, count: hop)
 
-        // STFT (produces paddedFFT/2+1 bins for perfect reconstruction)
-        let (stftReal, stftImag) = stft.forward(audio: paddedSamples, analysisMem: &analysisMem)
-        let stftBins = stft.freqBins  // 513 (padded FFT)
-        let modelBins = config.freqBins  // 481 (model expects fftSize/2+1)
-        let numFrames = stftReal.count / stftBins
+        // STFT — 960-point DFT producing 481 frequency bins
+        let (specReal, specImag) = stft.forward(audio: paddedSamples, analysisMem: &analysisMem)
+        let numFrames = specReal.count / freqBins
         guard numFrames > 0 else { return [] }
-
-        // Truncate to model's expected 481 bins for feature computation
-        var specReal = [Float](repeating: 0, count: numFrames * modelBins)
-        var specImag = [Float](repeating: 0, count: numFrames * modelBins)
-        for t in 0..<numFrames {
-            for f in 0..<modelBins {
-                specReal[t * modelBins + f] = stftReal[t * stftBins + f]
-                specImag[t * modelBins + f] = stftImag[t * stftBins + f]
-            }
-        }
-        let freqBins = modelBins
 
         // Compute ERB features
         var erbFeats = computeERBFeatures(
@@ -132,23 +120,13 @@ public final class SpeechEnhancer {
             alpha: config.normAlpha,
             dfBins: config.dfBins, numFrames: numFrames)
 
-        // Apply lookahead padding
-        let lookahead = config.convLookahead
-        let paddedErbFeats = applyLookaheadPad(
-            erbFeats, featuresPerFrame: config.erbBands,
-            numFrames: numFrames, lookahead: lookahead)
-        let paddedSpecReal = applyLookaheadPad(
-            specFeatReal, featuresPerFrame: config.dfBins,
-            numFrames: numFrames, lookahead: lookahead)
-        let paddedSpecImag = applyLookaheadPad(
-            specFeatImag, featuresPerFrame: config.dfBins,
-            numFrames: numFrames, lookahead: lookahead)
+        // No lookahead padding here — the Core ML model applies it internally
 
-        // Create Core ML input arrays using direct pointer access
+        // Create Core ML input arrays
         // ERB: [1, 1, T, 32] (NCHW)
         let erbInput = try MLMultiArray(shape: [1, 1, numFrames as NSNumber, config.erbBands as NSNumber], dataType: .float32)
         let erbPtr = erbInput.dataPointer.assumingMemoryBound(to: Float.self)
-        paddedErbFeats.withUnsafeBufferPointer { src in
+        erbFeats.withUnsafeBufferPointer { src in
             erbPtr.update(from: src.baseAddress!, count: numFrames * config.erbBands)
         }
 
@@ -156,39 +134,36 @@ public final class SpeechEnhancer {
         let specInput = try MLMultiArray(shape: [1, 2, numFrames as NSNumber, config.dfBins as NSNumber], dataType: .float32)
         let specPtr = specInput.dataPointer.assumingMemoryBound(to: Float.self)
         let specChannelStride = numFrames * config.dfBins
-        paddedSpecReal.withUnsafeBufferPointer { src in
+        specFeatReal.withUnsafeBufferPointer { src in
             specPtr.update(from: src.baseAddress!, count: specChannelStride)
         }
-        paddedSpecImag.withUnsafeBufferPointer { src in
+        specFeatImag.withUnsafeBufferPointer { src in
             (specPtr + specChannelStride).update(from: src.baseAddress!, count: specChannelStride)
         }
 
         // Run neural network (single pass — GRU state is sequential, can't be chunked)
         let (erbMaskArray, coefsArray) = try network.predict(featErb: erbInput, featSpec: specInput)
 
-        // Extract ERB mask [1, 1, T, 32] → flat [T * 32] via pointer
-        let erbMaskPtr = erbMaskArray.dataPointer.assumingMemoryBound(to: Float.self)
+        // Extract ERB mask [1, 1, T, 32] — handle float16 output from Core ML
         let erbMaskCount = numFrames * config.erbBands
         var erbMaskFlat = [Float](repeating: 0, count: erbMaskCount)
-        erbMaskFlat.withUnsafeMutableBufferPointer { dst in
-            dst.baseAddress!.update(from: erbMaskPtr, count: erbMaskCount)
-        }
+        extractMLMultiArrayFlat(erbMaskArray, into: &erbMaskFlat, count: erbMaskCount)
 
-        // Extract DF coefficients [1, 5, T, 96, 2] → flat [T * 96 * 5 * 2]
-        // Core ML layout: [1, O=5, T, F=96, C=2] contiguous
-        // Target layout: [T, F, O, C=2]
+        // Extract DF coefficients [1, 5, T, 96, 2] → [T, F, O, C=2]
         let dfOrder = config.dfOrder
-        let coefsPtr = coefsArray.dataPointer.assumingMemoryBound(to: Float.self)
-        var coefsFlat = [Float](repeating: 0, count: numFrames * config.dfBins * dfOrder * 2)
-        coefsFlat.withUnsafeMutableBufferPointer { dst in
-            for t in 0..<numFrames {
-                for f in 0..<config.dfBins {
-                    for o in 0..<dfOrder {
-                        let srcIdx = ((o * numFrames + t) * config.dfBins + f) * 2
-                        let dstIdx = ((t * config.dfBins + f) * dfOrder + o) * 2
-                        dst[dstIdx] = coefsPtr[srcIdx]
-                        dst[dstIdx + 1] = coefsPtr[srcIdx + 1]
-                    }
+        let coefsCount = dfOrder * numFrames * config.dfBins * 2
+        var coefsRaw = [Float](repeating: 0, count: coefsCount)
+        extractMLMultiArrayFlat(coefsArray, into: &coefsRaw, count: coefsCount)
+
+        // Reshape from Core ML layout [O, T, F, 2] to [T, F, O, 2]
+        var coefsFlat = [Float](repeating: 0, count: coefsCount)
+        for t in 0..<numFrames {
+            for f in 0..<config.dfBins {
+                for o in 0..<dfOrder {
+                    let srcIdx = ((o * numFrames + t) * config.dfBins + f) * 2
+                    let dstIdx = ((t * config.dfBins + f) * dfOrder + o) * 2
+                    coefsFlat[dstIdx] = coefsRaw[srcIdx]
+                    coefsFlat[dstIdx + 1] = coefsRaw[srcIdx + 1]
                 }
             }
         }
@@ -218,18 +193,8 @@ public final class SpeechEnhancer {
             }
         }
 
-        // Expand back to full STFT bins for reconstruction
-        var fullReal = stftReal
-        var fullImag = stftImag
-        for t in 0..<numFrames {
-            for f in 0..<modelBins {
-                fullReal[t * stftBins + f] = enhancedReal[t * freqBins + f]
-                fullImag[t * stftBins + f] = enhancedImag[t * freqBins + f]
-            }
-        }
-
         // Inverse STFT
-        let rawOutput = stft.inverse(real: fullReal, imag: fullImag, synthesisMem: &synthesisMem)
+        let rawOutput = stft.inverse(real: enhancedReal, imag: enhancedImag, synthesisMem: &synthesisMem)
 
         // Trim the hop-size latency from prepended analysis memory
         let trimStart = hop
@@ -283,6 +248,21 @@ public final class SpeechEnhancer {
         progressHandler?(1.0, "Ready")
 
         return SpeechEnhancer(network: network, config: config, auxData: auxData)
+    }
+
+    /// Extract float32 data from an MLMultiArray, handling float16 output from Core ML.
+    private func extractMLMultiArrayFlat(_ array: MLMultiArray, into output: inout [Float], count: Int) {
+        if array.dataType == .float16 {
+            let ptr = array.dataPointer.assumingMemoryBound(to: Float16.self)
+            for i in 0..<count {
+                output[i] = Float(ptr[i])
+            }
+        } else {
+            let ptr = array.dataPointer.assumingMemoryBound(to: Float.self)
+            output.withUnsafeMutableBufferPointer { dst in
+                dst.baseAddress!.update(from: ptr, count: count)
+            }
+        }
     }
 
     /// Simple linear resampling.

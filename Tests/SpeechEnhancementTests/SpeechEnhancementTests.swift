@@ -112,8 +112,7 @@ final class SpeechEnhancementTests: XCTestCase {
     func testSTFTFreqBins() {
         let window = computeVorbisWindow(size: 960)
         let stft = STFTProcessor(fftSize: 960, hopSize: 480, window: window)
-        XCTAssertEqual(stft.paddedFFT, 1024)
-        XCTAssertEqual(stft.freqBins, 513)
+        XCTAssertEqual(stft.freqBins, 481)  // 960/2 + 1
     }
 
     func testSTFTFrameCount() {
@@ -333,10 +332,141 @@ final class SpeechEnhancementTests: XCTestCase {
         // Verify the NPZ reader can parse numpy files
         // Create a temporary npz for testing
         let tmpDir = FileManager.default.temporaryDirectory
-        let npzURL = tmpDir.appendingPathComponent("test_aux.npz")
+        let _ = tmpDir.appendingPathComponent("test_aux.npz")
 
         // We can't easily create an npz in Swift, but we can test the structure
         // Just verify the reader type exists
         XCTAssertNotNil(NpzReader.self)
+    }
+
+    // MARK: - E2E Tests
+
+    func testE2EEnhancePreservesCleanSpeech() async throws {
+        // Load test audio
+        let testAudioURL = URL(fileURLWithPath: "Tests/Qwen3ASRTests/Resources/test_audio.wav")
+
+        guard FileManager.default.fileExists(atPath: testAudioURL.path) else {
+            throw XCTSkip("Test audio not found")
+        }
+
+        let (samples, sr) = try loadWAV(url: testAudioURL)
+        XCTAssertGreaterThan(samples.count, 0)
+
+        // Load model
+        let enhancer = try await SpeechEnhancer.fromPretrained()
+
+        // Enhance
+        let enhanced = try enhancer.enhance(audio: samples, sampleRate: sr)
+        XCTAssertGreaterThan(enhanced.count, 0)
+
+        // For clean speech, enhanced output should preserve amplitude (within -3 dB)
+        let origRMS: Float = sqrt(samples.reduce(0) { $0 + $1 * $1 } / Float(samples.count))
+        let enhRMS: Float = sqrt(enhanced.reduce(0) { $0 + $1 * $1 } / Float(enhanced.count))
+
+        let dbDiff = 20 * log10(enhRMS / origRMS)
+        print("E2E: origRMS=\(origRMS), enhRMS=\(enhRMS), diff=\(dbDiff) dB")
+
+        // Clean speech should not be significantly attenuated
+        XCTAssertGreaterThan(dbDiff, -3.0, "Enhanced audio attenuated by more than 3 dB — model may be suppressing speech")
+        XCTAssertLessThan(dbDiff, 3.0, "Enhanced audio amplified by more than 3 dB")
+    }
+
+    func testE2EEnhanceReducesNoise() async throws {
+        let testAudioURL = URL(fileURLWithPath: "Tests/Qwen3ASRTests/Resources/test_audio.wav")
+
+        guard FileManager.default.fileExists(atPath: testAudioURL.path) else {
+            throw XCTSkip("Test audio not found")
+        }
+
+        let (cleanSamples, sr) = try loadWAV(url: testAudioURL)
+
+        // Resample to 48kHz for noise addition
+        let ratio = Double(48000) / Double(sr)
+        let outLen = Int(Double(cleanSamples.count) * ratio)
+        var samples48k = [Float](repeating: 0, count: outLen)
+        for i in 0..<outLen {
+            let srcPos = Double(i) / ratio
+            let srcIdx = Int(srcPos)
+            let frac = Float(srcPos - Double(srcIdx))
+            if srcIdx + 1 < cleanSamples.count {
+                samples48k[i] = cleanSamples[srcIdx] * (1 - frac) + cleanSamples[srcIdx + 1] * frac
+            } else if srcIdx < cleanSamples.count {
+                samples48k[i] = cleanSamples[srcIdx]
+            }
+        }
+
+        // Add white noise at ~10 dB SNR
+        let cleanRMS: Float = sqrt(samples48k.reduce(0) { $0 + $1 * $1 } / Float(samples48k.count))
+        let noiseLevel = cleanRMS * 0.3
+        var noisy = samples48k
+        srand48(42)
+        for i in 0..<noisy.count {
+            noisy[i] += Float(drand48() * 2 - 1) * noiseLevel * sqrt(3)
+        }
+
+        let noisyRMS: Float = sqrt(noisy.reduce(0) { $0 + $1 * $1 } / Float(noisy.count))
+
+        // Enhance
+        let enhancer = try await SpeechEnhancer.fromPretrained()
+        let enhanced = try enhancer.enhance(audio: noisy, sampleRate: 48000)
+        XCTAssertGreaterThan(enhanced.count, 0)
+
+        let enhRMS: Float = sqrt(enhanced.reduce(0) { $0 + $1 * $1 } / Float(enhanced.count))
+
+        // Check silence region (first 2s has no speech) — noise should be reduced
+        let silenceEnd = min(2 * 48000, min(noisy.count, enhanced.count))
+        let noisySilenceSlice = Array(noisy[0..<silenceEnd])
+        let enhSilenceSlice = Array(enhanced[0..<silenceEnd])
+        let noisySilenceRMS: Float = sqrt(noisySilenceSlice.reduce(0) { $0 + $1 * $1 } / Float(silenceEnd))
+        let enhSilenceRMS: Float = sqrt(enhSilenceSlice.reduce(0) { $0 + $1 * $1 } / Float(silenceEnd))
+
+        let silenceReduction = 20 * log10(enhSilenceRMS / (noisySilenceRMS + 1e-10))
+        print("E2E noise: noisyRMS=\(noisyRMS), enhRMS=\(enhRMS)")
+        print("E2E silence: noisySilence=\(noisySilenceRMS), enhSilence=\(enhSilenceRMS), reduction=\(silenceReduction) dB")
+
+        // Noise in silence region should be reduced by at least 3 dB
+        XCTAssertLessThan(silenceReduction, -3.0, "Noise in silence region not sufficiently reduced")
+    }
+
+    /// Load a WAV file as Float32 samples.
+    private func loadWAV(url: URL) throws -> (samples: [Float], sampleRate: Int) {
+        let data = try Data(contentsOf: url)
+        guard data.count > 44 else { throw NSError(domain: "WAV", code: 1) }
+
+        let sampleRate = data.withUnsafeBytes { raw in
+            raw.loadUnaligned(fromByteOffset: 24, as: UInt32.self)
+        }
+        let bitsPerSample = data.withUnsafeBytes { raw in
+            raw.loadUnaligned(fromByteOffset: 34, as: UInt16.self)
+        }
+
+        // Find "data" chunk
+        var offset = 12
+        while offset + 8 < data.count {
+            let chunkID = String(data: data[offset..<offset+4], encoding: .ascii) ?? ""
+            let chunkSize = data.withUnsafeBytes { raw in
+                raw.loadUnaligned(fromByteOffset: offset + 4, as: UInt32.self)
+            }
+            if chunkID == "data" {
+                offset += 8
+                break
+            }
+            offset += 8 + Int(chunkSize)
+        }
+
+        let bytesPerSample = Int(bitsPerSample) / 8
+        let numSamples = (data.count - offset) / bytesPerSample
+        var samples = [Float](repeating: 0, count: numSamples)
+
+        if bitsPerSample == 16 {
+            data.withUnsafeBytes { raw in
+                for i in 0..<numSamples {
+                    let val = raw.loadUnaligned(fromByteOffset: offset + i * 2, as: Int16.self)
+                    samples[i] = Float(val) / 32768.0
+                }
+            }
+        }
+
+        return (samples, Int(sampleRate))
     }
 }
