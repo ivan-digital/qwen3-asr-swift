@@ -107,70 +107,51 @@ func computeERBFilterbank(
 
 // MARK: - STFT / iSTFT
 
-/// Forward STFT using vDSP Accelerate.
+/// Forward/inverse STFT using vDSP_DFT (supports non-power-of-2 sizes like 960).
 ///
-/// Computes the Short-Time Fourier Transform of the input audio.
-///
-/// - Parameters:
-///   - audio: Input audio samples
-///   - window: Analysis window (Vorbis)
-///   - fftSize: FFT window size (960)
-///   - hopSize: Hop size (480)
-/// - Returns: Complex spectrum as interleaved [real, imag] per bin,
-///   shape `[numFrames, freqBins, 2]` flattened
+/// Uses `vDSP_DFT_zop` for complex-to-complex DFT, handling real signals by
+/// setting imaginary input to zero and exploiting conjugate symmetry.
+/// This avoids zero-padding to the next power of 2 (1024), which would produce
+/// different frequency bin values than the native 960-point DFT that
+/// DeepFilterNet3 expects.
 final class STFTProcessor {
     let fftSize: Int
     let hopSize: Int
-    let paddedFFT: Int
-    let log2N: vDSP_Length
     let freqBins: Int
     let window: [Float]
-    let fftSetup: FFTSetup
-    /// Forward FFT scale: 1/2 (vDSP correction for real-to-complex)
-    let forwardScale: Float
-    /// Inverse FFT scale: 1/paddedFFT (vDSP correction for complex-to-real)
+    let forwardSetup: OpaquePointer
+    let inverseSetup: OpaquePointer
+    /// Inverse DFT scale: 1/fftSize
     let inverseScale: Float
 
     init(fftSize: Int, hopSize: Int, window: [Float]) {
         self.fftSize = fftSize
         self.hopSize = hopSize
         self.window = window
+        self.freqBins = fftSize / 2 + 1  // 481 for 960-point DFT
+        self.inverseScale = 1.0 / Float(fftSize)
 
-        // Next power of 2 for FFT
-        var padded = 1
-        var log2 = 0
-        while padded < fftSize {
-            padded *= 2
-            log2 += 1
+        guard let fwd = vDSP_DFT_zop_CreateSetup(nil, vDSP_Length(fftSize), .FORWARD) else {
+            fatalError("Failed to create forward DFT setup for N=\(fftSize)")
         }
-        self.paddedFFT = padded
-        self.log2N = vDSP_Length(log2)
-        // Use all bins from padded FFT for perfect reconstruction
-        self.freqBins = padded / 2 + 1
+        self.forwardSetup = fwd
 
-        // vDSP real-FFT scales: forward result is 2x, inverse result needs /N
-        self.forwardScale = 0.5
-        self.inverseScale = 1.0 / Float(padded)
-
-        guard let setup = vDSP_create_fftsetup(self.log2N, FFTRadix(kFFTRadix2)) else {
-            fatalError("Failed to create vDSP FFT setup for paddedFFT=\(padded)")
+        guard let inv = vDSP_DFT_zop_CreateSetup(nil, vDSP_Length(fftSize), .INVERSE) else {
+            fatalError("Failed to create inverse DFT setup for N=\(fftSize)")
         }
-        self.fftSetup = setup
+        self.inverseSetup = inv
     }
 
     deinit {
-        vDSP_destroy_fftsetup(fftSetup)
+        vDSP_DFT_DestroySetup(forwardSetup)
+        vDSP_DFT_DestroySetup(inverseSetup)
     }
 
-    /// Analysis STFT: audio → complex spectrum [numFrames][freqBins][2]
+    /// Analysis STFT: audio → complex spectrum.
     ///
-    /// Maintains analysis memory for streaming (overlap region from previous call).
     /// Returns (real, imaginary) arrays each of shape [numFrames * freqBins].
     func forward(audio: [Float], analysisMem: inout [Float]) -> (real: [Float], imag: [Float]) {
-        let halfPadded = paddedFFT / 2
         let overlapSize = fftSize - hopSize
-
-        // Build full buffer: [analysisMem | audio]
         let buffer = analysisMem + audio
 
         let numFrames = max(0, (buffer.count - fftSize) / hopSize + 1)
@@ -182,59 +163,38 @@ final class STFTProcessor {
         var real = [Float](repeating: 0, count: numFrames * freqBins)
         var imag = [Float](repeating: 0, count: numFrames * freqBins)
 
-        var paddedFrame = [Float](repeating: 0, count: paddedFFT)
-        var splitReal = [Float](repeating: 0, count: halfPadded)
-        var splitImag = [Float](repeating: 0, count: halfPadded)
+        var windowedFrame = [Float](repeating: 0, count: fftSize)
+        var zeroImag = [Float](repeating: 0, count: fftSize)
+        var outReal = [Float](repeating: 0, count: fftSize)
+        var outImag = [Float](repeating: 0, count: fftSize)
 
         for frame in 0..<numFrames {
             let start = frame * hopSize
 
             // Apply window
             buffer.withUnsafeBufferPointer { buf in
-                vDSP_vmul(buf.baseAddress! + start, 1, window, 1, &paddedFrame, 1, vDSP_Length(fftSize))
-            }
-            // Zero-pad
-            for i in fftSize..<paddedFFT {
-                paddedFrame[i] = 0
+                vDSP_vmul(buf.baseAddress! + start, 1, window, 1, &windowedFrame, 1, vDSP_Length(fftSize))
             }
 
-            // Pack into split-complex
-            for i in 0..<halfPadded {
-                splitReal[i] = paddedFrame[2 * i]
-                splitImag[i] = paddedFrame[2 * i + 1]
-            }
+            // Zero imaginary input (real signal)
+            vDSP_vclr(&zeroImag, 1, vDSP_Length(fftSize))
 
-            // FFT
-            splitReal.withUnsafeMutableBufferPointer { realBuf in
-                splitImag.withUnsafeMutableBufferPointer { imagBuf in
-                    var splitComplex = DSPSplitComplex(
-                        realp: realBuf.baseAddress!,
-                        imagp: imagBuf.baseAddress!)
-                    vDSP_fft_zrip(fftSetup, &splitComplex, 1, log2N, FFTDirection(kFFTDirection_Forward))
-                }
-            }
+            // Complex DFT
+            vDSP_DFT_Execute(forwardSetup,
+                windowedFrame, zeroImag,
+                &outReal, &outImag)
 
+            // Copy first freqBins (481) unique bins (conjugate symmetry)
             let baseIdx = frame * freqBins
-
-            // DC component (purely real, stored in realp[0])
-            real[baseIdx] = splitReal[0] * forwardScale
-            imag[baseIdx] = 0
-
-            // Bins 1 to halfPadded-1
-            for k in 1..<halfPadded {
-                real[baseIdx + k] = splitReal[k] * forwardScale
-                imag[baseIdx + k] = splitImag[k] * forwardScale
+            for k in 0..<freqBins {
+                real[baseIdx + k] = outReal[k]
+                imag[baseIdx + k] = outImag[k]
             }
-
-            // Nyquist bin (purely real, packed in imagp[0])
-            real[baseIdx + halfPadded] = splitImag[0] * forwardScale
-            imag[baseIdx + halfPadded] = 0
         }
 
         // Update analysis memory
         let consumed = numFrames * hopSize
         analysisMem = Array(buffer.suffix(buffer.count - consumed))
-        // Ensure it's exactly overlapSize
         if analysisMem.count > overlapSize {
             analysisMem = Array(analysisMem.suffix(overlapSize))
         } else if analysisMem.count < overlapSize {
@@ -244,81 +204,63 @@ final class STFTProcessor {
         return (real, imag)
     }
 
-    /// Inverse STFT: complex spectrum → audio
-    ///
-    /// - Parameters:
-    ///   - real: Real parts [numFrames * freqBins]
-    ///   - imag: Imaginary parts [numFrames * freqBins]
-    ///   - synthesisMem: Overlap-add buffer (mutated)
-    /// - Returns: Reconstructed audio samples
+    /// Inverse STFT: complex spectrum → audio via overlap-add.
     func inverse(real: [Float], imag: [Float], synthesisMem: inout [Float]) -> [Float] {
-        let halfPadded = paddedFFT / 2
         let numFrames = real.count / freqBins
         guard numFrames > 0 else { return [] }
 
         let outputLen = numFrames * hopSize
         var output = [Float](repeating: 0, count: outputLen)
 
-        var splitReal = [Float](repeating: 0, count: halfPadded)
-        var splitImag = [Float](repeating: 0, count: halfPadded)
-        var timeFrame = [Float](repeating: 0, count: paddedFFT)
+        var fullReal = [Float](repeating: 0, count: fftSize)
+        var fullImag = [Float](repeating: 0, count: fftSize)
+        var outReal = [Float](repeating: 0, count: fftSize)
+        var outImag = [Float](repeating: 0, count: fftSize)
 
         for frame in 0..<numFrames {
             let baseIdx = frame * freqBins
 
-            // Pack into split-complex format
-            splitReal[0] = real[baseIdx]  // DC
-            splitImag[0] = real[baseIdx + halfPadded]  // Nyquist
-
-            // Bins 1 to halfPadded-1
-            for k in 1..<halfPadded {
-                splitReal[k] = real[baseIdx + k]
-                splitImag[k] = imag[baseIdx + k]
+            // Fill first freqBins (481) bins
+            for k in 0..<freqBins {
+                fullReal[k] = real[baseIdx + k]
+                fullImag[k] = imag[baseIdx + k]
             }
 
-            // Inverse FFT
-            splitReal.withUnsafeMutableBufferPointer { realBuf in
-                splitImag.withUnsafeMutableBufferPointer { imagBuf in
-                    var splitComplex = DSPSplitComplex(
-                        realp: realBuf.baseAddress!,
-                        imagp: imagBuf.baseAddress!)
-                    vDSP_fft_zrip(fftSetup, &splitComplex, 1, log2N, FFTDirection(kFFTDirection_Inverse))
-                }
+            // Reconstruct conjugate symmetric part: X[N-k] = conj(X[k])
+            for k in 1..<(fftSize / 2) {
+                fullReal[fftSize - k] = fullReal[k]
+                fullImag[fftSize - k] = -fullImag[k]
             }
 
-            // Unpack from split-complex to interleaved
-            for i in 0..<halfPadded {
-                timeFrame[2 * i] = splitReal[i]
-                timeFrame[2 * i + 1] = splitImag[i]
-            }
+            // Inverse DFT
+            vDSP_DFT_Execute(inverseSetup,
+                fullReal, fullImag,
+                &outReal, &outImag)
 
-            // vDSP real-FFT inverse scale: 1/paddedFFT
+            // Scale by 1/N (vDSP_DFT doesn't include normalization)
             var scale = inverseScale
-            vDSP_vsmul(timeFrame, 1, &scale, &timeFrame, 1, vDSP_Length(paddedFFT))
+            vDSP_vsmul(outReal, 1, &scale, &outReal, 1, vDSP_Length(fftSize))
 
-            // Apply window
+            // Apply synthesis window
             var windowed = [Float](repeating: 0, count: fftSize)
-            vDSP_vmul(timeFrame, 1, window, 1, &windowed, 1, vDSP_Length(fftSize))
+            vDSP_vmul(outReal, 1, window, 1, &windowed, 1, vDSP_Length(fftSize))
 
             // Overlap-add with synthesis memory
-            let outStart = frame * hopSize
-            for i in 0..<fftSize {
-                if i < synthesisMem.count {
-                    windowed[i] += synthesisMem[i]
-                }
+            for i in 0..<min(fftSize, synthesisMem.count) {
+                windowed[i] += synthesisMem[i]
             }
 
             // Copy hop-size samples to output
+            let outStart = frame * hopSize
             for i in 0..<hopSize {
                 if outStart + i < outputLen {
                     output[outStart + i] = windowed[i]
                 }
             }
 
-            // Update synthesis memory (remaining overlap)
+            // Update synthesis memory
             let overlapSize = fftSize - hopSize
             synthesisMem = Array(windowed[hopSize..<fftSize])
-            // Pad to full overlap size if needed
             if synthesisMem.count < overlapSize {
                 synthesisMem.append(contentsOf: [Float](repeating: 0, count: overlapSize - synthesisMem.count))
             }
