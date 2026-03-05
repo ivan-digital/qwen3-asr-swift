@@ -60,6 +60,97 @@ final class PersonaPlexTests: XCTestCase {
         XCTAssertEqual(cfg.audioTopK, 250)
         XCTAssertEqual(cfg.textTemp, 0.7)
         XCTAssertEqual(cfg.textTopK, 25)
+        XCTAssertEqual(cfg.audioRepetitionPenalty, 1.2)
+        XCTAssertEqual(cfg.textRepetitionPenalty, 1.2)
+        XCTAssertEqual(cfg.repetitionWindow, 30)
+        XCTAssertEqual(cfg.silenceEarlyStopFrames, 15)
+    }
+
+    func testSamplingConfigCustom() {
+        let cfg = PersonaPlexSamplingConfig(
+            audioTemp: 0.6, audioTopK: 100, textTemp: 0.5, textTopK: 10,
+            audioRepetitionPenalty: 1.5, textRepetitionPenalty: 1.3,
+            repetitionWindow: 50, silenceEarlyStopFrames: 0
+        )
+        XCTAssertEqual(cfg.audioTemp, 0.6)
+        XCTAssertEqual(cfg.textRepetitionPenalty, 1.3)
+        XCTAssertEqual(cfg.silenceEarlyStopFrames, 0)
+    }
+
+    // MARK: - Text Repetition Penalty Tests
+
+    func testTextRepetitionPenaltyArgmax() {
+        let logits = MLXArray([1.0, 10.0, 2.0, 3.0] as [Float]).reshaped([1, 4])
+        let token = sampleTextWithPenalty(
+            logits: logits, temperature: 0, topK: 0,
+            pastTokens: [], penalty: 1.2
+        )
+        eval(token)
+        XCTAssertEqual(token[0].item(Int32.self), 1, "No history → argmax at index 1")
+    }
+
+    func testTextRepetitionPenaltyReducesRepeats() {
+        let logits = MLXArray([1.0, 5.0, 4.8, 3.0] as [Float]).reshaped([1, 4])
+        var counts = [Int32: Int]()
+        for _ in 0..<50 {
+            let token = sampleTextWithPenalty(
+                logits: logits, temperature: 0.8, topK: 4,
+                pastTokens: [1, 1, 1, 1, 1], penalty: 2.0
+            )
+            eval(token)
+            let val = token[0].item(Int32.self)
+            counts[val, default: 0] += 1
+        }
+        let nonOneCount = counts.filter { $0.key != 1 }.values.reduce(0, +)
+        XCTAssertGreaterThan(nonOneCount, 0, "Penalty should allow other tokens to be sampled")
+    }
+
+    func testTextRepetitionPenaltyDisabled() {
+        let logits = MLXArray([1.0, 10.0, 2.0, 3.0] as [Float]).reshaped([1, 4])
+        let token = sampleTextWithPenalty(
+            logits: logits, temperature: 0, topK: 0,
+            pastTokens: [1, 1, 1], penalty: 1.0
+        )
+        eval(token)
+        XCTAssertEqual(token[0].item(Int32.self), 1, "Penalty 1.0 should not change argmax")
+    }
+
+    // MARK: - SentencePiece Decoder Tests
+
+    func testSentencePieceDecoderLoad() throws {
+        let modelId = "aufklarer/PersonaPlex-7B-MLX-4bit"
+        let cacheDir: URL
+        do {
+            cacheDir = try HuggingFaceDownloader.getCacheDirectory(for: modelId)
+        } catch {
+            throw XCTSkip("Cannot resolve cache directory")
+        }
+
+        let spmPath = cacheDir.appendingPathComponent("tokenizer_spm_32k_3.model").path
+        guard FileManager.default.fileExists(atPath: spmPath) else {
+            throw XCTSkip("SentencePiece model not cached at \(spmPath)")
+        }
+
+        let decoder = try SentencePieceDecoder(modelPath: spmPath)
+
+        let padOnly = decoder.decode([3, 3, 3])
+        XCTAssertEqual(padOnly, "")
+
+        let systemTokens = TemporalTransformerConfig.defaultSystemPromptTokens
+        let decoded = decoder.decode(systemTokens)
+        XCTAssertFalse(decoded.isEmpty, "System prompt tokens should decode to non-empty text")
+        XCTAssertTrue(decoded.lowercased().contains("helpful"), "Decoded text should contain 'helpful': got '\(decoded)'")
+    }
+
+    // MARK: - Silence Early Stop Config Tests
+
+    func testSilenceTokensAreValid() {
+        let card = TemporalTransformerConfig.default.card
+        for tok in TemporalTransformerConfig.silenceTokens {
+            XCTAssertGreaterThanOrEqual(tok, 0)
+            XCTAssertLessThan(Int(tok), card, "Silence token \(tok) exceeds vocab size \(card)")
+        }
+        XCTAssertEqual(TemporalTransformerConfig.silenceTokens.count, 8)
     }
 
     func testDelayPattern() {
