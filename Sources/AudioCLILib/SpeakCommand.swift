@@ -33,6 +33,9 @@ public struct SpeakCommand: ParsableCommand {
     @Option(name: .long, help: "[qwen3] Style instruction (requires CustomVoice model)")
     public var instruct: String?
 
+    @Option(name: .long, help: "[qwen3] Reference audio file for voice cloning (Base model)")
+    public var voiceSample: String?
+
     @Option(name: .long, help: "[qwen3] Model variant: base (default), customVoice, or full HF model ID")
     public var model: String = "base"
 
@@ -259,14 +262,30 @@ public struct SpeakCommand: ParsableCommand {
         var info = "Synthesizing: \"\(text)\""
         if let spk = speaker { info += " [speaker: \(spk)]" }
         if let inst = instruct { info += " [instruct: \(inst)\(instructIsDefault ? " (default)" : "")]" }
+        if let vs = voiceSample { info += " [voice clone: \(vs)]" }
         print(info)
 
-        let audio = model.synthesize(
-            text: text,
-            language: language,
-            speaker: speaker,
-            instruct: instruct,
-            sampling: config)
+        let audio: [Float]
+        if let voiceSamplePath = voiceSample {
+            // Voice cloning mode
+            let refURL = URL(fileURLWithPath: voiceSamplePath)
+            let refSamples = try AudioFileLoader.load(url: refURL, targetSampleRate: 24000)
+            print("  Reference audio: \(refSamples.count) samples, \(String(format: "%.1f", Double(refSamples.count) / 24000.0))s")
+
+            audio = model.synthesizeWithVoiceClone(
+                text: text,
+                referenceAudio: refSamples,
+                referenceSampleRate: 24000,
+                language: language,
+                sampling: config)
+        } else {
+            audio = model.synthesize(
+                text: text,
+                language: language,
+                speaker: speaker,
+                instruct: instruct,
+                sampling: config)
+        }
 
         guard !audio.isEmpty else {
             print("Error: No audio generated")

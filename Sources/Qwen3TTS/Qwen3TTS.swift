@@ -32,6 +32,9 @@ public class Qwen3TTSModel {
     public let codePredictor: CodePredictorModel
     public let codecDecoder: SpeechTokenizerDecoder
 
+    /// ECAPA-TDNN speaker encoder for voice cloning (Base model only)
+    public let speakerEncoder: SpeakerEncoder
+
     /// Speaker configuration parsed from config.json (nil for Base model, populated for CustomVoice)
     public private(set) var speakerConfig: SpeakerConfig?
 
@@ -66,6 +69,7 @@ public class Qwen3TTSModel {
         self.talker = TalkerModel(config: config.talker)
         self.codePredictor = CodePredictorModel(config: config.codePredictor)
         self.codecDecoder = SpeechTokenizerDecoder(config: config.speechTokenizerDecoder)
+        self.speakerEncoder = SpeakerEncoder()
     }
 
     public func setTokenizer(_ tokenizer: Qwen3Tokenizer) {
@@ -139,6 +143,91 @@ public class Qwen3TTSModel {
 
         let audioDur = Double(waveform.count) / 24000.0
         print("  Timing: embed=\(String(format: "%.3f", t1-t0))s | " +
+              "generate=\(String(format: "%.3f", t2-t1))s (\(numFrames) steps, " +
+              "\(String(format: "%.0f", (t2-t1)/Double(numFrames)*1000))ms/step) | " +
+              "decode=\(String(format: "%.3f", t3-t2))s | " +
+              "total=\(String(format: "%.3f", t3-t0))s | " +
+              "audio=\(String(format: "%.2f", audioDur))s | " +
+              "RTF=\(String(format: "%.2f", (t3-t0)/audioDur))")
+
+        return waveform
+    }
+
+    // MARK: - Voice Cloning (x-vector mode)
+
+    /// Synthesize speech cloning a reference speaker's voice.
+    ///
+    /// Extracts a speaker embedding from reference audio using the ECAPA-TDNN speaker encoder,
+    /// then injects it into the codec prefix embedding between the think tokens and pad/bos.
+    ///
+    /// - Parameters:
+    ///   - text: Input text to synthesize
+    ///   - referenceAudio: Reference speaker audio samples (any sample rate, will be resampled to 24kHz)
+    ///   - referenceSampleRate: Sample rate of reference audio
+    ///   - language: Language tag (e.g., "english", "chinese")
+    ///   - sampling: Sampling configuration
+    /// - Returns: Audio samples at 24kHz
+    public func synthesizeWithVoiceClone(
+        text: String,
+        referenceAudio: [Float],
+        referenceSampleRate: Int = 24000,
+        language: String = "english",
+        sampling: SamplingConfig = .default
+    ) -> [Float] {
+        guard let tokenizer = tokenizer else {
+            fatalError("Tokenizer not loaded. Call setTokenizer() first.")
+        }
+
+        guard let langId = CodecTokens.languageId(for: language) else {
+            print("Warning: Unknown language '\(language)', defaulting to English")
+            return synthesizeWithVoiceClone(
+                text: text, referenceAudio: referenceAudio,
+                referenceSampleRate: referenceSampleRate, language: "english", sampling: sampling)
+        }
+
+        let t0 = CFAbsoluteTimeGetCurrent()
+
+        // Extract speaker embedding from reference audio
+        let mels = SpeakerMel.compute(audio: referenceAudio, sampleRate: referenceSampleRate)
+        let speakerEmbed = speakerEncoder(mels)  // [1, 1024]
+        eval(speakerEmbed)
+        print("  Speaker embedding extracted: \(speakerEmbed.shape)")
+
+        // Stage 1: Prepare text tokens and codec prefix (no speaker token ID — using embedding)
+        let textTokens = prepareTextTokens(text: text, tokenizer: tokenizer)
+        let codecPrefixTokens = buildCodecPrefix(languageId: langId)
+
+        // Stage 2: Build input embeddings with speaker embedding injection
+        let (prefillEmbeds, trailingTextHidden, ttsPadEmbed) = buildPrefillEmbeddings(
+            textTokens: textTokens, codecPrefixTokens: codecPrefixTokens,
+            speakerEmbedding: speakerEmbed)
+
+        eval(prefillEmbeds, trailingTextHidden, ttsPadEmbed)
+        let t1 = CFAbsoluteTimeGetCurrent()
+
+        // Stage 3: Autoregressive generation with per-step code predictor
+        let (allCodebooks, numFrames) = generateWithCodePredictor(
+            prefillEmbeds: prefillEmbeds,
+            trailingTextHidden: trailingTextHidden,
+            ttsPadEmbed: ttsPadEmbed,
+            sampling: sampling)
+
+        eval(allCodebooks)
+        let t2 = CFAbsoluteTimeGetCurrent()
+
+        guard numFrames > 0 else {
+            print("Warning: Talker generated no tokens")
+            return []
+        }
+
+        // Stage 4: Codec decode to waveform
+        let outputSamples = numFrames * 1920
+        print("  Decoding \(numFrames) frames -> \(outputSamples) samples (\(String(format: "%.1f", Double(outputSamples) / 24000.0))s)...")
+        let waveform = codecDecoder.decode(codes: allCodebooks)
+        let t3 = CFAbsoluteTimeGetCurrent()
+
+        let audioDur = Double(waveform.count) / 24000.0
+        print("  Voice clone timing: embed=\(String(format: "%.3f", t1-t0))s | " +
               "generate=\(String(format: "%.3f", t2-t1))s (\(numFrames) steps, " +
               "\(String(format: "%.0f", (t2-t1)/Double(numFrames)*1000))ms/step) | " +
               "decode=\(String(format: "%.3f", t3-t2))s | " +
@@ -1165,7 +1254,8 @@ public class Qwen3TTSModel {
     /// trailing_text = concat([text_embed[:, 4:-5, :], tts_eos_embed], axis=1)
     /// ```
     private func buildPrefillEmbeddings(
-        textTokens: [Int], codecPrefixTokens: [Int32], instructTokens: [Int]? = nil
+        textTokens: [Int], codecPrefixTokens: [Int32], instructTokens: [Int]? = nil,
+        speakerEmbedding: MLXArray? = nil
     ) -> (prefillEmbeds: MLXArray, trailingTextHidden: MLXArray, ttsPadEmbed: MLXArray) {
         let hiddenSize = config.talker.hiddenSize
 
@@ -1175,7 +1265,16 @@ public class Qwen3TTSModel {
 
         // Embed codec prefix tokens
         let codecArray = MLXArray(codecPrefixTokens).expandedDimensions(axis: 0)  // [1, codecLen]
-        let codecEmbeds = talker.embedCodec(codecArray)  // [1, codecLen, hiddenSize]
+        var codecEmbeds = talker.embedCodec(codecArray)  // [1, codecLen, hiddenSize]
+
+        // Voice cloning: inject speaker embedding between think tokens and pad/bos
+        // Python: cat([codec_embed[:,:4,:], speaker_embed.view(1,1,-1), codec_embed[:,4:,:]])
+        if let spkEmbed = speakerEmbedding {
+            let spkEmbedReshaped = spkEmbed.reshaped([1, 1, hiddenSize])  // [1, 1, 1024]
+            let part0 = codecEmbeds[0..., 0..<4, 0...]  // [think, think_bos, lang, think_eos]
+            let part1 = codecEmbeds[0..., 4..., 0...]    // [pad, bos]
+            codecEmbeds = concatenated([part0, spkEmbedReshaped, part1], axis: 1)  // [1, 7, 1024]
+        }
 
         // TTS special token embeddings (text-side)
         let ttsPadTokens = MLXArray([Int32(CodecTokens.ttsPad)]).expandedDimensions(axis: 0)
@@ -1186,7 +1285,7 @@ public class Qwen3TTSModel {
         let ttsBosEmbed = talker.embedText(ttsBosTokens)  // [1, 1, hiddenSize]
         let ttsEosEmbed = talker.embedText(ttsEosTokens)  // [1, 1, hiddenSize]
 
-        let codecLen = codecPrefixTokens.count  // 6
+        let codecLen = codecEmbeds.dim(1)  // 6 without speaker, 7 with speaker
 
         // Text overlay for codec prefix:
         // pad_count = codecLen - 2 (the last 2 positions are: tts_bos overlay + first_text+codec_bos)
@@ -1481,10 +1580,12 @@ public extension Qwen3TTSModel {
             model.setTokenizer(tokenizer)
         }
 
-        // Load Talker + Code Predictor weights (single load of safetensors)
+        // Load Talker + Code Predictor + Speaker Encoder weights (single safetensors load)
         progressHandler?(0.7, "Loading TTS model weights...")
         try TTSWeightLoader.loadTalkerAndCodePredictorWeights(
             talker: model.talker, codePredictor: model.codePredictor, from: mainCacheDir)
+        try TTSWeightLoader.loadSpeakerEncoderWeights(
+            into: model.speakerEncoder, from: mainCacheDir)
 
         // Load Speech Tokenizer Decoder weights
         progressHandler?(0.85, "Loading speech tokenizer decoder...")

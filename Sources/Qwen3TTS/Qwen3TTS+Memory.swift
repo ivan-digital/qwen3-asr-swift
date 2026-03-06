@@ -8,6 +8,7 @@ extension Qwen3TTSModel: ModelMemoryManageable {
         talker.clearParameters()
         codePredictor.clearParameters()
         codecDecoder.clearParameters()
+        speakerEncoder.clearParameters()
         _isLoaded = false
     }
 
@@ -16,5 +17,6 @@ extension Qwen3TTSModel: ModelMemoryManageable {
         return talker.parameterMemoryBytes()
             + codePredictor.parameterMemoryBytes()
             + codecDecoder.parameterMemoryBytes()
+            + speakerEncoder.parameterMemoryBytes()
     }
 }

@@ -4,7 +4,7 @@
 
 ## Overview
 
-Qwen3-TTS has four components: a Talker (main LM), Code Predictor (residual codebooks), Speech Tokenizer (neural audio codec), and optional Speaker Encoder (voice cloning). The Swift port currently implements the Talker, Code Predictor, and Speech Tokenizer Decoder. The Speech Tokenizer Encoder and Speaker Encoder are not yet ported.
+Qwen3-TTS has four components: a Talker (main LM), Code Predictor (residual codebooks), Speech Tokenizer (neural audio codec), and Speaker Encoder (voice cloning). The Swift port implements the Talker, Code Predictor, Speech Tokenizer Decoder, and Speaker Encoder. The Speech Tokenizer Encoder (for ICL voice cloning) is not yet ported.
 
 ```
 Text input
@@ -248,18 +248,24 @@ This is prepended before the role/text embeddings in the prefill sequence:
 [think, think_bos, language_id, think_eos, pad, bos, speaker_token]
 ```
 
-## Component D: Speaker Encoder (Not Yet Implemented)
+## Component D: Speaker Encoder
 
-> The speaker encoder is used for voice cloning in the Base model. It is not yet ported to Swift. The CustomVoice model does not need a speaker encoder — voices are selected by token ID.
-
-ECAPA-TDNN network extracting speaker embeddings from reference audio.
+ECAPA-TDNN network extracting speaker embeddings from reference audio for x-vector voice cloning. The CustomVoice model does not use the speaker encoder — voices are selected by token ID.
 
 | Parameter | Value |
 |-----------|-------|
-| Input | 128-bin mel spectrogram (24kHz, n_fft=1024) |
+| Input | 128-bin mel spectrogram (24kHz, n_fft=1024, hop=256) |
 | Output | 1024-dim speaker embedding |
-| Architecture | TimeDelayNet -> Res2Net x4 -> Squeeze-Excitation -> AttentiveStatisticsPooling |
+| Architecture | TDNN(128→512) → 3x SE-Res2Net(512) → MFA(1536) → ASP → FC(3072→1024) |
 | Channels | [512, 512, 512, 512, 1536] |
+| Weights | 76 tensors in `speaker_encoder.*` from model.safetensors |
+| File | `Sources/Qwen3TTS/SpeakerEncoder.swift` |
+
+The speaker embedding is injected between the think tokens and pad/bos in the codec prefix:
+```
+Without cloning: [think, think_bos, lang_id, think_eos, pad, bos]
+With cloning:    [think, think_bos, lang_id, think_eos, SPEAKER_EMBED, pad, bos]
+```
 
 ## Generation Config
 
@@ -276,7 +282,7 @@ ECAPA-TDNN network extracting speaker embeddings from reference audio.
 
 | File                                 | Unquantized | 4-bit Quantized  | Purpose                                   |
 | ------------------------------------ | ----------- | ---------------- | ----------------------------------------- |
-| `model.safetensors`                  | 1.83 GB     | 977 MB           | Talker + Code Predictor + text embeddings |
+| `model.safetensors`                  | 1.83 GB     | 977 MB           | Talker + Code Predictor + Speaker Encoder + text embeddings |
 | `speech_tokenizer/model.safetensors` | 682 MB      | 651 MB (float32) | Audio codec (encoder + decoder + RVQ)     |
 | `config.json`                        | 4.5 kB      | 4.5 kB           | Main model config                         |
 | `speech_tokenizer/config.json`       | 2.3 kB      | 2.3 kB           | Codec config                              |
