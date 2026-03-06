@@ -16,17 +16,20 @@ public class ParakeetASRModel {
     /// Default HuggingFace model ID.
     public static let defaultModelId = "aufklarer/Parakeet-TDT-v3-CoreML-INT4"
 
+    /// Whether the model is loaded and ready for inference.
+    var _isLoaded = true
+
     private let melPreprocessor: MelPreprocessor
-    private let encoder: MLModel
-    private let decoder: MLModel
-    private let joint: MLModel
+    var encoder: MLModel?
+    var decoder: MLModel?
+    var joint: MLModel?
     private let vocabulary: ParakeetVocabulary
 
     private init(
         config: ParakeetConfig,
-        encoder: MLModel,
-        decoder: MLModel,
-        joint: MLModel,
+        encoder: MLModel?,
+        decoder: MLModel?,
+        joint: MLModel?,
         vocabulary: ParakeetVocabulary
     ) {
         self.config = config
@@ -86,7 +89,7 @@ public class ParakeetASRModel {
         let encodedLength = encodedLengthArray[0].intValue
 
         // Step 3: TDT greedy decode
-        let tdtDecoder = TDTGreedyDecoder(config: config, decoder: decoder, joint: joint)
+        let tdtDecoder = TDTGreedyDecoder(config: config, decoder: decoder!, joint: joint!)
         let tDec0 = CFAbsoluteTimeGetCurrent()
         let tokenIds = try tdtDecoder.decode(encoded: encoded, encodedLength: encodedLength)
         let tDec1 = CFAbsoluteTimeGetCurrent()
@@ -151,7 +154,7 @@ public class ParakeetASRModel {
             "mel": MLFeatureValue(multiArray: mel),
             "length": MLFeatureValue(multiArray: lengthArray),
         ])
-        return try encoder.prediction(from: input)
+        return try encoder!.prediction(from: input)
     }
 
     // MARK: - Model Loading

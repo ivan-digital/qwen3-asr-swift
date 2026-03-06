@@ -20,8 +20,11 @@ public final class SpeechEnhancer {
     /// Native sample rate (48kHz)
     public static let sampleRate = 48000
 
+    /// Whether the model is loaded and ready for inference.
+    var _isLoaded = true
+
     let config: DeepFilterNet3Config
-    let network: DeepFilterNet3Network
+    var network: DeepFilterNet3Network?
     let stft: STFTProcessor
 
     // ERB filterbank matrices
@@ -142,6 +145,7 @@ public final class SpeechEnhancer {
         }
 
         // Run neural network (single pass — GRU state is sequential, can't be chunked)
+        guard let network else { throw DeepFilterNet3Network.DeepFilterNet3Error.predictionFailed }
         let (erbMaskArray, coefsArray) = try network.predict(featErb: erbInput, featSpec: specInput)
 
         // Extract ERB mask [1, 1, T, 32] — handle float16 output from Core ML

@@ -36,6 +36,9 @@ public final class CosyVoiceTTSModel {
     let hifigan: HiFiGANGenerator
     let tokenizer: Qwen3Tokenizer
 
+    /// Whether the model weights are loaded and ready for inference.
+    var _isLoaded = true
+
     /// Initialize with config
     public init(config: CosyVoiceConfig = .default) {
         self.config = config

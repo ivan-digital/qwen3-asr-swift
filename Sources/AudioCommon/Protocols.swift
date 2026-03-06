@@ -1,5 +1,39 @@
 import Foundation
 
+// MARK: - Model Memory Management
+
+/// Memory statistics for a loaded model.
+public struct ModelMemoryStats: Sendable {
+    /// Estimated weight memory in bytes
+    public let weightMemory: Int
+    /// Current active GPU memory in bytes (MLX only)
+    public let activeMemory: Int
+
+    public init(weightMemory: Int, activeMemory: Int = 0) {
+        self.weightMemory = weightMemory
+        self.activeMemory = activeMemory
+    }
+}
+
+/// A model that supports explicit memory management.
+///
+/// Call `unload()` to release model weights and free GPU memory.
+/// After unloading, the model cannot be used for inference until re-loaded.
+public protocol ModelMemoryManageable: AnyObject {
+    /// Whether the model is currently loaded and ready for inference.
+    var isLoaded: Bool { get }
+
+    /// Release model weights and free GPU memory.
+    ///
+    /// After calling this, `isLoaded` returns false and inference methods will fail.
+    /// To use the model again, create a new instance via `fromPretrained()`.
+    func unload()
+
+    /// Estimated memory footprint of the loaded model weights in bytes.
+    /// Returns 0 if the model is not loaded.
+    var memoryFootprint: Int { get }
+}
+
 // MARK: - Unified Audio Chunk
 
 /// A chunk of audio produced during streaming synthesis or generation.

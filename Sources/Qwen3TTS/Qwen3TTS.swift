@@ -38,6 +38,9 @@ public class Qwen3TTSModel {
     /// Available speaker names (empty for Base model)
     public var availableSpeakers: [String] { speakerConfig?.availableSpeakers ?? [] }
 
+    /// Whether the model weights are loaded and ready for inference.
+    var _isLoaded = true
+
     private var tokenizer: Qwen3Tokenizer?
 
     /// Compiled talker generation step (28-layer transformer + codec head) for kernel fusion.
