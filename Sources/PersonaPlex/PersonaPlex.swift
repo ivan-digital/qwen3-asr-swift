@@ -936,7 +936,7 @@ public final class PersonaPlexModel: Module {
         verbose: Bool = false
     ) -> AsyncThrowingStream<[Float], Error> {
         AsyncThrowingStream { continuation in
-            Task {
+            let task = Task {
                 do {
                     let startTime = CFAbsoluteTimeGetCurrent()
                     // 1920 samples @ 24kHz = one 80ms Mimi frame
@@ -1231,6 +1231,10 @@ public final class PersonaPlexModel: Module {
                     continuation.finish(throwing: error)
                 }
             }
+            // Cancel the inference task when the stream consumer stops (e.g. user taps stop).
+            // Without this, the unstructured Task above outlives the consumer and keeps
+            // running, causing multiple concurrent inference tasks on subsequent sessions.
+            continuation.onTermination = { _ in task.cancel() }
         }
     }
 
