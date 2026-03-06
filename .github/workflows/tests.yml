@@ -21,7 +21,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .build
-          key: swiftpm-${{ runner.os }}-${{ hashFiles('**/Package.resolved') }}
+          key: swiftpm-${{ runner.os }}-${{ hashFiles('Package.swift') }}
           restore-keys: swiftpm-${{ runner.os }}-
 
       - name: Build release
