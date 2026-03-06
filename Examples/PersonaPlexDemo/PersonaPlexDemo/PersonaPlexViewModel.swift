@@ -9,6 +9,16 @@ enum ConversationState: String {
     case listening
     case processing
     case speaking
+    case fullduplex
+}
+
+/// Thread-safe bool shared between the main actor and the audio capture thread.
+private final class AgentSpeakingTracker: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = false
+
+    func set(_ speaking: Bool) { lock.withLock { value = speaking } }
+    var isSpeaking: Bool { lock.withLock { value } }
 }
 
 @Observable
@@ -27,6 +37,7 @@ final class PersonaPlexViewModel {
 
     var selectedVoice: PersonaPlexVoice = .NATM0
     var maxSteps: Int = 75
+    var isFullDuplexMode: Bool = false
 
     // Combined assistant + focused prompt tokens (SentencePiece):
     // "<system> You are a helpful assistant. Answer questions clearly and concisely.
@@ -49,6 +60,7 @@ final class PersonaPlexViewModel {
     private var spmDecoder: SentencePieceDecoder?
     private var vadModel: SileroVADModel?
     private var conversationTask: Task<Void, Never>?
+    private let agentSpeakingTracker = AgentSpeakingTracker()
 
     // MARK: - Computed
 
@@ -120,7 +132,12 @@ final class PersonaPlexViewModel {
 
     func toggleConversation() {
         if conversationState == .inactive {
-            startListening()
+            if isFullDuplexMode {
+                conversationState = .fullduplex
+                conversationTask = Task { await startFullDuplex() }
+            } else {
+                startListening()
+            }
         } else {
             stopConversation()
         }
@@ -155,6 +172,77 @@ final class PersonaPlexViewModel {
         player.stop()
         conversationState = .inactive
         debugInfo = ""
+    }
+
+    // MARK: - Full-Duplex
+
+    private func startFullDuplex() async {
+        guard let model else {
+            errorMessage = "Model not loaded."
+            conversationState = .inactive
+            return
+        }
+
+        errorMessage = nil
+        debugInfo = "Full-duplex active..."
+        agentSpeakingTracker.set(false)
+
+        // 5-second ring buffer: enough headroom if inference runs long
+        let ringBuffer = AudioRingBuffer(capacity: 24000 * 5)
+        let tracker = agentSpeakingTracker
+
+        do {
+            try recorder?.startContinuous(buffer: ringBuffer) {
+                tracker.isSpeaking
+            }
+        } catch {
+            errorMessage = "Mic error: \(error.localizedDescription)"
+            conversationState = .inactive
+            return
+        }
+
+        do {
+            try player.start(sampleRate: 24000)
+        } catch {
+            _ = recorder?.stopRecording()
+            errorMessage = "Audio output error: \(error.localizedDescription)"
+            conversationState = .inactive
+            return
+        }
+
+        let voice = selectedVoice
+        let promptTokens = systemPromptTokens
+
+        // All inference runs on one detached task for MLX thread safety
+        conversationTask = Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self else { return }
+
+            let stream = model.respondRealtime(
+                voice: voice,
+                systemPromptTokens: promptTokens,
+                userAudioBuffer: ringBuffer
+            )
+
+            do {
+                for try await agentSamples in stream {
+                    // Simple echo suppression: detect if agent is producing audible output
+                    let rms = agentSamples.map { $0 * $0 }.reduce(0, +)
+                        / Float(max(agentSamples.count, 1))
+                    tracker.set(sqrt(rms) > 0.01)
+
+                    // Schedule playback on main actor (AVFoundation is thread-safe for scheduleBuffer)
+                    await MainActor.run { [weak self] in
+                        self?.player.scheduleChunk(agentSamples)
+                    }
+                }
+            } catch {
+                // Inference error — fall through to cleanup
+            }
+
+            await MainActor.run { [weak self] in
+                self?.stopConversation()
+            }
+        }
     }
 
     // MARK: - Process & Respond

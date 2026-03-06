@@ -1,4 +1,5 @@
 import AVFoundation
+import PersonaPlex
 import SpeechVAD
 
 @Observable
@@ -133,6 +134,67 @@ final class AudioRecorder {
         } catch {
             inputNode.removeTap(onBus: 0)
         }
+    }
+
+    /// Start continuous capture, writing all mic audio directly into `buffer`.
+    ///
+    /// No VAD logic — the full-duplex model handles turn-taking internally.
+    /// When `isMuted()` returns true, zeros are written instead of real mic samples
+    /// to prevent speaker→mic echo feedback.
+    func startContinuous(buffer: AudioRingBuffer, isMuted: @escaping () -> Bool = { false }) throws {
+        let engine = AVAudioEngine()
+        let inputNode = engine.inputNode
+        let hwFormat = inputNode.outputFormat(forBus: 0)
+
+        guard let targetFormat = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: targetSampleRate,
+            channels: 1,
+            interleaved: false
+        ) else { throw NSError(domain: "AudioRecorder", code: -1) }
+
+        guard let converter = AVAudioConverter(from: hwFormat, to: targetFormat) else {
+            throw NSError(domain: "AudioRecorder", code: -2)
+        }
+
+        inputNode.installTap(onBus: 0, bufferSize: 1024, format: hwFormat) { [weak self] buf, _ in
+            guard let self else { return }
+
+            let frameCount = AVAudioFrameCount(
+                Double(buf.frameLength) * self.targetSampleRate / hwFormat.sampleRate)
+            guard frameCount > 0,
+                  let converted = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: frameCount)
+            else { return }
+
+            var error: NSError?
+            converter.convert(to: converted, error: &error) { _, outStatus in
+                outStatus.pointee = .haveData
+                return buf
+            }
+            if error != nil { return }
+
+            guard let channelData = converted.floatChannelData?[0] else { return }
+            let count = Int(converted.frameLength)
+            let ptr = UnsafeBufferPointer(start: channelData, count: count)
+            let chunk = Array(ptr)
+
+            // RMS for visual level meter
+            var sum: Float = 0
+            for s in chunk { sum += s * s }
+            let rms = sqrt(sum / max(Float(count), 1))
+            DispatchQueue.main.async { self.audioLevel = rms }
+
+            // Echo suppression: write zeros while agent is speaking
+            if isMuted() {
+                buffer.write([Float](repeating: 0, count: count))
+            } else {
+                buffer.write(chunk)
+            }
+        }
+
+        try engine.start()
+        audioEngine = engine
+        isRecording = true
     }
 
     func stopRecording() -> [Float] {
