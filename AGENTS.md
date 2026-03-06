@@ -57,7 +57,7 @@ The metallib step compiles MLX Metal shaders — without it, inference runs ~5x 
 
 Safe tests (no GPU/model download required):
 ```bash
-swift test --filter "DERScoringTests|SpectralClusteringTests|Qwen3TTSConfigTests|SamplingTests|PersonaPlexTests|ForcedAlignerTests/testText|ForcedAlignerTests/testTimestamp"
+make test
 ```
 
 Full test suite (requires metallib + model downloads):
