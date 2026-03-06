@@ -213,6 +213,10 @@ final class PersonaPlexViewModel {
         let voice = selectedVoice
         let promptTokens = systemPromptTokens
 
+        // Capture player ref so the detached task can call scheduleChunk directly
+        // without bouncing to MainActor each frame (AVAudioPlayerNode.scheduleBuffer is thread-safe).
+        let playerRef = player
+
         // All inference runs on one detached task for MLX thread safety
         conversationTask = Task.detached(priority: .userInitiated) { [weak self] in
             guard let self else { return }
@@ -220,8 +224,14 @@ final class PersonaPlexViewModel {
             let stream = model.respondRealtime(
                 voice: voice,
                 systemPromptTokens: promptTokens,
-                userAudioBuffer: ringBuffer
+                userAudioBuffer: ringBuffer,
+                verbose: true
             )
+
+            // Pre-buffer a few frames before playback starts to absorb inference jitter.
+            let prebufferCount = 3  // ~240ms cushion
+            var prebuffer: [[Float]] = []
+            prebuffer.reserveCapacity(prebufferCount)
 
             do {
                 for try await agentSamples in stream {
@@ -230,11 +240,18 @@ final class PersonaPlexViewModel {
                         / Float(max(agentSamples.count, 1))
                     tracker.set(sqrt(rms) > 0.01)
 
-                    // Schedule playback on main actor (AVFoundation is thread-safe for scheduleBuffer)
-                    await MainActor.run { [weak self] in
-                        self?.player.scheduleChunk(agentSamples)
+                    if prebuffer.count < prebufferCount {
+                        prebuffer.append(agentSamples)
+                        if prebuffer.count == prebufferCount {
+                            for frame in prebuffer { playerRef.scheduleChunk(frame) }
+                            prebuffer = []
+                        }
+                    } else {
+                        playerRef.scheduleChunk(agentSamples)
                     }
                 }
+                // Flush any remaining pre-buffered frames
+                for frame in prebuffer { playerRef.scheduleChunk(frame) }
             } catch {
                 // Inference error — fall through to cleanup
             }
