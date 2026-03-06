@@ -13,7 +13,7 @@ concurrency:
 jobs:
   build-and-test:
     runs-on: macos-15
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -21,7 +21,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .build
-          key: swiftpm-${{ runner.os }}-${{ hashFiles('Package.swift') }}
+          key: swiftpm-${{ runner.os }}-${{ hashFiles('**/Package.resolved') }}
           restore-keys: swiftpm-${{ runner.os }}-
 
       - name: Build release
@@ -32,5 +32,5 @@ jobs:
 
       - name: Run tests
         run: >
-          swift test --filter
+          swift test -c release --disable-sandbox --filter
           "WAVParsingSecurityTests|DownloadSecurityTests|MetallibScriptTests|DERScoringTests|SpectralClusteringTests|Qwen3TTSConfigTests|CosyVoiceTTSConfigTests|SamplingTests|PersonaPlexTests/testDefaultConfig|PersonaPlexTests/testDepformerConfig|PersonaPlexTests/testMimiConfig|PersonaPlexTests/testSamplingConfig|PersonaPlexTests/testEntropyConfig|PersonaPlexTests/testAudioChunk|PersonaPlexTests/testSilenceTokens|PersonaPlexTests/testDelayPattern|PersonaPlexTests/testVoicePresets|PersonaPlexTests/testHiddenScale|PersonaPlexTests/testDepformerDim|ForcedAlignerTests/testText|ForcedAlignerTests/testTimestamp|ForcedAlignerTests/testLIS|SileroVADTests/testSilero|SileroVADTests/testReflection|SileroVADTests/testProcess|SileroVADTests/testReset|SileroVADTests/testDetect|SileroVADTests/testStreaming|SileroVADTests/testVADEvent"
