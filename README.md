@@ -297,6 +297,26 @@ CLI:
 .build/release/audio speak --model customVoice --list-speakers
 ```
 
+### Voice Cloning (Base model)
+
+Clone a speaker's voice from a reference audio file:
+
+```swift
+let refAudio = try AudioFileLoader.load(url: referenceURL, targetSampleRate: 24000)
+let audio = model.synthesizeWithVoiceClone(
+    text: "Hello world",
+    referenceAudio: refAudio,
+    referenceSampleRate: 24000,
+    language: "english"
+)
+```
+
+CLI:
+
+```bash
+.build/release/audio speak "Hello world" --voice-sample reference.wav --output cloned.wav
+```
+
 ### Tone / Style Instructions (CustomVoice only)
 
 The CustomVoice model accepts a natural language `instruct` parameter to control speaking style, tone, emotion, and pacing. The instruction is prepended to the model input in ChatML format.

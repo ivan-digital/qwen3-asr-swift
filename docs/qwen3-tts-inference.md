@@ -154,7 +154,7 @@ Audio waveform [1, T*1920, 1] at 24kHz
 | RTF (long text) | ~0.7 | ~0.02 |
 | Latency (6s audio) | 3.9s | 0.17s |
 | Speech quality | Natural, expressive | Robotic, monotone |
-| Voice cloning | Planned | No |
+| Voice cloning | Yes (x-vector) | No |
 | Languages | EN/ZH/DE/JA/ES/FR/KO/RU/IT | 60+ |
 | On-device | Yes (MLX) | Yes (AVFoundation) |
 | Model size | ~1.7 GB | Built-in |
@@ -194,17 +194,35 @@ When `firstChunkFrames < 4` (the codec's minimum input size due to ConvNeXt kern
 | Default (3 frames) | 240ms audio | ~225ms |
 | Low-latency (1 frame) | 80ms audio | ~120ms |
 
-## Voice Cloning (Not Yet Implemented)
+## Voice Cloning
 
-> The following describes the reference Python implementation. The Swift port does not yet support voice cloning.
+Two modes are possible. The **x-vector mode** is implemented; ICL mode is planned.
+
+### X-Vector Mode (Implemented)
+
+Extracts a speaker embedding from reference audio and injects it into the codec prefix:
 
 ```
 Reference audio (24kHz)
     |
-    +---> Speech Tokenizer Encoder -> 16 codebook indices per frame
-    |     (prepended to generation as in-context learning)
+    +---> 128-bin Mel Spectrogram (n_fft=1024, hop=256, fmin=0, fmax=12000)
     |
     +---> Speaker Encoder (ECAPA-TDNN) -> 1024-dim x-vector
-          (injected as speaker embedding in codec prefix)
+          (injected between think tokens and pad/bos in codec prefix)
 ```
+
+**Codec prefix with speaker embedding:**
+```
+[think, think_bos, lang_id, think_eos, SPEAKER_EMBED, pad, bos]
+                                        ^^^^^^^^^^^^^^
+                                        raw 1024-dim vector
+```
+
+```bash
+.build/release/audio speak "Hello world" --voice-sample reference.wav --output cloned.wav
+```
+
+### ICL Mode (Not Yet Implemented)
+
+Uses the Speech Tokenizer Encoder to extract codec tokens from reference audio, prepended to the generation input for in-context learning. Requires porting the encoder (SEANet + transformer + RVQ encode).
 
