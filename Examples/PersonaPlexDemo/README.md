@@ -116,9 +116,7 @@ swift build -c release --disable-sandbox
 APP="/tmp/PersonaPlexDemo.app"
 mkdir -p "$APP/Contents/MacOS"
 
-# Find the built binary
-BINARY=$(find .build -name 'PersonaPlexDemo' -type f | head -1)
-cp "$BINARY" "$APP/Contents/MacOS/"
+cp .build/release/PersonaPlexDemo "$APP/Contents/MacOS/"
 
 # Copy MLX metallib (required for GPU inference)
 cp .build/release/mlx.metallib "$APP/Contents/MacOS/"
