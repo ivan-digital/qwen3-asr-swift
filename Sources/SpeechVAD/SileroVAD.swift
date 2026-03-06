@@ -40,6 +40,9 @@ public final class SileroVADModel {
     /// The inference engine in use.
     public let engine: SileroVADEngine
 
+    /// Whether the model weights are loaded and ready for inference.
+    var _isLoaded = true
+
     /// The MLX neural network (nil when using CoreML engine).
     let network: SileroVADNetwork?
 

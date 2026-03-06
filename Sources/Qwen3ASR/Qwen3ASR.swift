@@ -30,6 +30,9 @@ public class Qwen3ASRModel {
     /// Text decoder config
     public let textConfig: TextDecoderConfig
 
+    /// Whether the model weights are loaded and ready for inference.
+    var _isLoaded = true
+
     public init(
         audioConfig: Qwen3AudioEncoderConfig = .default,
         textConfig: TextDecoderConfig = .small

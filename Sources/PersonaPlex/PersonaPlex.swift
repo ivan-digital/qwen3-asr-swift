@@ -15,6 +15,9 @@ public final class PersonaPlexModel: Module {
     @ModuleInfo public var depformer: Depformer
     public let mimi: Mimi
 
+    /// Whether the model weights are loaded and ready for inference.
+    var _isLoaded = true
+
     public init(cfg: PersonaPlexConfig = .default) {
         self.cfg = cfg
         self._temporal = ModuleInfo(wrappedValue: TemporalTransformer(cfg: cfg.temporal))

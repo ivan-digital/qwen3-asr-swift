@@ -29,6 +29,9 @@ public final class PyannoteVADModel {
     /// Default HuggingFace model ID
     public static let defaultModelId = "aufklarer/Pyannote-Segmentation-MLX"
 
+    /// Whether the model weights are loaded and ready for inference.
+    var _isLoaded = true
+
     init(model: SegmentationModel, segConfig: SegmentationConfig, vadConfig: VADConfig) {
         self.model = model
         self.segConfig = segConfig

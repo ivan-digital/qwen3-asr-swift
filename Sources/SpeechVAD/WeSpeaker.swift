@@ -37,6 +37,9 @@ public final class WeSpeakerModel {
     /// The inference engine in use.
     public let engine: WeSpeakerEngine
 
+    /// Whether the model weights are loaded and ready for inference.
+    var _isLoaded = true
+
     /// The ResNet34 network (nil when using CoreML engine)
     let network: WeSpeakerNetwork?
 
@@ -45,7 +48,7 @@ public final class WeSpeakerModel {
 
     #if canImport(CoreML)
     /// CoreML compiled model (nil when using MLX engine)
-    let coremlModel: MLModel?
+    var coremlModel: MLModel?
     #endif
 
     /// Default HuggingFace model ID (MLX weights)
