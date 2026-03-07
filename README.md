@@ -2,6 +2,8 @@
 
 AI speech models for Apple Silicon, powered by [MLX Swift](https://github.com/ml-explore/mlx-swift).
 
+**[Documentation](https://soniqo.audio)** · **[Models](https://huggingface.co/aufklarer)** · **[Blog](https://blog.ivan.digital)**
+
 - **Qwen3-ASR** — Speech-to-text (automatic speech recognition)
 - **Parakeet TDT** — Speech-to-text via CoreML (Neural Engine, FastConformer + TDT decoder)
 - **Qwen3-ForcedAligner** — Word-level timestamp alignment (audio + text → timestamps)
