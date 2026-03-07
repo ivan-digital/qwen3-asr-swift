@@ -22,12 +22,6 @@ jobs:
         with:
           path: .build
           key: swiftpm-${{ runner.os }}-${{ github.repository }}-${{ hashFiles('Package.swift') }}
-          restore-keys: swiftpm-${{ runner.os }}-${{ github.repository }}-
-
-      - name: Resolve dependencies
-        run: |
-          rm -rf .build/checkouts/hummingbird
-          swift package resolve
 
       - name: Build release
         run: swift build -c release --disable-sandbox
