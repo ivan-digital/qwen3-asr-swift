@@ -50,9 +50,9 @@ public enum WeightLoader {
         print("Found \(audioTowerWeights.count) audio_tower weights")
 
         // Apply weights to each component using update(parameters:)
-        applyConv2dWeights(to: audioEncoder.conv2d1, prefix: "conv2d1", from: audioTowerWeights)
-        applyConv2dWeights(to: audioEncoder.conv2d2, prefix: "conv2d2", from: audioTowerWeights)
-        applyConv2dWeights(to: audioEncoder.conv2d3, prefix: "conv2d3", from: audioTowerWeights)
+        try applyConv2dWeights(to: audioEncoder.conv2d1, prefix: "conv2d1", from: audioTowerWeights, expectedInputChannels: 1)
+        try applyConv2dWeights(to: audioEncoder.conv2d2, prefix: "conv2d2", from: audioTowerWeights, expectedInputChannels: 480)
+        try applyConv2dWeights(to: audioEncoder.conv2d3, prefix: "conv2d3", from: audioTowerWeights, expectedInputChannels: 480)
 
         // Output linear (no bias)
         CommonWeightLoader.applyLinearWeights(to: audioEncoder.convOut, prefix: "conv_out", from: audioTowerWeights)
@@ -181,9 +181,9 @@ public enum WeightLoader {
         print("Audio tower: \(audioTowerWeights.count), Text decoder: \(textWeights.count), Classify head: \(classifyWeights.count)")
 
         // Load audio encoder weights (transpose Conv2d from PyTorch [outC,inC,kH,kW] to MLX [outC,kH,kW,inC])
-        applyConv2dWeights(to: model.audioEncoder.conv2d1, prefix: "conv2d1", from: audioTowerWeights, transposePyTorch: true)
-        applyConv2dWeights(to: model.audioEncoder.conv2d2, prefix: "conv2d2", from: audioTowerWeights, transposePyTorch: true)
-        applyConv2dWeights(to: model.audioEncoder.conv2d3, prefix: "conv2d3", from: audioTowerWeights, transposePyTorch: true)
+        try applyConv2dWeights(to: model.audioEncoder.conv2d1, prefix: "conv2d1", from: audioTowerWeights, expectedInputChannels: 1)
+        try applyConv2dWeights(to: model.audioEncoder.conv2d2, prefix: "conv2d2", from: audioTowerWeights, expectedInputChannels: 480)
+        try applyConv2dWeights(to: model.audioEncoder.conv2d3, prefix: "conv2d3", from: audioTowerWeights, expectedInputChannels: 480)
         CommonWeightLoader.applyLinearWeights(to: model.audioEncoder.convOut, prefix: "conv_out", from: audioTowerWeights)
         CommonWeightLoader.applyLayerNormWeights(to: model.audioEncoder.lnPost, prefix: "ln_post", from: audioTowerWeights)
         CommonWeightLoader.applyLinearWeights(to: model.audioEncoder.proj1, prefix: "proj1", from: audioTowerWeights)
@@ -195,23 +195,57 @@ public enum WeightLoader {
         }
         print("Applied audio encoder weights (\(model.audioEncoder.layers.count) layers)")
 
-        // Load text decoder weights
-        CommonWeightLoader.applyQuantizedEmbeddingWeights(
-            to: model.textDecoder.embedTokens,
-            prefix: "embed_tokens",
-            from: textWeights
-        )
-        CommonWeightLoader.applyRMSNormWeights(to: model.textDecoder.norm, prefix: "norm", from: textWeights)
+        if let quantized = model.textDecoder as? QuantizedTextModel {
+            CommonWeightLoader.applyQuantizedEmbeddingWeights(
+                to: quantized.embedTokens,
+                prefix: "embed_tokens",
+                from: textWeights
+            )
+            CommonWeightLoader.applyRMSNormWeights(to: quantized.norm, prefix: "norm", from: textWeights)
 
-        for (index, layer) in model.textDecoder.layers.enumerated() {
-            let prefix = "layers.\(index)"
-            applyQuantizedDecoderLayerWeights(to: layer, prefix: prefix, from: textWeights)
+            for (index, layer) in quantized.layers.enumerated() {
+                let prefix = "layers.\(index)"
+                applyQuantizedDecoderLayerWeights(to: layer, prefix: prefix, from: textWeights)
+            }
+            print("Applied quantized text decoder weights (\(quantized.layers.count) layers)")
+        } else if let floatModel = model.textDecoder as? FloatTextModel {
+            CommonWeightLoader.applyEmbeddingWeights(
+                to: floatModel.embedTokens,
+                prefix: "embed_tokens",
+                from: textWeights
+            )
+            CommonWeightLoader.applyRMSNormWeights(to: floatModel.norm, prefix: "norm", from: textWeights)
+
+            for (index, layer) in floatModel.layers.enumerated() {
+                let prefix = "layers.\(index)"
+                applyFloatDecoderLayerWeights(to: layer, prefix: prefix, from: textWeights)
+            }
+            print("Applied float text decoder weights (\(floatModel.layers.count) layers)")
+        } else {
+            throw WeightLoadingError.incompatibleWeights("Unsupported forced-aligner text decoder type")
         }
-        print("Applied text decoder weights (\(model.textDecoder.layers.count) layers)")
 
         // Load classify head (NOT quantized — regular Linear)
-        CommonWeightLoader.applyLinearWeights(to: model.classifyHead, prefix: "lm_head", from: classifyWeights)
+        applyClassifyHeadWeights(to: model.classifyHead, prefix: "lm_head", from: classifyWeights, textDecoder: model.textDecoder)
         print("Applied classify head weights")
+    }
+
+    private static func applyFloatDecoderLayerWeights(
+        to layer: FloatTextDecoderLayer,
+        prefix: String,
+        from weights: [String: MLXArray]
+    ) {
+        CommonWeightLoader.applyLinearWeights(to: layer.selfAttn.qProj, prefix: "\(prefix).self_attn.q_proj", from: weights)
+        CommonWeightLoader.applyLinearWeights(to: layer.selfAttn.kProj, prefix: "\(prefix).self_attn.k_proj", from: weights)
+        CommonWeightLoader.applyLinearWeights(to: layer.selfAttn.vProj, prefix: "\(prefix).self_attn.v_proj", from: weights)
+        CommonWeightLoader.applyLinearWeights(to: layer.selfAttn.oProj, prefix: "\(prefix).self_attn.o_proj", from: weights)
+        CommonWeightLoader.applyRMSNormWeights(to: layer.selfAttn.qNorm, prefix: "\(prefix).self_attn.q_norm", from: weights)
+        CommonWeightLoader.applyRMSNormWeights(to: layer.selfAttn.kNorm, prefix: "\(prefix).self_attn.k_norm", from: weights)
+        CommonWeightLoader.applyRMSNormWeights(to: layer.inputLayerNorm, prefix: "\(prefix).input_layernorm", from: weights)
+        CommonWeightLoader.applyRMSNormWeights(to: layer.postAttentionLayerNorm, prefix: "\(prefix).post_attention_layernorm", from: weights)
+        CommonWeightLoader.applyLinearWeights(to: layer.mlp.gateProj, prefix: "\(prefix).mlp.gate_proj", from: weights)
+        CommonWeightLoader.applyLinearWeights(to: layer.mlp.upProj, prefix: "\(prefix).mlp.up_proj", from: weights)
+        CommonWeightLoader.applyLinearWeights(to: layer.mlp.downProj, prefix: "\(prefix).mlp.down_proj", from: weights)
     }
 
     // MARK: - ASR-specific Weight Application Helpers
@@ -247,16 +281,27 @@ public enum WeightLoader {
         to conv: Conv2d,
         prefix: String,
         from weights: [String: MLXArray],
-        transposePyTorch: Bool = false
-    ) {
+        expectedInputChannels: Int
+    ) throws {
         var params: [String: NestedItem<String, MLXArray>] = [:]
 
         if let weight = weights["\(prefix).weight"] {
-            if transposePyTorch {
-                // PyTorch Conv2d: [outC, inC, kH, kW] -> MLX Conv2d: [outC, kH, kW, inC]
-                params["weight"] = .value(weight.transposed(0, 2, 3, 1))
-            } else {
-                params["weight"] = .value(weight)
+            guard weight.shape.count == 4 else {
+                throw WeightLoadingError.incompatibleWeights("\(prefix).weight must be rank-4, got \(weight.shape)")
+             }
+
+            let isPyTorchLayout = weight.dim(1) == expectedInputChannels
+            let isMLXLayout = weight.dim(3) == expectedInputChannels
+
+            switch (isPyTorchLayout, isMLXLayout) {
+                case (true, false):
+                    params["weight"] = .value(weight.transposed(0, 2, 3, 1))
+                case (false, true):
+                    params["weight"] = .value(weight)
+                default:
+                    throw WeightLoadingError.incompatibleWeights(
+                        "Could not infer Conv2d layout for \(prefix).weight with shape \(weight.shape); expected inputChannels=\(expectedInputChannels)"
+                    )
             }
         }
         if let bias = weights["\(prefix).bias"] {
@@ -266,6 +311,35 @@ public enum WeightLoader {
         if !params.isEmpty {
             conv.update(parameters: ModuleParameters(values: params))
         }
+    }
+
+    private static func applyClassifyHeadWeights(
+        to linear: Linear,
+        prefix: String,
+        from weights: [String: MLXArray],
+        textDecoder: any ForcedAlignerTextDecoding
+    ) {
+        if let qWeight = weights["\(prefix).weight"],
+           let scales = weights["\(prefix).scales"],
+           let biases = weights["\(prefix).biases"],
+           let quantized = textDecoder as? QuantizedTextModel {
+            let dequantizedWeight = dequantized(
+                qWeight,
+                scales: scales,
+                biases: biases,
+                groupSize: quantized.config.groupSize,
+                bits: quantized.config.bits
+            )
+
+            var params: [String: NestedItem<String, MLXArray>] = [
+                "weight": .value(dequantizedWeight)
+            ]
+            if let bias = weights["\(prefix).bias"] { params["bias"] = .value(bias) }
+            linear.update(parameters: ModuleParameters(values: params))
+            return
+        }
+
+        CommonWeightLoader.applyLinearWeights(to: linear, prefix: prefix, from: weights)
     }
 
     private static func applyEncoderLayerWeights(
