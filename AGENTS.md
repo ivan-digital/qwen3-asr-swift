@@ -79,3 +79,53 @@ The `audio` binary is the main entry point:
 .build/release/audio embed-speaker voice.wav           # Speaker embedding
 .build/release/audio denoise noisy.wav                 # Speech enhancement
 ```
+
+## Documentation Site
+
+The documentation is hosted at **https://soniqo.audio** (Firebase Hosting) and lives in a separate private repository: **soniqo-web**.
+
+**Whenever code changes are made in this repo, the corresponding documentation must be updated.**
+
+### What requires a docs update
+
+- New features or capabilities added
+- CLI commands added, removed, or flags changed
+- Public API changes (protocols, types, function signatures)
+- New models or model variants added
+- Performance characteristics changed
+- Build requirements or installation steps changed
+- New modules or source structure changes
+
+### Documentation site structure
+
+```
+soniqo-web/public/
+  index.html                Landing page (feature grid, performance stats)
+  getting-started/          Installation, build instructions, quick start
+  guides/
+    transcribe/             Qwen3-ASR guide
+    parakeet/               Parakeet TDT guide
+    speak/                  Qwen3-TTS guide
+    cosyvoice/              CosyVoice3 guide
+    voice-cloning/          Voice cloning guide
+    respond/                PersonaPlex guide
+    vad/                    VAD guide (Pyannote + Silero)
+    diarize/                Speaker diarization guide
+    embed-speaker/          Speaker embeddings guide
+    denoise/                Speech enhancement guide
+    align/                  Forced alignment guide
+  cli/                      CLI command reference (all flags/options)
+  api/                      Protocols and shared types
+  architecture/             Module structure, backends, weight formats
+```
+
+### Mapping: code changes → docs pages
+
+| Code change | Docs page(s) to update |
+|---|---|
+| CLI flag added/changed | `/cli/index.html` + relevant guide page |
+| New model/module | Landing page feature grid + new guide page + architecture |
+| Protocol change | `/api/index.html` |
+| Performance improvement | Landing page perf section + relevant guide |
+| Build/install change | `/getting-started/index.html` |
+| New CLI command | `/cli/index.html` + new guide page + landing page |
