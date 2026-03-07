@@ -89,7 +89,7 @@ public class Qwen3ASRModel {
     }
 
     /// Generate text from audio embeddings
-    private func generateText(
+    func generateText(
         audioEmbeds: MLXArray,
         textDecoder: QuantizedTextModel,
         language: String?,

@@ -14,7 +14,7 @@ public struct TranscribeCommand: ParsableCommand {
     @Argument(help: "Audio file to transcribe (WAV, any sample rate)")
     public var audioFile: String
 
-    @Option(name: .long, help: "ASR engine: qwen3 (default) or parakeet")
+    @Option(name: .long, help: "ASR engine: qwen3 (default), parakeet, or qwen3-coreml")
     public var engine: String = "qwen3"
 
     @Option(name: .shortAndLong, help: "[qwen3] Model: 0.6B (default), 1.7B, or full HuggingFace model ID")
@@ -36,18 +36,23 @@ public struct TranscribeCommand: ParsableCommand {
 
     public func validate() throws {
         let eng = engine.lowercased()
-        guard eng == "qwen3" || eng == "parakeet" else {
-            throw ValidationError("--engine must be 'qwen3' or 'parakeet'")
+        guard eng == "qwen3" || eng == "parakeet" || eng == "qwen3-coreml" else {
+            throw ValidationError("--engine must be 'qwen3', 'parakeet', or 'qwen3-coreml'")
         }
     }
 
     public func run() throws {
-        if engine.lowercased() == "parakeet" {
+        switch engine.lowercased() {
+        case "parakeet":
             try runParakeetTranscription()
-        } else if stream {
-            try runStreamingTranscription()
-        } else {
-            try runBatchTranscription()
+        case "qwen3-coreml":
+            try runCoreMLTranscription()
+        default:
+            if stream {
+                try runStreamingTranscription()
+            } else {
+                try runBatchTranscription()
+            }
         }
     }
 
@@ -109,6 +114,46 @@ public struct TranscribeCommand: ParsableCommand {
                 print("[\(start)s-\(end)s] [\(tag)] \(segment.text)")
             }
         }
+    }
+
+    private func runCoreMLTranscription() throws {
+        #if canImport(CoreML)
+        try runAsync {
+            let modelId = resolveASRModelId(model)
+
+            print("Loading audio: \(audioFile)")
+            let audio = try AudioFileLoader.load(
+                url: URL(fileURLWithPath: audioFile), targetSampleRate: 16000)
+            let duration = Float(audio.count) / 16000.0
+            print("  Loaded \(audio.count) samples (\(String(format: "%.2f", duration))s)")
+
+            // Load CoreML encoder
+            print("Loading CoreML encoder...")
+            let coremlEncoder = try await CoreMLASREncoder.fromPretrained(
+                progressHandler: reportProgress)
+
+            print("Warming up CoreML...")
+            try coremlEncoder.warmUp()
+
+            // Load MLX text decoder
+            print("Loading text decoder: \(modelId)")
+            let asrModel = try await Qwen3ASRModel.fromPretrained(
+                modelId: modelId, progressHandler: reportProgress)
+
+            print("Transcribing (CoreML encoder + MLX decoder)...")
+            let startTime = CFAbsoluteTimeGetCurrent()
+            let result = try asrModel.transcribe(
+                audio: audio, sampleRate: 16000, language: language,
+                coremlEncoder: coremlEncoder)
+            let elapsed = CFAbsoluteTimeGetCurrent() - startTime
+            let rtf = elapsed / Double(duration)
+
+            print("Result: \(result)")
+            print(String(format: "  Time: %.2fs, RTF: %.3f", elapsed, rtf))
+        }
+        #else
+        print("CoreML is not available on this platform.")
+        #endif
     }
 
     private func runParakeetTranscription() throws {
