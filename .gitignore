@@ -23,6 +23,8 @@ tokenizer_spm_32k_3.model
 # Quantized model directories
 *-4bit/
 *-8bit/
+*-bf16/
+*-coreml*/
 
 # Generated test audio (PersonaPlex output artifacts)
 Tests/**/test_audio_response.wav

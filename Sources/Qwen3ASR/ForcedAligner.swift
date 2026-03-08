@@ -6,6 +6,45 @@ import AudioCommon
 
 // AlignedWord is defined in AudioCommon/Protocols.swift and re-exported via AudioCommon import above.
 
+/// Forced aligner model variant
+public enum ForcedAlignerVariant: String, CaseIterable, Sendable {
+    case mlx4bit = "aufklarer/Qwen3-ForcedAligner-0.6B-4bit"
+    case mlx8bit = "aufklarer/Qwen3-ForcedAligner-0.6B-8bit"
+    case bf16 = "aufklarer/Qwen3-ForcedAligner-0.6B-bf16"
+
+    /// Detect variant from model ID string
+    public static func detect(from modelId: String) -> ForcedAlignerVariant? {
+        if let exact = Self.allCases.first(where: { $0.rawValue == modelId }) {
+            return exact
+        }
+        if modelId.contains("bf16") || modelId.contains("float") { return .bf16 }
+        if modelId.contains("8bit") { return .mlx8bit }
+        if modelId.contains("4bit") { return .mlx4bit }
+        return nil
+    }
+
+    public var textConfig: TextDecoderConfig {
+        switch self {
+        case .mlx4bit:
+            var cfg = TextDecoderConfig.small
+            cfg.bits = 4
+            cfg.groupSize = 64
+            return cfg
+        case .mlx8bit:
+            var cfg = TextDecoderConfig.small
+            cfg.bits = 8
+            cfg.groupSize = 64
+            return cfg
+        case .bf16:
+            return .small
+        }
+    }
+
+    public var usesFloatTextDecoder: Bool {
+        self == .bf16
+    }
+}
+
 /// Qwen3 Forced Aligner — predicts word-level timestamps for audio+text pairs.
 ///
 /// Uses the same encoder-decoder architecture as Qwen3-ASR but replaces the
@@ -13,7 +52,7 @@ import AudioCommon
 /// Inference is non-autoregressive (single forward pass).
 public class Qwen3ForcedAligner {
     public let audioEncoder: Qwen3AudioEncoder
-    public let textDecoder: QuantizedTextModel
+    public let textDecoder: any ForcedAlignerTextDecoding
     public let classifyHead: Linear
     public let featureExtractor: WhisperFeatureExtractor
     public var tokenizer: Qwen3Tokenizer?
@@ -23,10 +62,15 @@ public class Qwen3ForcedAligner {
     public init(
         audioConfig: Qwen3AudioEncoderConfig = .forcedAligner,
         textConfig: TextDecoderConfig = .small,
-        classifyNum: Int = 5000
+        classifyNum: Int = 5000,
+        useFloatTextDecoder: Bool = false
     ) {
         self.audioEncoder = Qwen3AudioEncoder(config: audioConfig)
-        self.textDecoder = QuantizedTextModel(config: textConfig)
+        if useFloatTextDecoder {
+            self.textDecoder = FloatTextModel(config: textConfig)
+        } else {
+            self.textDecoder = QuantizedTextModel(config: textConfig)
+        }
         self.classifyHead = Linear(textConfig.hiddenSize, classifyNum)
         self.featureExtractor = WhisperFeatureExtractor()
 
@@ -87,7 +131,7 @@ public class Qwen3ForcedAligner {
 
         // 4. Embed all tokens and replace audio_pad with audio embeddings
         let inputIdsTensor = MLXArray(inputIds.map { Int32($0) }).expandedDimensions(axis: 0)
-        var inputEmbeds = textDecoder.embedTokens(inputIdsTensor)
+        var inputEmbeds = textDecoder.embeddings(for: inputIdsTensor)
 
         // Find audio_pad range and replace with audio embeddings
         let audioStartIndex = findAudioPadStart(inputIds)
@@ -99,7 +143,7 @@ public class Qwen3ForcedAligner {
         inputEmbeds = concatenated([beforeAudio, audioEmbedsTyped, afterAudio], axis: 1)
 
         // 5. Single forward pass through decoder (no cache, no autoregressive loop)
-        let (hiddenStates, _) = textDecoder(inputsEmbeds: inputEmbeds, cache: nil)
+        let (hiddenStates, _) = textDecoder.decode(inputsEmbeds: inputEmbeds, attentionMask: nil, cache: nil)
 
         // 6. Apply classify head to ALL hidden states → logits [1, seqLen, classifyNum]
         let logits = classifyHead(hiddenStates)
@@ -214,7 +258,8 @@ public extension Qwen3ForcedAligner {
         try await HuggingFaceDownloader.downloadWeights(
             modelId: modelId,
             to: cacheDir,
-            additionalFiles: ["vocab.json", "merges.txt", "tokenizer_config.json"],
+            additionalFiles: ["vocab.json", "merges.txt", "tokenizer_config.json",
+                              "quantize_config.json"],
             progressHandler: { progress in
                 progressHandler?(progress * 0.8, "Downloading weights...")
             }
@@ -222,26 +267,21 @@ public extension Qwen3ForcedAligner {
 
         progressHandler?(0.80, "Loading tokenizer...")
 
-        // Detect quantization from model ID
-        let textConfig: TextDecoderConfig
-        if modelId.contains("4bit") {
-            var cfg = TextDecoderConfig.small
-            cfg.bits = 4
-            cfg.groupSize = 64
-            textConfig = cfg
-        } else if modelId.contains("8bit") {
-            var cfg = TextDecoderConfig.small
-            cfg.bits = 8
-            cfg.groupSize = 64
-            textConfig = cfg
+        // Detect variant: try quantize_config.json first, fall back to model ID
+        let variant: ForcedAlignerVariant
+        let packaging = detectPackaging(in: cacheDir)
+        if let detected = packaging {
+            variant = detected
+        } else if let detected = ForcedAlignerVariant.detect(from: modelId) {
+            variant = detected
         } else {
-            // bf16 — still use quantized text model structure but with default config
-            textConfig = .small
+            variant = .mlx4bit
         }
 
         let model = Qwen3ForcedAligner(
             audioConfig: .forcedAligner,
-            textConfig: textConfig
+            textConfig: variant.textConfig,
+            useFloatTextDecoder: variant.usesFloatTextDecoder
         )
 
         // Load tokenizer
@@ -260,5 +300,35 @@ public extension Qwen3ForcedAligner {
         progressHandler?(1.0, "Ready")
 
         return model
+    }
+
+    /// Detect model variant from quantize_config.json
+    private static func detectPackaging(in cacheDir: URL) -> ForcedAlignerVariant? {
+        struct QuantizationFile: Decodable {
+            struct Quantization: Decodable {
+                let bits: Int?
+                let groupSize: Int?
+                enum CodingKeys: String, CodingKey {
+                    case bits
+                    case groupSize = "group_size"
+                }
+            }
+            let quantization: Quantization?
+        }
+
+        let configPath = cacheDir.appendingPathComponent("quantize_config.json")
+        guard let data = try? Data(contentsOf: configPath),
+              let file = try? JSONDecoder().decode(QuantizationFile.self, from: data),
+              let quant = file.quantization,
+              let bits = quant.bits else {
+            return nil
+        }
+
+        switch bits {
+        case 0: return .bf16
+        case 4: return .mlx4bit
+        case 8: return .mlx8bit
+        default: return nil
+        }
     }
 }

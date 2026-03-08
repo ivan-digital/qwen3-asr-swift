@@ -195,19 +195,34 @@ public enum WeightLoader {
         }
         print("Applied audio encoder weights (\(model.audioEncoder.layers.count) layers)")
 
-        // Load text decoder weights
-        CommonWeightLoader.applyQuantizedEmbeddingWeights(
-            to: model.textDecoder.embedTokens,
-            prefix: "embed_tokens",
-            from: textWeights
-        )
-        CommonWeightLoader.applyRMSNormWeights(to: model.textDecoder.norm, prefix: "norm", from: textWeights)
+        // Load text decoder weights (quantized or float)
+        if let quantized = model.textDecoder as? QuantizedTextModel {
+            CommonWeightLoader.applyQuantizedEmbeddingWeights(
+                to: quantized.embedTokens,
+                prefix: "embed_tokens",
+                from: textWeights
+            )
+            CommonWeightLoader.applyRMSNormWeights(to: quantized.norm, prefix: "norm", from: textWeights)
 
-        for (index, layer) in model.textDecoder.layers.enumerated() {
-            let prefix = "layers.\(index)"
-            applyQuantizedDecoderLayerWeights(to: layer, prefix: prefix, from: textWeights)
+            for (index, layer) in quantized.layers.enumerated() {
+                let prefix = "layers.\(index)"
+                applyQuantizedDecoderLayerWeights(to: layer, prefix: prefix, from: textWeights)
+            }
+            print("Applied quantized text decoder weights (\(quantized.layers.count) layers)")
+        } else if let floatModel = model.textDecoder as? FloatTextModel {
+            CommonWeightLoader.applyEmbeddingWeights(
+                to: floatModel.embedTokens,
+                prefix: "embed_tokens",
+                from: textWeights
+            )
+            CommonWeightLoader.applyRMSNormWeights(to: floatModel.norm, prefix: "norm", from: textWeights)
+
+            for (index, layer) in floatModel.layers.enumerated() {
+                let prefix = "layers.\(index)"
+                applyFloatDecoderLayerWeights(to: layer, prefix: prefix, from: textWeights)
+            }
+            print("Applied float text decoder weights (\(floatModel.layers.count) layers)")
         }
-        print("Applied text decoder weights (\(model.textDecoder.layers.count) layers)")
 
         // Load classify head (NOT quantized — regular Linear)
         CommonWeightLoader.applyLinearWeights(to: model.classifyHead, prefix: "lm_head", from: classifyWeights)
@@ -239,6 +254,24 @@ public enum WeightLoader {
         CommonWeightLoader.applyQuantizedLinearWeights(to: layer.mlp.gateProj, prefix: "\(prefix).mlp.gate_proj", from: weights)
         CommonWeightLoader.applyQuantizedLinearWeights(to: layer.mlp.upProj, prefix: "\(prefix).mlp.up_proj", from: weights)
         CommonWeightLoader.applyQuantizedLinearWeights(to: layer.mlp.downProj, prefix: "\(prefix).mlp.down_proj", from: weights)
+    }
+
+    private static func applyFloatDecoderLayerWeights(
+        to layer: FloatTextDecoderLayer,
+        prefix: String,
+        from weights: [String: MLXArray]
+    ) {
+        CommonWeightLoader.applyLinearWeights(to: layer.selfAttn.qProj, prefix: "\(prefix).self_attn.q_proj", from: weights)
+        CommonWeightLoader.applyLinearWeights(to: layer.selfAttn.kProj, prefix: "\(prefix).self_attn.k_proj", from: weights)
+        CommonWeightLoader.applyLinearWeights(to: layer.selfAttn.vProj, prefix: "\(prefix).self_attn.v_proj", from: weights)
+        CommonWeightLoader.applyLinearWeights(to: layer.selfAttn.oProj, prefix: "\(prefix).self_attn.o_proj", from: weights)
+        CommonWeightLoader.applyRMSNormWeights(to: layer.selfAttn.qNorm, prefix: "\(prefix).self_attn.q_norm", from: weights)
+        CommonWeightLoader.applyRMSNormWeights(to: layer.selfAttn.kNorm, prefix: "\(prefix).self_attn.k_norm", from: weights)
+        CommonWeightLoader.applyRMSNormWeights(to: layer.inputLayerNorm, prefix: "\(prefix).input_layernorm", from: weights)
+        CommonWeightLoader.applyRMSNormWeights(to: layer.postAttentionLayerNorm, prefix: "\(prefix).post_attention_layernorm", from: weights)
+        CommonWeightLoader.applyLinearWeights(to: layer.mlp.gateProj, prefix: "\(prefix).mlp.gate_proj", from: weights)
+        CommonWeightLoader.applyLinearWeights(to: layer.mlp.upProj, prefix: "\(prefix).mlp.up_proj", from: weights)
+        CommonWeightLoader.applyLinearWeights(to: layer.mlp.downProj, prefix: "\(prefix).mlp.down_proj", from: weights)
     }
 
     // MARK: - Audio Encoder Weight Helpers
