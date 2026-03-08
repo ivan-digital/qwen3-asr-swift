@@ -81,6 +81,8 @@ public struct TalkerConfig: Codable, Sendable {
 
 public struct CodePredictorConfig: Codable, Sendable {
     public var hiddenSize: Int = 1024
+    /// Embedding dimension (may differ from hiddenSize in 1.7B where embeddings are 2048-dim)
+    public var embeddingDim: Int = 1024
     public var numLayers: Int = 5
     public var numHeads: Int = 16
     public var numKVHeads: Int = 8
@@ -93,6 +95,9 @@ public struct CodePredictorConfig: Codable, Sendable {
     public var groupSize: Int = 64
     public var bits: Int = 4
 
+    /// Whether a projection from embeddingDim → hiddenSize is needed
+    public var needsProjection: Bool { embeddingDim != hiddenSize }
+
     public init() {}
 
     /// 0.6B, 8-bit
@@ -102,14 +107,10 @@ public struct CodePredictorConfig: Codable, Sendable {
         return config
     }
 
-    /// 1.7B, 4-bit
+    /// 1.7B, 4-bit — embeddings are 2048-dim with projection to 1024
     public static var large4bit: CodePredictorConfig {
         var config = CodePredictorConfig()
-        config.hiddenSize = 2048
-        config.numHeads = 16
-        config.numKVHeads = 8
-        config.headDim = 128
-        config.intermediateSize = 6144
+        config.embeddingDim = 2048
         config.bits = 4
         return config
     }

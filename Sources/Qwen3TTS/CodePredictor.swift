@@ -142,13 +142,15 @@ public class CodePredictorModel: Module {
     @ModuleInfo var norm: RMSNorm
     // 15 lm_head projections (one per remaining codebook group, quantized)
     @ModuleInfo var lmHeads: [QuantizedLinear]
+    // Optional projection from embeddingDim → hiddenSize (1.7B: 2048 → 1024)
+    @ModuleInfo var smallToMtpProjection: QuantizedLinear?
 
     public init(config: CodePredictorConfig) {
         self.config = config
 
         // 15 embedding tables for codebook groups 2-16 (index 0-14)
         self._codecEmbeddings.wrappedValue = (0..<(config.numCodeGroups - 1)).map { _ in
-            Embedding(embeddingCount: config.vocabSize, dimensions: config.hiddenSize)
+            Embedding(embeddingCount: config.vocabSize, dimensions: config.embeddingDim)
         }
 
         self._layers.wrappedValue = (0..<config.numLayers).map { _ in
@@ -161,6 +163,13 @@ public class CodePredictorModel: Module {
         self._lmHeads.wrappedValue = (0..<(config.numCodeGroups - 1)).map { _ in
             QuantizedLinear(config.hiddenSize, config.vocabSize, bias: false,
                            groupSize: config.groupSize, bits: config.bits)
+        }
+
+        // Projection for 1.7B model (embeddingDim=2048 → hiddenSize=1024)
+        if config.needsProjection {
+            self._smallToMtpProjection.wrappedValue = QuantizedLinear(
+                config.embeddingDim, config.hiddenSize, bias: true,
+                groupSize: config.groupSize, bits: config.bits)
         }
 
         super.init()
@@ -178,6 +187,11 @@ public class CodePredictorModel: Module {
         cache: [(MLXArray, MLXArray)]? = nil
     ) -> (MLXArray, [(MLXArray, MLXArray)]) {
         var hiddenStates = inputsEmbeds
+
+        // Project from embeddingDim → hiddenSize if needed (1.7B: 2048 → 1024)
+        if let proj = smallToMtpProjection {
+            hiddenStates = proj(hiddenStates)
+        }
 
         let seqLen = hiddenStates.dim(1)
         let mask: MLXArray?
@@ -215,6 +229,11 @@ public class CodePredictorModel: Module {
         inputsEmbeds: MLXArray
     ) -> [MLXArray] {
         var hiddenStates = inputsEmbeds
+
+        // Project from embeddingDim → hiddenSize if needed (1.7B: 2048 → 1024)
+        if let proj = smallToMtpProjection {
+            hiddenStates = proj(hiddenStates)
+        }
 
         // Build causal mask for length 2
         let mask = MLXArray([Float(0), Float(-1e9), Float(0), Float(0)])

@@ -27,7 +27,7 @@ public class CoreMLTextDecoder {
     /// Current position in the KV cache (incremented per step).
     private var currentPosition: Int = 0
 
-    public static let defaultModelId = "aufklarer/Qwen3-ASR-Decoder-CoreML"
+    public static let defaultModelId = "aufklarer/Qwen3-ASR-CoreML"
 
     public init(
         embeddingModel: MLModel,

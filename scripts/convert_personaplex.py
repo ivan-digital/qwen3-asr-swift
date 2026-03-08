@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Convert PersonaPlex 7B weights to 4-bit quantized safetensors for Swift/MLX.
+Convert PersonaPlex 7B weights to quantized safetensors for Swift/MLX.
 
-Downloads from nvidia/personaplex-7b-v1 and splits into:
-  - temporal.safetensors   (4-bit quantized, ~3.5 GB)
-  - depformer.safetensors  (4-bit quantized, ~650 MB)
+Downloads from nvidia/personaplex-7b-v1 (bf16) and quantizes to 4-bit or 8-bit:
+  - temporal.safetensors   (quantized, ~3.5 GB 4-bit / ~6.5 GB 8-bit)
+  - depformer.safetensors  (quantized, ~650 MB 4-bit / ~1.3 GB 8-bit)
   - embeddings.safetensors (BF16, ~500 MB)
   - mimi.safetensors       (from tokenizer file, ~385 MB)
   - voices/                (per-voice safetensors)
@@ -12,8 +12,12 @@ Downloads from nvidia/personaplex-7b-v1 and splits into:
 
 Usage:
   python scripts/convert_personaplex.py
-  python scripts/convert_personaplex.py --output-dir ./personaplex-mlx
-  python scripts/convert_personaplex.py --upload --repo-id your-name/PersonaPlex-7B-MLX-4bit
+  python scripts/convert_personaplex.py --bits 8
+  python scripts/convert_personaplex.py --bits 4 --upload --repo-id aufklarer/PersonaPlex-7B-MLX-4bit
+  python scripts/convert_personaplex.py --bits 8 --upload --repo-id aufklarer/PersonaPlex-7B-MLX-8bit
+
+Requires:
+  pip install torch safetensors huggingface_hub numpy
 """
 
 import argparse
@@ -379,6 +383,16 @@ def extract_voices(voices_tgz: str, output_dir: Path):
             save_file(out_tensors, str(sf_path))
             print(f"    -> {sf_path}")
 
+    # Clean up .pt files and any nested directories left from tar extraction
+    for pt_file in sorted(voices_dir.glob("**/*.pt")):
+        pt_file.unlink()
+    for sub in sorted(voices_dir.iterdir(), reverse=True):
+        if sub.is_dir():
+            try:
+                sub.rmdir()  # Only removes if empty
+            except OSError:
+                pass
+
     # List resulting voice files
     voice_files = sorted(voices_dir.glob("*.safetensors"))
     print(f"  {len(voice_files)} voice files extracted")
@@ -464,8 +478,8 @@ def main():
         help="HuggingFace model ID",
     )
     parser.add_argument(
-        "--output-dir", default="./personaplex-mlx-4bit",
-        help="Output directory",
+        "--output-dir", default=None,
+        help="Output directory (default: auto-generated from bits)",
     )
     parser.add_argument(
         "--no-quantize", action="store_true",
@@ -493,7 +507,7 @@ def main():
     )
     args = parser.parse_args()
 
-    output_dir = Path(args.output_dir)
+    output_dir = Path(args.output_dir or f"./personaplex-mlx-{args.bits}bit")
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # -----------------------------------------------------------------------
@@ -675,7 +689,7 @@ def main():
         api.upload_folder(
             repo_id=repo_id,
             folder_path=str(output_dir),
-            commit_message="Upload PersonaPlex 7B MLX 4-bit weights",
+            commit_message=f"Upload PersonaPlex 7B MLX {args.bits}-bit weights",
         )
         print(f"  Uploaded to https://huggingface.co/{repo_id}")
 

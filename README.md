@@ -29,52 +29,51 @@ See [Roadmap discussion](https://github.com/soniqo/speech-swift/discussions/81) 
 
 ## Models
 
-| Model | Task | Streaming | Languages | Download Size |
-|-------|------|-----------|-----------|--------------|
-| Qwen3-ASR-0.6B (4-bit) | Speech → Text | No | 52 languages | ~400 MB |
+| Model | Task | Streaming | Languages | Size |
+|-------|------|-----------|-----------|------|
+| Qwen3-ASR-0.6B (4-bit, MLX) | Speech → Text | No | 52 languages | ~680 MB |
+| Qwen3-ASR-0.6B (8-bit, MLX) | Speech → Text | No | 52 languages | ~1.0 GB |
 | Qwen3-ASR-0.6B (INT8, CoreML) | Speech → Text | No | 52 languages | ~180 MB |
-| Qwen3-ASR-1.7B (8-bit) | Speech → Text | No | 52 languages | ~2.5 GB |
+| Qwen3-ASR-1.7B (4-bit, MLX) | Speech → Text | No | 52 languages | ~2.1 GB |
+| Qwen3-ASR-1.7B (8-bit, MLX) | Speech → Text | No | 52 languages | ~3.2 GB |
 | Parakeet-TDT-0.6B (INT4, CoreML) | Speech → Text | No | 25 European languages | ~315 MB |
-| Qwen3-ForcedAligner-0.6B (4-bit) | Audio + Text → Timestamps | No | Multi | ~979 MB |
-| Qwen3-ForcedAligner-0.6B (8-bit) | Audio + Text → Timestamps | No | Multi | ~1.3 GB |
-| Qwen3-ForcedAligner-0.6B (bf16) | Audio + Text → Timestamps | No | Multi | ~1.8 GB |
-| Qwen3-TTS-0.6B Base (4-bit) | Text → Speech | Yes (~120ms) | 10 languages | ~1.7 GB |
-| Qwen3-TTS-0.6B CustomVoice (4-bit) | Text → Speech | Yes (~120ms) | 10 languages | ~1.7 GB |
-| CosyVoice3-0.5B (4-bit) | Text → Speech | Yes (~150ms) | 9 languages | ~1.9 GB |
-| PersonaPlex-7B (4-bit) | Speech → Speech | Yes (~2s chunks) | EN | ~5.3 GB |
-| Silero-VAD-v5 | Voice Activity Detection | Yes (32ms chunks) | Language-agnostic | ~1.2 MB (MLX or CoreML) |
-| Pyannote-Segmentation-3.0 | VAD + Speaker Segmentation | No (10s windows) | Language-agnostic | ~5.7 MB |
-| DeepFilterNet3 | Speech Enhancement | Yes (10ms frames) | Language-agnostic | ~4.2 MB (CoreML FP16) |
-| WeSpeaker-ResNet34-LM | Speaker Embedding (256-dim) | No | Language-agnostic | ~25 MB (MLX or CoreML) |
+| Parakeet-TDT-0.6B (INT8, CoreML) | Speech → Text | No | 25 European languages | ~500 MB |
+| Qwen3-ForcedAligner-0.6B (4-bit, MLX) | Audio + Text → Timestamps | No | Multi | ~979 MB |
+| Qwen3-ForcedAligner-0.6B (8-bit, MLX) | Audio + Text → Timestamps | No | Multi | ~1.4 GB |
+| Qwen3-ForcedAligner-0.6B (INT4, CoreML) | Audio + Text → Timestamps | No | Multi | ~630 MB |
+| Qwen3-ForcedAligner-0.6B (INT8, CoreML) | Audio + Text → Timestamps | No | Multi | ~1.0 GB |
+| Qwen3-TTS-0.6B Base (4-bit, MLX) | Text → Speech | Yes (~120ms) | 10 languages | ~1.7 GB |
+| Qwen3-TTS-0.6B Base (8-bit, MLX) | Text → Speech | Yes (~120ms) | 10 languages | ~2.4 GB |
+| Qwen3-TTS-0.6B CustomVoice (4-bit, MLX) | Text → Speech | Yes (~120ms) | 10 languages | ~1.7 GB |
+| Qwen3-TTS-1.7B Base (4-bit, MLX) | Text → Speech | Yes (~120ms) | 10 languages | ~3.2 GB |
+| Qwen3-TTS-1.7B Base (8-bit, MLX) | Text → Speech | Yes (~120ms) | 10 languages | ~4.8 GB |
+| CosyVoice3-0.5B (4-bit, MLX) | Text → Speech | Yes (~150ms) | 9 languages | ~1.2 GB |
+| PersonaPlex-7B (4-bit, MLX) | Speech → Speech | Yes (~2s chunks) | EN | ~4.9 GB |
+| PersonaPlex-7B (8-bit, MLX) | Speech → Speech | Yes (~2s chunks) | EN | ~9.1 GB |
+| Silero-VAD-v5 (~1.2 MB, MLX or CoreML) | Voice Activity Detection | Yes (32ms chunks) | Language-agnostic | ~1.2 MB |
+| Pyannote-Segmentation-3.0 (~5.7 MB, MLX) | VAD + Speaker Segmentation | No (10s windows) | Language-agnostic | ~5.7 MB |
+| DeepFilterNet3 (~4.2 MB, CoreML FP16) | Speech Enhancement | Yes (10ms frames) | Language-agnostic | ~4.2 MB |
+| WeSpeaker-ResNet34-LM (~25 MB, MLX or CoreML) | Speaker Embedding (256-dim) | No | Language-agnostic | ~25 MB |
 
 ### Memory Requirements
 
 Weight memory is the GPU (MLX) or ANE (CoreML) memory consumed by model parameters. Peak inference includes KV caches, activations, and intermediate tensors.
 
-| Model | Weight Memory | Peak Inference | Fits 8GB? |
-|-------|--------------|----------------|-----------|
-| Qwen3-ASR-0.6B (4-bit) | 675 MB | ~2.2 GB | Yes |
-| Qwen3-ASR-0.6B (INT8, CoreML) | 180 MB | ~400 MB | Yes |
-| Qwen3-ASR-1.7B (8-bit) | 2,349 MB | ~4 GB | No |
-| Parakeet-TDT-0.6B (CoreML) | 315 MB | ~400 MB | Yes |
-| Qwen3-ForcedAligner-0.6B (4-bit) | 933 MB | ~1.5 GB | Yes |
-| Qwen3-ForcedAligner-0.6B (8-bit) | 1,217 MB | ~2.0 GB | Yes |
-| Qwen3-ForcedAligner-0.6B (bf16) | 1,750 MB | ~2.5 GB | Yes |
-| Qwen3-TTS-0.6B (4-bit) | 977 MB | ~2 GB | Yes |
-| CosyVoice3-0.5B (4-bit) | 732 MB | ~1.5 GB | Yes |
-| PersonaPlex-7B (4-bit) | 5,543 MB | ~6.5 GB | No |
-| Silero VAD (MLX) | 1.2 MB | ~5 MB | Yes |
-| Silero VAD (CoreML) | 0.7 MB | ~3 MB | Yes |
-| Pyannote Segmentation | 6 MB | ~20 MB | Yes |
-| DeepFilterNet3 (CoreML) | 4.2 MB | ~10 MB | Yes |
-| WeSpeaker (MLX) | 25 MB | ~50 MB | Yes |
-
-**8GB device recommendations:**
-- **Dictation**: Parakeet TDT (CoreML) + Silero VAD — ~400 MB total, leaves room for other apps
-- **Transcription**: Qwen3-ASR-0.6B + Silero VAD — ~2.2 GB peak
-- **TTS**: Qwen3-TTS or CosyVoice — ~2 GB peak, runs standalone
-- **ASR + TTS together**: Qwen3-ASR + Qwen3-TTS — ~4 GB peak, tight but works. Use Parakeet (CoreML) for ASR to avoid GPU contention
-- **PersonaPlex**: Requires 16GB+ device
+| Model | Weight Memory | Peak Inference |
+|-------|--------------|----------------|
+| Qwen3-ASR-0.6B (4-bit, MLX) | 675 MB | ~2.2 GB |
+| Qwen3-ASR-0.6B (INT8, CoreML) | 180 MB | ~400 MB |
+| Qwen3-ASR-1.7B (8-bit, MLX) | 2,349 MB | ~4 GB |
+| Parakeet-TDT-0.6B (CoreML) | 315 MB | ~400 MB |
+| Qwen3-ForcedAligner-0.6B (4-bit, MLX) | 933 MB | ~1.5 GB |
+| Qwen3-TTS-0.6B (4-bit, MLX) | 977 MB | ~2 GB |
+| CosyVoice3-0.5B (4-bit, MLX) | 732 MB | ~1.5 GB |
+| PersonaPlex-7B (4-bit, MLX) | 4,900 MB | ~6.5 GB |
+| Silero-VAD-v5 (MLX) | 1.2 MB | ~5 MB |
+| Silero-VAD-v5 (CoreML) | 0.7 MB | ~3 MB |
+| Pyannote-Segmentation-3.0 (MLX) | 6 MB | ~20 MB |
+| DeepFilterNet3 (CoreML FP16) | 4.2 MB | ~10 MB |
+| WeSpeaker-ResNet34-LM (MLX) | 25 MB | ~50 MB |
 
 ### When to Use Which TTS
 
@@ -1016,5 +1015,5 @@ We welcome contributions! Whether it's a bug fix, new model integration, or docu
 
 ## License
 
-Apache 2.0 (same as original Qwen3 models)
+Apache 2.0
 

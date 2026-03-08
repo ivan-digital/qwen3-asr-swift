@@ -144,6 +144,15 @@ public enum TTSWeightLoader {
                 from: cpWeights)
         }
 
+        // Optional small_to_mtp_projection (1.7B: 2048 → 1024)
+        if let proj = codePredictor.smallToMtpProjection {
+            CommonWeightLoader.applyQuantizedLinearWeights(
+                to: proj, prefix: "small_to_mtp_projection", from: cpWeights)
+            if let bias = cpWeights["small_to_mtp_projection.bias"] {
+                proj.update(parameters: ModuleParameters(values: ["bias": .value(bias)]))
+            }
+        }
+
         print("Applied weights to Code Predictor (\(codePredictor.layers.count) layers)")
     }
 

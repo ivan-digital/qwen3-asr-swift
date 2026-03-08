@@ -1061,6 +1061,10 @@ public class Qwen3TTSModel {
             inputs: [cpRef], outputs: [cpRef], shapeless: false
         ) { inputs in
             var hidden = inputs[0]
+            // Project from embeddingDim → hiddenSize if needed (1.7B: 2048 → 1024)
+            if let proj = cpRef.smallToMtpProjection {
+                hidden = proj(hidden)
+            }
             var cpCache: [(MLXArray, MLXArray)] = []
             for i in 0..<numCPLayers {
                 cpCache.append((inputs[1 + i * 2], inputs[2 + i * 2]))
@@ -1113,6 +1117,10 @@ public class Qwen3TTSModel {
     ) -> (normed: MLXArray, newCache: [(MLXArray, MLXArray)]) {
         guard let compiled = compiledCPTransformer else {
             var h = hidden
+            // Project from embeddingDim → hiddenSize if needed (1.7B: 2048 → 1024)
+            if let proj = codePredictor.smallToMtpProjection {
+                h = proj(h)
+            }
             var newCache: [(MLXArray, MLXArray)] = []
             for (i, layer) in codePredictor.layers.enumerated() {
                 let (output, updated) = layer(h, attentionMask: nil, cache: cache[i])

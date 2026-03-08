@@ -24,12 +24,10 @@ public class CoreMLASRModel {
 
     /// Load full CoreML ASR from HuggingFace.
     ///
-    /// Downloads both encoder and decoder models. The encoder comes from
-    /// `aufklarer/Qwen3-ASR-CoreML` and the decoder from
-    /// `aufklarer/Qwen3-ASR-Decoder-CoreML`.
+    /// Downloads encoder and decoder models from `aufklarer/Qwen3-ASR-CoreML`.
     public static func fromPretrained(
         encoderModelId: String = CoreMLASREncoder.defaultModelId,
-        decoderModelId: String = CoreMLTextDecoder.defaultModelId,
+        decoderModelId: String = CoreMLASREncoder.defaultModelId,
         tokenizerModelId: String = "aufklarer/Qwen3-ASR-0.6B-MLX-4bit",
         computeUnits: MLComputeUnits = .all,
         progressHandler: ((Double, String) -> Void)? = nil
