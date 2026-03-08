@@ -32,6 +32,7 @@ See [Roadmap discussion](https://github.com/soniqo/speech-swift/discussions/81) 
 | Model | Task | Streaming | Languages | Download Size |
 |-------|------|-----------|-----------|--------------|
 | Qwen3-ASR-0.6B (4-bit) | Speech → Text | No | 52 languages | ~400 MB |
+| Qwen3-ASR-0.6B (INT8, CoreML) | Speech → Text | No | 52 languages | ~180 MB |
 | Qwen3-ASR-1.7B (8-bit) | Speech → Text | No | 52 languages | ~2.5 GB |
 | Parakeet-TDT-0.6B (INT4, CoreML) | Speech → Text | No | 25 European languages | ~315 MB |
 | Qwen3-ForcedAligner-0.6B (4-bit) | Audio + Text → Timestamps | No | Multi | ~979 MB |
@@ -51,6 +52,7 @@ Weight memory is the GPU (MLX) or ANE (CoreML) memory consumed by model paramete
 | Model | Weight Memory | Peak Inference | Fits 8GB? |
 |-------|--------------|----------------|-----------|
 | Qwen3-ASR-0.6B (4-bit) | 675 MB | ~2.2 GB | Yes |
+| Qwen3-ASR-0.6B (INT8, CoreML) | 180 MB | ~400 MB | Yes |
 | Qwen3-ASR-1.7B (8-bit) | 2,349 MB | ~4 GB | No |
 | Parakeet-TDT-0.6B (CoreML) | 315 MB | ~400 MB | Yes |
 | Qwen3-ForcedAligner-0.6B (4-bit) | 933 MB | ~1.5 GB | Yes |
@@ -179,6 +181,20 @@ let transcription = model.transcribe(audio: audioSamples, sampleRate: 16000)
 print(transcription)
 ```
 
+### CoreML Encoder (Neural Engine)
+
+Hybrid mode: CoreML encoder on Neural Engine + MLX text decoder on GPU. Lower power, frees GPU for the encoder pass.
+
+```swift
+import Qwen3ASR
+
+let encoder = try await CoreMLASREncoder.fromPretrained()
+let model = try await Qwen3ASRModel.fromPretrained()
+let text = try model.transcribe(audio: audioSamples, sampleRate: 16000, coremlEncoder: encoder)
+```
+
+INT8 (180 MB, default) and INT4 (90 MB) variants available. INT8 recommended (cosine similarity > 0.999 vs FP32).
+
 ### Parakeet TDT (CoreML)
 
 ```swift
@@ -200,6 +216,9 @@ make build  # or: swift build -c release && ./scripts/build_mlx_metallib.sh rele
 
 # Use 1.7B model
 .build/release/audio transcribe audio.wav --model 1.7B
+
+# CoreML encoder (Neural Engine + MLX decoder)
+.build/release/audio transcribe --engine qwen3-coreml audio.wav
 
 # Parakeet TDT (CoreML, Neural Engine)
 .build/release/audio transcribe --engine parakeet audio.wav
@@ -853,6 +872,7 @@ The server is a separate `AudioServer` module and `audio-server` executable — 
 | Model | Backend | RTF | 10s audio processed in |
 |-------|---------|-----|------------------------|
 | Qwen3-ASR-0.6B (4-bit) | MLX | ~0.06 | ~0.6s |
+| Qwen3-ASR-0.6B (INT8) | CoreML + MLX | ~0.09 | ~0.9s |
 | Qwen3-ASR-1.7B (8-bit) | MLX | ~0.11 | ~1.1s |
 | Parakeet-TDT-0.6B (INT4) | CoreML (Neural Engine) | ~0.12 cold, ~0.03 warm | ~1.2s / ~0.3s |
 | Whisper-large-v3 | whisper.cpp (Q5_0) | ~0.10 | ~1.0s |
@@ -917,7 +937,7 @@ Both backends produce equivalent results. Choose based on your workload:
 
 **Desktop inference**: MLX is the default — fastest single-model performance on Apple Silicon. Switch to CoreML when running multiple models concurrently (e.g., VAD + ASR + TTS) to avoid GPU contention, or for battery-sensitive workloads on laptops.
 
-CoreML models are available for Silero VAD and WeSpeaker. Pass `engine: .coreml` at construction time — inference API is identical.
+CoreML models are available for Qwen3-ASR encoder, Silero VAD, and WeSpeaker. For Qwen3-ASR, use `--engine qwen3-coreml` (hybrid: CoreML encoder on ANE + MLX text decoder on GPU). For VAD/embeddings, pass `engine: .coreml` at construction time — inference API is identical.
 
 ## Architecture
 
