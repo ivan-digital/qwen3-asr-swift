@@ -29,31 +29,21 @@ See [Roadmap discussion](https://github.com/soniqo/speech-swift/discussions/81) 
 
 ## Models
 
-| Model | Task | Streaming | Languages | Size |
-|-------|------|-----------|-----------|------|
-| Qwen3-ASR-0.6B (4-bit, MLX) | Speech → Text | No | 52 languages | ~680 MB |
-| Qwen3-ASR-0.6B (8-bit, MLX) | Speech → Text | No | 52 languages | ~1.0 GB |
-| Qwen3-ASR-0.6B (INT8, CoreML) | Speech → Text | No | 52 languages | ~180 MB |
-| Qwen3-ASR-1.7B (4-bit, MLX) | Speech → Text | No | 52 languages | ~2.1 GB |
-| Qwen3-ASR-1.7B (8-bit, MLX) | Speech → Text | No | 52 languages | ~3.2 GB |
-| Parakeet-TDT-0.6B (INT4, CoreML) | Speech → Text | No | 25 European languages | ~315 MB |
-| Parakeet-TDT-0.6B (INT8, CoreML) | Speech → Text | No | 25 European languages | ~500 MB |
-| Qwen3-ForcedAligner-0.6B (4-bit, MLX) | Audio + Text → Timestamps | No | Multi | ~979 MB |
-| Qwen3-ForcedAligner-0.6B (8-bit, MLX) | Audio + Text → Timestamps | No | Multi | ~1.4 GB |
-| Qwen3-ForcedAligner-0.6B (INT4, CoreML) | Audio + Text → Timestamps | No | Multi | ~630 MB |
-| Qwen3-ForcedAligner-0.6B (INT8, CoreML) | Audio + Text → Timestamps | No | Multi | ~1.0 GB |
-| Qwen3-TTS-0.6B Base (4-bit, MLX) | Text → Speech | Yes (~120ms) | 10 languages | ~1.7 GB |
-| Qwen3-TTS-0.6B Base (8-bit, MLX) | Text → Speech | Yes (~120ms) | 10 languages | ~2.4 GB |
-| Qwen3-TTS-0.6B CustomVoice (4-bit, MLX) | Text → Speech | Yes (~120ms) | 10 languages | ~1.7 GB |
-| Qwen3-TTS-1.7B Base (4-bit, MLX) | Text → Speech | Yes (~120ms) | 10 languages | ~3.2 GB |
-| Qwen3-TTS-1.7B Base (8-bit, MLX) | Text → Speech | Yes (~120ms) | 10 languages | ~4.8 GB |
-| CosyVoice3-0.5B (4-bit, MLX) | Text → Speech | Yes (~150ms) | 9 languages | ~1.2 GB |
-| PersonaPlex-7B (4-bit, MLX) | Speech → Speech | Yes (~2s chunks) | EN | ~4.9 GB |
-| PersonaPlex-7B (8-bit, MLX) | Speech → Speech | Yes (~2s chunks) | EN | ~9.1 GB |
-| Silero-VAD-v5 (~1.2 MB, MLX or CoreML) | Voice Activity Detection | Yes (32ms chunks) | Language-agnostic | ~1.2 MB |
-| Pyannote-Segmentation-3.0 (~5.7 MB, MLX) | VAD + Speaker Segmentation | No (10s windows) | Language-agnostic | ~5.7 MB |
-| DeepFilterNet3 (~4.2 MB, CoreML FP16) | Speech Enhancement | Yes (10ms frames) | Language-agnostic | ~4.2 MB |
-| WeSpeaker-ResNet34-LM (~25 MB, MLX or CoreML) | Speaker Embedding (256-dim) | No | Language-agnostic | ~25 MB |
+| Model | Task | Streaming | Languages | Sizes |
+|-------|------|-----------|-----------|-------|
+| Qwen3-ASR-0.6B | Speech → Text | No | 52 languages | [4-bit](https://huggingface.co/aufklarer/Qwen3-ASR-0.6B-MLX-4bit) 680 MB · [8-bit](https://huggingface.co/aufklarer/Qwen3-ASR-0.6B-MLX-8bit) 1.0 GB · [CoreML](https://huggingface.co/aufklarer/Qwen3-ASR-CoreML) 180 MB |
+| Qwen3-ASR-1.7B | Speech → Text | No | 52 languages | [4-bit](https://huggingface.co/aufklarer/Qwen3-ASR-1.7B-MLX-4bit) 2.1 GB · [8-bit](https://huggingface.co/aufklarer/Qwen3-ASR-1.7B-MLX-8bit) 3.2 GB |
+| Parakeet-TDT-0.6B | Speech → Text | No | 25 European languages | [CoreML INT4](https://huggingface.co/aufklarer/Parakeet-TDT-v3-CoreML-INT4) 315 MB · [CoreML INT8](https://huggingface.co/aufklarer/Parakeet-TDT-v3-CoreML-INT8) 500 MB |
+| Qwen3-ForcedAligner-0.6B | Audio + Text → Timestamps | No | Multi | [4-bit](https://huggingface.co/aufklarer/Qwen3-ForcedAligner-0.6B-4bit) 979 MB · [8-bit](https://huggingface.co/aufklarer/Qwen3-ForcedAligner-0.6B-8bit) 1.4 GB · [CoreML INT4](https://huggingface.co/aufklarer/Qwen3-ForcedAligner-0.6B-CoreML-INT4) 630 MB · [CoreML INT8](https://huggingface.co/aufklarer/Qwen3-ForcedAligner-0.6B-CoreML-INT8) 1.0 GB |
+| Qwen3-TTS-0.6B Base | Text → Speech | Yes (~120ms) | 10 languages | [4-bit](https://huggingface.co/aufklarer/Qwen3-TTS-12Hz-0.6B-Base-MLX-4bit) 1.7 GB · [8-bit](https://huggingface.co/aufklarer/Qwen3-TTS-12Hz-0.6B-Base-MLX-8bit) 2.4 GB |
+| Qwen3-TTS-0.6B CustomVoice | Text → Speech | Yes (~120ms) | 10 languages | [4-bit](https://huggingface.co/aufklarer/Qwen3-TTS-12Hz-0.6B-CustomVoice-MLX-4bit) 1.7 GB |
+| Qwen3-TTS-1.7B Base | Text → Speech | Yes (~120ms) | 10 languages | [4-bit](https://huggingface.co/aufklarer/Qwen3-TTS-12Hz-1.7B-Base-MLX-4bit) 3.2 GB · [8-bit](https://huggingface.co/aufklarer/Qwen3-TTS-12Hz-1.7B-Base-MLX-8bit) 4.8 GB |
+| CosyVoice3-0.5B | Text → Speech | Yes (~150ms) | 9 languages | [4-bit](https://huggingface.co/aufklarer/CosyVoice3-0.5B-MLX-4bit) 1.2 GB |
+| PersonaPlex-7B | Speech → Speech | Yes (~2s chunks) | EN | [4-bit](https://huggingface.co/aufklarer/PersonaPlex-7B-MLX-4bit) 4.9 GB · [8-bit](https://huggingface.co/aufklarer/PersonaPlex-7B-MLX-8bit) 9.1 GB |
+| Silero-VAD-v5 | Voice Activity Detection | Yes (32ms chunks) | Language-agnostic | [MLX](https://huggingface.co/aufklarer/Silero-VAD-v5-MLX) · [CoreML](https://huggingface.co/aufklarer/Silero-VAD-v5-CoreML) ~1.2 MB |
+| Pyannote-Segmentation-3.0 | VAD + Speaker Segmentation | No (10s windows) | Language-agnostic | [MLX](https://huggingface.co/aufklarer/Pyannote-Segmentation-MLX) ~5.7 MB |
+| DeepFilterNet3 | Speech Enhancement | Yes (10ms frames) | Language-agnostic | [CoreML FP16](https://huggingface.co/aufklarer/DeepFilterNet3-CoreML) ~4.2 MB |
+| WeSpeaker-ResNet34-LM | Speaker Embedding (256-dim) | No | Language-agnostic | [MLX](https://huggingface.co/aufklarer/WeSpeaker-ResNet34-LM-MLX) · [CoreML](https://huggingface.co/aufklarer/WeSpeaker-ResNet34-LM-CoreML) ~25 MB |
 
 ### Memory Requirements
 
