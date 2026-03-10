@@ -104,7 +104,7 @@ public class ParakeetASRModel {
         let encMs = (tEnc1 - tEnc0) * 1000
         let decMs = (tDec1 - tDec0) * 1000
         let totalMs = melMs + encMs + decMs
-        print("Parakeet timing: mel=\(String(format: "%.1f", melMs))ms, encoder=\(String(format: "%.1f", encMs))ms, decode=\(String(format: "%.1f", decMs))ms, total=\(String(format: "%.1f", totalMs))ms (\(tokenIds.count) tokens, \(encodedLength) frames)")
+        AudioLog.inference.info("Parakeet: mel=\(String(format: "%.1f", melMs))ms enc=\(String(format: "%.1f", encMs))ms dec=\(String(format: "%.1f", decMs))ms total=\(String(format: "%.1f", totalMs))ms (\(tokenIds.count) tokens, \(encodedLength) frames)")
 
         return text
     }

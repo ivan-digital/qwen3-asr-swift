@@ -10,12 +10,14 @@ import Qwen3TTS
 final class SpeakViewModel {
     var text = "The quick brown fox jumps over the lazy dog."
     var language = "english"
+    var speaker = "vivian"
     var isLoading = false
     var isSynthesizing = false
     var loadingStatus = ""
     var errorMessage: String?
 
     let languages = ["english", "chinese", "japanese", "korean", "french", "german", "spanish"]
+    var speakers: [String] = []
 
     #if os(macOS)
     private var ttsModel: Qwen3TTSModel?
@@ -37,8 +39,10 @@ final class SpeakViewModel {
         do {
             if ttsModel == nil {
                 let model = try await Task.detached {
-                    try await Qwen3TTSModel.fromPretrained { [weak self] progress, status in
-                        DispatchQueue.main.async {
+                    try await Qwen3TTSModel.fromPretrained(
+                        modelId: TTSModelVariant.customVoice.rawValue
+                    ) { (progress: Double, status: String) in
+                        DispatchQueue.main.async { [weak self] in
                             self?.loadingStatus = status.isEmpty
                                 ? "Downloading... \(Int(progress * 100))%"
                                 : "\(status) (\(Int(progress * 100))%)"
@@ -46,6 +50,8 @@ final class SpeakViewModel {
                     }
                 }.value
                 ttsModel = model
+                speakers = model.availableSpeakers
+                if !speakers.contains(speaker) { speaker = speakers.first ?? "" }
             }
             loadingStatus = ""
         } catch {
@@ -75,7 +81,8 @@ final class SpeakViewModel {
 
         let inputText = text
         let inputLang = language
-        let samples = model.synthesize(text: inputText, language: inputLang)
+        let inputSpeaker = speaker
+        let samples = model.synthesize(text: inputText, language: inputLang, speaker: inputSpeaker)
 
         guard !samples.isEmpty else {
             errorMessage = "Synthesis produced no audio."

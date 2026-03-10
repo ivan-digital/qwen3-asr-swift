@@ -8,4 +8,6 @@ public enum AudioLog {
     public static let inference = Logger(subsystem: "com.qwen3speech", category: "Inference")
     /// Logger for HuggingFace downloads and caching.
     public static let download = Logger(subsystem: "com.qwen3speech", category: "Download")
+    /// Logger for voice pipeline events.
+    public static let pipeline = Logger(subsystem: "com.qwen3speech", category: "Pipeline")
 }

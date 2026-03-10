@@ -15,6 +15,7 @@ let package = Package(
                 .product(name: "Qwen3ASR", package: "speech-swift"),
                 .product(name: "Qwen3TTS", package: "speech-swift"),
                 .product(name: "SpeechVAD", package: "speech-swift"),
+                .product(name: "SpeechCore", package: "speech-swift"),
                 .product(name: "AudioCommon", package: "speech-swift"),
             ],
             path: "SpeechDemo",

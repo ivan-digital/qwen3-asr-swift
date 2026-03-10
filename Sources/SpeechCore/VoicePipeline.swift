@@ -28,8 +28,9 @@ public enum PipelineEvent {
     case sessionCreated
     case speechStarted
     case speechEnded
-    case transcriptionCompleted(text: String, confidence: Float)
+    case transcriptionCompleted(text: String, language: String?, confidence: Float)
     case responseCreated
+    case responseInterrupted
     case responseAudioDelta(samples: [Float])
     case responseDone
     case error(String)
@@ -42,8 +43,20 @@ public struct PipelineConfig {
     public var minSpeechDuration: Float = 0.25
     public var minSilenceDuration: Float = 0.1
     public var allowInterruptions: Bool = true
+    public var minInterruptionDuration: Float = 1.0
     public var interruptionRecoveryTimeout: Float = 0.4
     public var maxUtteranceDuration: Float = 15.0
+    public var preSpeechBufferDuration: Float = 0.6
+    /// Max TTS response duration (seconds). Prevents hallucination loops. 0 = unlimited.
+    public var maxResponseDuration: Float = 10.0
+    /// Post-playback guard (seconds). Delay after resume_listening() to let AEC settle.
+    public var postPlaybackGuard: Float = 0.3
+    /// Start STT on first silence frame instead of waiting for silence confirmation (~0.6s savings).
+    public var eagerSTT: Bool = true
+    /// Minimum time in PendingSilence (seconds) before firing eager STT. Filters mid-sentence pauses.
+    public var eagerSTTDelay: Float = 0.3
+    /// Run dummy STT transcription at pipeline start to warm up Neural Engine.
+    public var warmupSTT: Bool = true
     public var language: String = ""
     public var mode: PipelineMode = .echo
 
@@ -77,7 +90,7 @@ public enum MessageRole: Int {
 private final class STTBridge {
     let model: SpeechRecognitionModel
     var lastText: [CChar] = []  // keeps C string alive between calls
-
+    var lastLanguage: [CChar] = []  // keeps language C string alive
     init(_ model: SpeechRecognitionModel) { self.model = model }
 }
 
@@ -106,6 +119,7 @@ private final class LLMBridge {
 /// Bridges the event callback.
 private final class EventBridge {
     let handler: (PipelineEvent) -> Void
+    var sttBridge: STTBridge?
 
     init(_ handler: @escaping (PipelineEvent) -> Void) { self.handler = handler }
 }
@@ -165,6 +179,7 @@ public final class VoicePipeline {
         self.ttsBridge = TTSBridge(tts)
         self.vadBridge = VADBridge(vad)
         self.eventBridge = EventBridge(onEvent)
+        self.eventBridge.sttBridge = self.sttBridge
         if let llm { self.llmBridge = LLMBridge(llm) }
 
         let sttVtable = Self.makeSTTVtable(sttBridge)
@@ -177,8 +192,15 @@ public final class VoicePipeline {
         cConfig.min_speech_duration = config.minSpeechDuration
         cConfig.min_silence_duration = config.minSilenceDuration
         cConfig.allow_interruptions = config.allowInterruptions
+        cConfig.min_interruption_duration = config.minInterruptionDuration
         cConfig.interruption_recovery_timeout = config.interruptionRecoveryTimeout
         cConfig.max_utterance_duration = config.maxUtteranceDuration
+        cConfig.pre_speech_buffer_duration = config.preSpeechBufferDuration
+        cConfig.max_response_duration = config.maxResponseDuration
+        cConfig.post_playback_guard = config.postPlaybackGuard
+        cConfig.eager_stt = config.eagerSTT
+        cConfig.eager_stt_delay = config.eagerSTTDelay
+        cConfig.warmup_stt = config.warmupSTT
         cConfig.mode = sc_mode_t(rawValue: UInt32(config.mode.rawValue))
 
         let eventCtx = Unmanaged.passRetained(eventBridge).toOpaque()
@@ -206,11 +228,12 @@ public final class VoicePipeline {
             sc_pipeline_stop(handle)
             sc_pipeline_destroy(handle)
         }
-        // Balance the passRetained on bridges
         Unmanaged.passUnretained(sttBridge).release()
         Unmanaged.passUnretained(ttsBridge).release()
         Unmanaged.passUnretained(vadBridge).release()
-        if let llmBridge { Unmanaged.passUnretained(llmBridge).release() }
+        if let llmBridge {
+            Unmanaged.passUnretained(llmBridge).release()
+        }
         Unmanaged.passUnretained(eventBridge).release()
     }
 
@@ -229,6 +252,12 @@ public final class VoicePipeline {
         samples.withUnsafeBufferPointer { buf in
             sc_pipeline_push_audio(handle, buf.baseAddress, buf.count)
         }
+    }
+
+    /// Signal that response playback has finished.
+    /// Transitions from speaking back to idle.
+    public func resumeListening() {
+        sc_pipeline_resume_listening(handle)
     }
 
     /// Inject text directly — bypasses STT, sent to LLM.
@@ -261,9 +290,17 @@ public final class VoicePipeline {
             event = .speechEnded
         case SC_EVENT_TRANSCRIPTION_COMPLETED:
             let text = e.text.map { String(cString: $0) } ?? ""
-            event = .transcriptionCompleted(text: text, confidence: e.confidence)
+            // Read detected language from STT bridge (set during transcribe callback)
+            var lang: String?
+            if let sttBridge = bridge.sttBridge, !sttBridge.lastLanguage.isEmpty {
+                let langStr = String(cString: sttBridge.lastLanguage)
+                if !langStr.isEmpty { lang = langStr }
+            }
+            event = .transcriptionCompleted(text: text, language: lang, confidence: e.confidence)
         case SC_EVENT_RESPONSE_CREATED:
             event = .responseCreated
+        case SC_EVENT_RESPONSE_INTERRUPTED:
+            event = .responseInterrupted
         case SC_EVENT_RESPONSE_AUDIO_DELTA:
             event = .responseAudioDelta(samples: pcm16ToFloat32(e.audio_data, count: e.audio_data_length))
         case SC_EVENT_RESPONSE_DONE:
@@ -287,19 +324,24 @@ public final class VoicePipeline {
             transcribe: { ctx, audio, length, sampleRate in
                 let bridge = Unmanaged<STTBridge>.fromOpaque(ctx!).takeUnretainedValue()
                 let samples = Array(UnsafeBufferPointer(start: audio, count: length))
-                let text = bridge.model.transcribe(
+                let duration = Double(length) / Double(sampleRate)
+                let rms = sqrt(samples.map { $0 * $0 }.reduce(0, +) / Float(max(length, 1)))
+                AudioLog.pipeline.info("STT input: \(length) samples, \(String(format: "%.2f", duration))s, RMS=\(String(format: "%.4f", rms))")
+                let result = bridge.model.transcribeWithLanguage(
                     audio: samples,
                     sampleRate: Int(sampleRate),
                     language: nil)
-                // Store as C string — valid until next transcribe call
-                bridge.lastText = Array(text.utf8CString)
-                return bridge.lastText.withUnsafeBufferPointer { buf in
-                    sc_transcription_result_t(
-                        text: buf.baseAddress,
-                        confidence: 1.0,
-                        start_time: 0,
-                        end_time: 0)
-                }
+                // Store as C strings on bridge — pointers valid until next transcribe call
+                bridge.lastText = Array(result.text.utf8CString)
+                bridge.lastLanguage = Array((result.language ?? "").utf8CString)
+                let textPtr = bridge.lastText.withUnsafeBufferPointer { $0.baseAddress }
+                let langPtr = bridge.lastLanguage.withUnsafeBufferPointer { $0.baseAddress }
+                return sc_transcription_result_t(
+                    text: textPtr,
+                    language: langPtr,
+                    confidence: 1.0,
+                    start_time: 0,
+                    end_time: 0)
             },
             input_sample_rate: { ctx in
                 let bridge = Unmanaged<STTBridge>.fromOpaque(ctx!).takeUnretainedValue()
@@ -319,24 +361,43 @@ public final class VoicePipeline {
                 bridge.cancelled = false
                 let textStr = String(cString: text!)
                 let langStr = language.map { String(cString: $0) } ?? ""
+                AudioLog.pipeline.info("TTS synthesize: text='\(textStr)', language='\(langStr)'")
 
-                // Synchronous: generate full audio and deliver as single chunk
-                let semaphore = DispatchSemaphore(value: 0)
-                Task {
-                    defer { semaphore.signal() }
-                    do {
-                        let audio = try await bridge.model.generate(
-                            text: textStr, language: langStr.isEmpty ? nil : langStr)
-                        guard !bridge.cancelled else { return }
-                        audio.withUnsafeBufferPointer { buf in
-                            onChunk?(buf.baseAddress, buf.count, true, chunkCtx)
+
+                // Block the C thread until streaming TTS completes.
+                // Streams audio chunks as they're generated — first audio
+                // arrives in ~240ms instead of waiting for full synthesis.
+                let sem = DispatchSemaphore(value: 0)
+                DispatchQueue.global(qos: .userInitiated).async {
+                    let group = DispatchGroup()
+                    group.enter()
+                    Task {
+                        defer { group.leave() }
+                        do {
+                            let stream = bridge.model.generateStream(
+                                text: textStr, language: langStr.isEmpty ? nil : langStr)
+                            var sentFinal = false
+                            // Duration cap is enforced by C++ core (max_response_duration)
+                            for try await chunk in stream {
+                                guard !bridge.cancelled else { break }
+                                let isFinal = chunk.isFinal
+                                chunk.samples.withUnsafeBufferPointer { buf in
+                                    onChunk?(buf.baseAddress, buf.count, isFinal, chunkCtx)
+                                }
+                                if isFinal { sentFinal = true; break }
+                            }
+                            // Ensure C++ always gets exactly one is_final=true
+                            if !sentFinal && !bridge.cancelled {
+                                onChunk?(nil, 0, true, chunkCtx)
+                            }
+                        } catch {
+                            onChunk?(nil, 0, true, chunkCtx)
                         }
-                    } catch {
-                        // Deliver empty final chunk on error
-                        onChunk?(nil, 0, true, chunkCtx)
                     }
+                    group.wait()
+                    sem.signal()
                 }
-                semaphore.wait()
+                sem.wait()
             },
             output_sample_rate: { ctx in
                 let bridge = Unmanaged<TTSBridge>.fromOpaque(ctx!).takeUnretainedValue()

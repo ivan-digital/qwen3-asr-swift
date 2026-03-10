@@ -41,6 +41,10 @@ public class Qwen3TTSModel {
     /// Available speaker names (empty for Base model)
     public var availableSpeakers: [String] { speakerConfig?.availableSpeakers ?? [] }
 
+    /// Default speaker for protocol-based generation (e.g. pipeline echo mode).
+    /// Set this before passing to VoicePipeline for consistent voice.
+    public var defaultSpeaker: String?
+
     /// Whether the model weights are loaded and ready for inference.
     var _isLoaded = true
 

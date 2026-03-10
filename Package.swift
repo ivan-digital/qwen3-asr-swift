@@ -127,14 +127,10 @@ let package = Package(
                 "AudioCommon",
             ]
         ),
-        .target(
+        .binaryTarget(
             name: "CSpeechCore",
-            path: "Sources/CSpeechCore",
-            publicHeadersPath: "include",
-            linkerSettings: [
-                .unsafeFlags(["-L../speech-core/build"]),
-                .linkedLibrary("c++"),
-            ]
+            url: "https://github.com/soniqo/speech-core/releases/download/v0.0.2/SpeechCore.xcframework.zip",
+            checksum: "fea9cd646a49d1cd47fb44e0595f43438d837f9cd3c06a8aa6ea071bbf96895d"
         ),
         .target(
             name: "SpeechCore",

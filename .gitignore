@@ -28,6 +28,8 @@ tokenizer_spm_32k_3.model
 # Quantized model directories
 *-4bit/
 *-8bit/
+*-8bit-v2/
+*-4bit-v2/
 *-bf16/
 *-coreml*/
 
@@ -38,6 +40,9 @@ Tests/**/test_audio_roundtrip.wav
 # Blog drafts
 blog/
 docs/blog-*.md
+
+# XCFrameworks (built externally)
+Frameworks/
 
 # Built app bundles
 *.app/

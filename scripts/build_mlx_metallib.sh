@@ -27,7 +27,7 @@ if [[ "$CONFIG" != "release" && "$CONFIG" != "debug" ]]; then
 fi
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BUILD_DIR="$ROOT/.build"
+BUILD_DIR="${BUILD_DIR:-$ROOT/.build}"
 
 if [[ ! -d "$BUILD_DIR" ]]; then
   echo "error: $BUILD_DIR not found (run swift build first)" >&2

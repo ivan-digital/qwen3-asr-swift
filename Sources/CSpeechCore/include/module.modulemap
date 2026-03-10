@@ -1,5 +1,0 @@
-module CSpeechCore {
-    header "speech_core_c.h"
-    link "speech_core"
-    export *
-}

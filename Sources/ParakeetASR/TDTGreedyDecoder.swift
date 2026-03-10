@@ -27,6 +27,10 @@ private class ReusableFeatureProvider: MLFeatureProvider {
 /// When a non-blank token is emitted, the duration head predicts how many
 /// encoder frames to advance (from `durationBins`), enabling variable-rate
 /// alignment between audio and text.
+///
+/// Standard greedy decoding: starts with blank token to initialize the LSTM,
+/// then runs the encoder-joint-decoder loop. The v3 multilingual model handles
+/// all 25 European languages natively (EncDecRNNTBPEModel, no prompt tokens).
 struct TDTGreedyDecoder {
     let config: ParakeetConfig
     let decoder: MLModel
@@ -37,7 +41,7 @@ struct TDTGreedyDecoder {
     /// - Parameters:
     ///   - encoded: Encoder output as MLMultiArray, shape `[1, T, encoderHidden]`
     ///   - encodedLength: Number of valid encoder frames
-    /// - Returns: Array of decoded token IDs (excluding blank)
+    /// - Returns: Token IDs (text tokens only, blank and special tokens filtered out)
     func decode(encoded: MLMultiArray, encodedLength: Int) throws -> [Int] {
         var tokens = [Int]()
 
@@ -56,16 +60,15 @@ struct TDTGreedyDecoder {
         let argmaxBuf = UnsafeMutablePointer<Float>.allocate(capacity: config.vocabSize + 1)
         defer { argmaxBuf.deallocate() }
 
-        // Initial decoder step with blank token
+        // Initialize decoder with blank token (standard TDT decoding)
         tokenPtr.pointee = Int32(config.blankTokenId)
         let decoderProvider = ReusableFeatureProvider([
             "token": tokenArray, "h": h, "c": c,
         ])
-        let initialOut = try decoder.prediction(from: decoderProvider)
-
-        var decoderOutput = initialOut.featureValue(for: "decoder_output")!.multiArrayValue!
-        var hState = initialOut.featureValue(for: "h_out")!.multiArrayValue!
-        var cState = initialOut.featureValue(for: "c_out")!.multiArrayValue!
+        let initOut = try decoder.prediction(from: decoderProvider)
+        var hState = initOut.featureValue(for: "h_out")!.multiArrayValue!
+        var cState = initOut.featureValue(for: "c_out")!.multiArrayValue!
+        var decoderOutput = initOut.featureValue(for: "decoder_output")!.multiArrayValue!
 
         // Encoder slice buffer: [1, 1, encoderHidden]
         let encSlice = try MLMultiArray(shape: [1, 1, config.encoderHidden as NSNumber], dataType: .float16)
@@ -76,6 +79,11 @@ struct TDTGreedyDecoder {
         ])
         decoderProvider.update("h", hState)
         decoderProvider.update("c", cState)
+
+        // Special tokens (0..273) are filtered from output — they include
+        // language tags, speaker tags, control tokens from SentencePiece training.
+        // Text tokens start at index 274.
+        let firstTextTokenId = 274
 
         var t = 0
         while t < encodedLength {
@@ -91,11 +99,11 @@ struct TDTGreedyDecoder {
             let tokenId = argmax(tokenLogits, count: config.vocabSize + 1, floatBuf: argmaxBuf)
 
             if tokenId == config.blankTokenId {
-                // Blank: advance one frame
                 t += 1
             } else {
-                // Non-blank: emit token and advance by predicted duration
-                tokens.append(tokenId)
+                if tokenId >= firstTextTokenId {
+                    tokens.append(tokenId)
+                }
 
                 let durationIdx = argmax(durationLogits, count: config.numDurationBins, floatBuf: nil)
                 let duration = config.durationBins[durationIdx]

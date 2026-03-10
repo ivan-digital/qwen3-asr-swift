@@ -16,6 +16,10 @@ struct ContentView: View {
                 .tabItem { Label("Dictate", systemImage: "mic.fill") }
             SpeakView()
                 .tabItem { Label("Speak", systemImage: "speaker.wave.2.fill") }
+            #if os(macOS)
+            EchoView()
+                .tabItem { Label("Echo", systemImage: "waveform.path.ecg") }
+            #endif
         }
         #if os(macOS)
         .frame(minWidth: 500, minHeight: 400)

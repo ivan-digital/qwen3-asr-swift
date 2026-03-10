@@ -8,7 +8,7 @@ struct SpeakView: View {
             #if os(macOS)
             // Load model button (macOS uses Qwen3-TTS)
             if !vm.modelLoaded && !vm.isLoading {
-                Button("Load Qwen3-TTS") {
+                Button("Load Qwen3-TTS (CustomVoice)") {
                     Task { await vm.loadModel() }
                 }
                 .buttonStyle(.borderedProminent)
@@ -30,7 +30,7 @@ struct SpeakView: View {
             #endif
 
             if vm.modelLoaded {
-                // Language picker
+                // Language & speaker pickers
                 HStack {
                     Text("Language:")
                     Picker("Language", selection: $vm.language) {
@@ -41,6 +41,18 @@ struct SpeakView: View {
                     #if os(macOS)
                     .frame(width: 150)
                     #endif
+
+                    if !vm.speakers.isEmpty {
+                        Text("Speaker:")
+                        Picker("Speaker", selection: $vm.speaker) {
+                            ForEach(vm.speakers, id: \.self) { s in
+                                Text(s.capitalized).tag(s)
+                            }
+                        }
+                        #if os(macOS)
+                        .frame(width: 150)
+                        #endif
+                    }
                 }
 
                 // Text input
