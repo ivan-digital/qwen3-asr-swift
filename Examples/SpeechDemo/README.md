@@ -35,7 +35,7 @@ Note: The command-line build produces an executable, not a sandboxed .app bundle
 
 ## Usage
 
-The app has two tabs:
+The app has three tabs:
 
 ### Dictate
 
@@ -51,6 +51,16 @@ The app has two tabs:
 3. Select a language from the dropdown
 4. Click **Synthesize** — audio plays automatically when ready
 
+### Echo (Voice Pipeline)
+
+1. Click **Load Models** — downloads Silero VAD (CoreML), Parakeet TDT (CoreML), and Qwen3-TTS (MLX)
+2. Click **Start** to begin the voice pipeline
+3. Speak into the mic — the pipeline detects speech, transcribes it, and speaks it back
+4. Full-duplex: you can interrupt the agent while it's speaking (barge-in)
+5. Click **Stop** to end the session
+
+The Echo tab uses the `SpeechCore` voice pipeline with AEC (acoustic echo cancellation) for full-duplex operation.
+
 ## Models downloaded on first run
 
 | Model | Size | Cache location |
@@ -59,3 +69,4 @@ The app has two tabs:
 | Qwen3-ASR (MLX 4-bit) | ~400 MB | `~/Library/Caches/qwen3-speech/aufklarer_Qwen3-ASR-0.6B-MLX-4bit/` |
 | Qwen3-TTS (MLX 4-bit) | ~1 GB | `~/Library/Caches/qwen3-speech/aufklarer_Qwen3-TTS-12Hz-0.6B-Base-MLX-4bit/` |
 | Qwen3-TTS Tokenizer | ~650 MB | `~/Library/Caches/qwen3-speech/Qwen_Qwen3-TTS-Tokenizer-12Hz/` |
+| Silero VAD v5 (CoreML) | ~1.2 MB | `~/Library/Caches/qwen3-speech/` |
