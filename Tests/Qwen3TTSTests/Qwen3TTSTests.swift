@@ -267,14 +267,15 @@ final class SpeakerConfigTests: XCTestCase {
         let model = Qwen3TTSModel()
         let speakerTokenId = 3065  // vivian
         let prefix = model.buildCodecPrefix(languageId: CodecTokens.languageEnglish, speakerTokenId: speakerTokenId)
+        // Speaker token before pad+bos, matching Python: [think, think_bos, lang, think_eos, SPEAKER, pad, bos]
         XCTAssertEqual(prefix.count, 7)
         XCTAssertEqual(prefix[0], Int32(CodecTokens.codecThink))
         XCTAssertEqual(prefix[1], Int32(CodecTokens.codecThinkBos))
         XCTAssertEqual(prefix[2], Int32(CodecTokens.languageEnglish))
         XCTAssertEqual(prefix[3], Int32(CodecTokens.codecThinkEos))
-        XCTAssertEqual(prefix[4], Int32(CodecTokens.codecPad))
-        XCTAssertEqual(prefix[5], Int32(CodecTokens.codecBos))
-        XCTAssertEqual(prefix[6], Int32(speakerTokenId))
+        XCTAssertEqual(prefix[4], Int32(speakerTokenId))
+        XCTAssertEqual(prefix[5], Int32(CodecTokens.codecPad))
+        XCTAssertEqual(prefix[6], Int32(CodecTokens.codecBos))
     }
 
     func testTTSModelVariant() {
@@ -624,6 +625,113 @@ final class CustomVoiceInstructE2ETests: XCTestCase {
 
     private func fmt(_ value: Double) -> String {
         String(format: "%.2f", value)
+    }
+}
+
+// MARK: - Speaker Token Position E2E Tests
+
+/// Verifies that speaker token position in codec prefix produces correct voice identity.
+/// Regression test for #105: speaker token must come BEFORE pad+bos.
+final class SpeakerTokenPositionE2ETests: XCTestCase {
+
+    static let customVoiceModelId = "aufklarer/Qwen3-TTS-12Hz-0.6B-CustomVoice-MLX-4bit"
+    static let ttsTokenizerModelId = "Qwen/Qwen3-TTS-Tokenizer-12Hz"
+    private static var _sharedModel: Qwen3TTSModel?
+
+    override func tearDown() {
+        super.tearDown()
+        Memory.clearCache()
+    }
+
+    /// Two different speakers should produce distinct audio for the same text.
+    /// With the old wrong token position, all speakers sounded the same.
+    func testDistinctSpeakersProduceDifferentAudio() async throws {
+        let model = try await loadModel()
+
+        let text = "Hello, how are you today?"
+        let config = SamplingConfig(temperature: 0.1, topK: 10, maxTokens: 50)
+
+        let audioRyan = model.synthesize(
+            text: text, language: "english", speaker: "ryan",
+            instruct: "Speak naturally.", sampling: config)
+        let audioVivian = model.synthesize(
+            text: text, language: "english", speaker: "vivian",
+            instruct: "Speak naturally.", sampling: config)
+
+        XCTAssertGreaterThan(audioRyan.count, 0, "Ryan should produce audio")
+        XCTAssertGreaterThan(audioVivian.count, 0, "Vivian should produce audio")
+
+        // Compute spectral centroid as a simple voice characteristic proxy.
+        // Male voices (Ryan) should have lower centroid than female voices (Vivian).
+        let centroidRyan = spectralCentroid(audioRyan, sampleRate: 24000)
+        let centroidVivian = spectralCentroid(audioVivian, sampleRate: 24000)
+
+        print("Ryan:   \(audioRyan.count) samples, centroid=\(String(format: "%.0f", centroidRyan))Hz")
+        print("Vivian: \(audioVivian.count) samples, centroid=\(String(format: "%.0f", centroidVivian))Hz")
+
+        // They should differ meaningfully — if speaker token is ignored, centroids converge
+        let diff = abs(centroidRyan - centroidVivian)
+        XCTAssertGreaterThan(diff, 50.0,
+            "Speaker voices should differ (centroid diff=\(String(format: "%.0f", diff))Hz)")
+    }
+
+    /// No-speaker synthesis (base model behavior) should still produce audio
+    func testNoSpeakerStillWorks() async throws {
+        let model = try await loadModel()
+
+        let audio = model.synthesize(
+            text: "Hello world.",
+            language: "english",
+            speaker: nil,
+            instruct: "Speak naturally.")
+
+        XCTAssertGreaterThan(audio.count, 0, "No-speaker should still produce audio")
+        let duration = Double(audio.count) / 24000.0
+        print("No speaker: \(String(format: "%.2f", duration))s")
+        XCTAssertGreaterThan(duration, 0.3)
+    }
+
+    // MARK: - Helpers
+
+    private func loadModel() async throws -> Qwen3TTSModel {
+        if let model = Self._sharedModel { return model }
+        let model = try await Qwen3TTSModel.fromPretrained(
+            modelId: Self.customVoiceModelId,
+            tokenizerModelId: Self.ttsTokenizerModelId
+        ) { progress, status in
+            print("[CV \(Int(progress * 100))%] \(status)")
+        }
+        Self._sharedModel = model
+        return model
+    }
+
+    /// Simple spectral centroid: weighted average frequency of magnitude spectrum
+    private func spectralCentroid(_ samples: [Float], sampleRate: Int) -> Float {
+        let n = min(samples.count, 4096)
+        guard n > 0 else { return 0 }
+
+        // Compute magnitude of DFT bins via simple sum of squared differences (rough proxy)
+        let halfN = n / 2
+        var weightedSum: Float = 0
+        var magnitudeSum: Float = 0
+
+        for k in 1..<halfN {
+            var real: Float = 0
+            var imag: Float = 0
+            let freq = Float(k) * Float(sampleRate) / Float(n)
+
+            for i in 0..<n {
+                let angle = 2.0 * Float.pi * Float(k) * Float(i) / Float(n)
+                real += samples[i] * cos(angle)
+                imag += samples[i] * sin(angle)
+            }
+
+            let magnitude = sqrt(real * real + imag * imag)
+            weightedSum += freq * magnitude
+            magnitudeSum += magnitude
+        }
+
+        return magnitudeSum > 0 ? weightedSum / magnitudeSum : 0
     }
 }
 
