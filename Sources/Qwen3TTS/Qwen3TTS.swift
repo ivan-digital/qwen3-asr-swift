@@ -87,20 +87,22 @@ public class Qwen3TTSModel {
     ///   - speaker: Speaker voice name (requires CustomVoice model, e.g., "vivian", "ryan")
     ///   - instruct: Instruction text for style control (requires CustomVoice model, e.g., "Speak cheerfully")
     ///   - sampling: Sampling configuration
+    ///   - languageExplicit: Whether the caller explicitly set the language (prevents speaker dialect override)
     /// - Returns: Audio samples at 24kHz
     public func synthesize(
         text: String,
         language: String = "english",
         speaker: String? = nil,
         instruct: String? = nil,
-        sampling: SamplingConfig = .default
+        sampling: SamplingConfig = .default,
+        languageExplicit: Bool = false
     ) -> [Float] {
         guard let tokenizer = tokenizer else {
             fatalError("Tokenizer not loaded. Call setTokenizer() first.")
         }
 
         // Resolve speaker → token ID and optional language override
-        let (speakerTokenId, effectiveLanguage) = resolveSpeaker(speaker, language: language)
+        let (speakerTokenId, effectiveLanguage) = resolveSpeaker(speaker, language: language, languageExplicit: languageExplicit)
 
         // Auto-apply default instruct for CustomVoice when none provided
         let effectiveInstruct = instruct ?? (speakerConfig != nil ? Self.defaultInstruct : nil)
@@ -263,7 +265,8 @@ public class Qwen3TTSModel {
         speaker: String? = nil,
         instruct: String? = nil,
         sampling: SamplingConfig = .default,
-        streaming: StreamingConfig = .default
+        streaming: StreamingConfig = .default,
+        languageExplicit: Bool = false
     ) -> AsyncThrowingStream<AudioChunk, Error> {
         AsyncThrowingStream { continuation in
             Task {
@@ -275,6 +278,7 @@ public class Qwen3TTSModel {
                         instruct: instruct,
                         sampling: sampling,
                         streaming: streaming,
+                        languageExplicit: languageExplicit,
                         continuation: continuation)
                     continuation.finish()
                 } catch {
@@ -293,13 +297,14 @@ public class Qwen3TTSModel {
         instruct: String?,
         sampling: SamplingConfig,
         streaming: StreamingConfig,
+        languageExplicit: Bool = false,
         continuation: AsyncThrowingStream<AudioChunk, Error>.Continuation
     ) throws {
         guard let tokenizer = tokenizer else {
             throw TTSError.tokenizerNotLoaded
         }
 
-        let (speakerTokenId, effectiveLanguage) = resolveSpeaker(speaker, language: language)
+        let (speakerTokenId, effectiveLanguage) = resolveSpeaker(speaker, language: language, languageExplicit: languageExplicit)
 
         // Auto-apply default instruct for CustomVoice when none provided
         let effectiveInstruct = instruct ?? (speakerConfig != nil ? Self.defaultInstruct : nil)
@@ -1146,8 +1151,12 @@ public class Qwen3TTSModel {
     // MARK: - Speaker Resolution
 
     /// Resolve speaker name to token ID and effective language.
+    /// - Parameters:
+    ///   - speaker: Speaker name (nil = no speaker conditioning)
+    ///   - language: Language tag from caller
+    ///   - languageExplicit: Whether the caller explicitly set the language (prevents dialect override)
     /// - Returns: (speakerTokenId, effectiveLanguage) — speakerTokenId is nil if no speaker
-    private func resolveSpeaker(_ speaker: String?, language: String) -> (Int?, String) {
+    private func resolveSpeaker(_ speaker: String?, language: String, languageExplicit: Bool = false) -> (Int?, String) {
         guard let speakerName = speaker else {
             return (nil, language)
         }
@@ -1165,9 +1174,9 @@ public class Qwen3TTSModel {
             return (nil, language)
         }
 
-        // Check if this speaker has a dialect override
+        // Apply dialect override only when language was not explicitly specified
         var effectiveLanguage = language
-        if let dialect = config.speakerDialects[normalizedName] {
+        if !languageExplicit, let dialect = config.speakerDialects[normalizedName] {
             effectiveLanguage = dialect
         }
 
