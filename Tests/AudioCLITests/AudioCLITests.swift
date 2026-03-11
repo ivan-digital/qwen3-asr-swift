@@ -202,13 +202,13 @@ final class SpeakCommandTests: XCTestCase {
     func testDefaultLanguage() throws {
         let cmd = try AudioCLI.parseAsRoot(["speak", "Hello"])
         let speak = try XCTUnwrap(cmd as? SpeakCommand)
-        XCTAssertEqual(speak.language, "english")
+        XCTAssertNil(speak.language)
     }
 
     func testDefaultSamplingParams() throws {
         let cmd = try AudioCLI.parseAsRoot(["speak", "Hello"])
         let speak = try XCTUnwrap(cmd as? SpeakCommand)
-        XCTAssertEqual(speak.temperature, 0.9, accuracy: 0.001)
+        XCTAssertEqual(speak.temperature, 0.3, accuracy: 0.001)
         XCTAssertEqual(speak.topK, 50)
         XCTAssertEqual(speak.maxTokens, 500)
     }
