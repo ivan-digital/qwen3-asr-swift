@@ -1,6 +1,6 @@
 # Speech Swift
 
-AI speech models for Apple Silicon, powered by [MLX Swift](https://github.com/ml-explore/mlx-swift).
+AI speech models for Apple Silicon, powered by [MLX Swift](https://github.com/ml-explore/mlx-swift) and CoreML.
 
 **[Documentation](https://soniqo.audio)** · **[Models](https://huggingface.co/aufklarer)** · **[Blog](https://blog.ivan.digital)**
 
