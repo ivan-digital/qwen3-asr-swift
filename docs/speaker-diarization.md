@@ -35,22 +35,20 @@ Audio → [128-dim Mel] → [Chunk Sliding Window] → [CoreML Neural Engine] �
 
 No speaker embeddings are produced — `--target-speaker` and `--embedding-engine` are not available with Sortformer.
 
-### Pyannote Three-Stage Pipeline
+### Pyannote Pipeline
 
 ```
-Audio → [Stage 1: Segmentation] → [Stage 2: Embedding] → [Stage 3: Speaker Chaining] → Diarized Segments
+Audio → [Segmentation + Activity Chaining] → [Post-hoc Embedding] → Diarized Segments
 ```
 
-**Stage 1 — Segmentation**: Pyannote model processes 10s sliding windows. Instead of collapsing the 7-class powerset to binary VAD, we use `PowersetDecoder` to extract per-speaker probabilities:
+**Stage 1 — Segmentation + Speaker Chaining**: Pyannote processes 10s sliding windows with 50% overlap. The `PowersetDecoder` extracts per-speaker probabilities from the 7-class powerset output:
 - spk1 = P(class 1) + P(class 4) + P(class 5)
 - spk2 = P(class 2) + P(class 4) + P(class 6)
 - spk3 = P(class 3) + P(class 5) + P(class 6)
 
-Hysteresis binarization produces local speaker segments per window.
+Adjacent windows share a 5-second overlap region. Speaker identity is propagated across windows by computing **Pearson correlation** between speaker probability tracks in the overlap zone, then applying greedy exclusive matching to assign consistent global speaker IDs. Tracks with mean probability < 5% are treated as inactive. Hysteresis binarization (onset/offset) produces final segments, clipped to each window's center zone.
 
-**Stage 2 — Embedding**: For each local segment, crop the audio and extract a 256-dim speaker embedding using WeSpeaker ResNet34-LM.
-
-**Stage 3 — Speaker Chaining**: Activity-based speaker chaining links local speakers across overlapping windows. Pearson correlation on speaker probability tracks in overlap regions determines which local speakers correspond to the same global speaker. Greedy exclusive matching assigns global speaker IDs.
+**Stage 2 — Post-hoc Embedding**: After diarization is complete, WeSpeaker ResNet34-LM extracts a 256-dim centroid embedding per speaker (concatenating all their audio). These embeddings are used for target speaker extraction (`--target-speaker`) and returned in `DiarizationResult.speakerEmbeddings`. Embeddings do not drive the speaker assignment.
 
 ### WeSpeaker ResNet34-LM
 
@@ -216,8 +214,7 @@ Sources/SpeechVAD/
 ├── WeSpeaker.swift                    Public API: embed(), fromPretrained(), engine selection
 ├── CoreMLWeSpeakerInference.swift     CoreML inference (EnumeratedShapes, float16)
 ├── PowersetDecoder.swift              7-class powerset → per-speaker probs
-├── SpectralClustering.swift           GMM-BIC + spectral clustering (Accelerate/LAPACK)
-├── DiarizationPipeline.swift          Full Pyannote pipeline + speaker extraction
+├── DiarizationPipeline.swift          Pyannote pipeline (activity chaining + speaker extraction)
 ├── SortformerConfig.swift             Sortformer model configuration
 ├── SortformerMelExtractor.swift       128-dim log-mel for Sortformer (Hann window)
 ├── SortformerModel.swift              CoreML wrapper for Sortformer inference

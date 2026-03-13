@@ -58,15 +58,16 @@ public struct DiarizationResult: Sendable {
 
 // MARK: - Pipeline
 
-/// Speaker diarization pipeline: segmentation → embedding → clustering.
+/// Speaker diarization pipeline: segmentation + activity-based speaker chaining.
 ///
 /// - Warning: This class is not thread-safe. Create separate instances for concurrent use.
 ///
 /// Pipeline (with optional VAD pre-filter):
 /// 0. **VAD Pre-filter** (optional): Silero VAD masks non-speech regions → reduces false alarms
-/// 1. **Segmentation**: Pyannote segmentation on 10s sliding windows → per-speaker local segments
-/// 2. **Embedding**: For each local segment, crop audio → mel → WeSpeaker → 256-dim embedding
-/// 3. **Clustering**: Spectral clustering with GMM-BIC speaker count estimation → global speaker IDs
+/// 1. **Segmentation + Speaker Chaining**: Pyannote on 10s sliding windows (50% overlap) →
+///    per-speaker probability tracks → Pearson correlation in overlap zones → greedy exclusive
+///    matching → global speaker IDs
+/// 2. **Post-hoc Embedding**: WeSpeaker 256-dim centroid per speaker (for target speaker extraction)
 ///
 /// ```swift
 /// let pipeline = try await DiarizationPipeline.fromPretrained(useVADFilter: true)
