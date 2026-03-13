@@ -79,7 +79,7 @@ final class Qwen3ASRIntegrationTests: XCTestCase {
         let targetSampleRate = 24000
         let resampledSamples: [Float]
         if sampleRate != targetSampleRate {
-            resampledSamples = AudioFileLoader.resampleForTest(samples, from: sampleRate, to: targetSampleRate)
+            resampledSamples = AudioFileLoader.resample(samples, from: sampleRate, to: targetSampleRate)
             print("Resampled to \(targetSampleRate)Hz: \(resampledSamples.count) samples")
         } else {
             resampledSamples = samples
@@ -118,7 +118,7 @@ final class Qwen3ASRIntegrationTests: XCTestCase {
         let targetSampleRate = 24000
         let audio: [Float]
         if sampleRate != targetSampleRate {
-            audio = AudioFileLoader.resampleForTest(samples, from: sampleRate, to: targetSampleRate)
+            audio = AudioFileLoader.resample(samples, from: sampleRate, to: targetSampleRate)
         } else {
             audio = samples
         }
@@ -238,7 +238,7 @@ final class Qwen3ASRIntegrationTests: XCTestCase {
         let targetSampleRate = 24000
         let audio: [Float]
         if sampleRate != targetSampleRate {
-            audio = AudioFileLoader.resampleForTest(samples, from: sampleRate, to: targetSampleRate)
+            audio = AudioFileLoader.resample(samples, from: sampleRate, to: targetSampleRate)
         } else {
             audio = samples
         }
@@ -277,7 +277,7 @@ final class Qwen3ASRIntegrationTests: XCTestCase {
         let targetSampleRate = 24000
         let audio: [Float]
         if sampleRate != targetSampleRate {
-            audio = AudioFileLoader.resampleForTest(samples, from: sampleRate, to: targetSampleRate)
+            audio = AudioFileLoader.resample(samples, from: sampleRate, to: targetSampleRate)
         } else {
             audio = samples
         }
@@ -299,27 +299,3 @@ final class Qwen3ASRIntegrationTests: XCTestCase {
     }
 }
 
-// MARK: - Test Helper Extension
-
-extension AudioFileLoader {
-    /// Simple linear resampling for tests
-    static func resampleForTest(_ samples: [Float], from inputRate: Int, to outputRate: Int) -> [Float] {
-        let ratio = Double(outputRate) / Double(inputRate)
-        let outputLength = Int(Double(samples.count) * ratio)
-
-        guard outputLength > 0 else { return [] }
-
-        var output = [Float](repeating: 0, count: outputLength)
-
-        for i in 0..<outputLength {
-            let srcIndex = Double(i) / ratio
-            let srcIndexFloor = Int(srcIndex)
-            let srcIndexCeil = min(srcIndexFloor + 1, samples.count - 1)
-            let fraction = Float(srcIndex - Double(srcIndexFloor))
-
-            output[i] = samples[srcIndexFloor] * (1 - fraction) + samples[srcIndexCeil] * fraction
-        }
-
-        return output
-    }
-}

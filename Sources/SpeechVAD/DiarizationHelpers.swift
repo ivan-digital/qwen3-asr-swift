@@ -56,25 +56,8 @@ enum DiarizationHelpers {
         }
     }
 
-    /// Linear interpolation resampling.
+    /// Resample audio via AVAudioConverter (delegates to AudioFileLoader).
     static func resample(_ audio: [Float], from sourceSR: Int, to targetSR: Int) -> [Float] {
-        guard sourceSR != targetSR else { return audio }
-        let ratio = Double(targetSR) / Double(sourceSR)
-        let outputLen = Int(Double(audio.count) * ratio)
-        var output = [Float](repeating: 0, count: outputLen)
-
-        for i in 0..<outputLen {
-            let srcPos = Double(i) / ratio
-            let srcIdx = Int(srcPos)
-            let frac = Float(srcPos - Double(srcIdx))
-
-            if srcIdx + 1 < audio.count {
-                output[i] = audio[srcIdx] * (1 - frac) + audio[srcIdx + 1] * frac
-            } else if srcIdx < audio.count {
-                output[i] = audio[srcIdx]
-            }
-        }
-
-        return output
+        AudioFileLoader.resample(audio, from: sourceSR, to: targetSR)
     }
 }

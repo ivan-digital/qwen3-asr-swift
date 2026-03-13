@@ -85,7 +85,7 @@ public final class PyannoteVADModel {
     public func detectSpeech(audio: [Float], sampleRate: Int) -> [SpeechSegment] {
         let samples: [Float]
         if sampleRate != segConfig.sampleRate {
-            samples = resample(audio, from: sampleRate, to: segConfig.sampleRate)
+            samples = AudioFileLoader.resample(audio, from: sampleRate, to: segConfig.sampleRate)
         } else {
             samples = audio
         }
@@ -135,25 +135,4 @@ public final class PyannoteVADModel {
         return pipeline.binarize(probs: aggregated)
     }
 
-    /// Simple linear resampling.
-    private func resample(_ audio: [Float], from sourceSR: Int, to targetSR: Int) -> [Float] {
-        guard sourceSR != targetSR else { return audio }
-        let ratio = Double(targetSR) / Double(sourceSR)
-        let outputLen = Int(Double(audio.count) * ratio)
-        var output = [Float](repeating: 0, count: outputLen)
-
-        for i in 0 ..< outputLen {
-            let srcPos = Double(i) / ratio
-            let srcIdx = Int(srcPos)
-            let frac = Float(srcPos - Double(srcIdx))
-
-            if srcIdx + 1 < audio.count {
-                output[i] = audio[srcIdx] * (1 - frac) + audio[srcIdx + 1] * frac
-            } else if srcIdx < audio.count {
-                output[i] = audio[srcIdx]
-            }
-        }
-
-        return output
-    }
 }

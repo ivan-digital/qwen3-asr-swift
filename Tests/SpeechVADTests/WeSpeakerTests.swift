@@ -408,22 +408,9 @@ final class WeSpeakerTests: XCTestCase {
         let (samples, sampleRate) = try AudioFileLoader.loadWAV(url: audioURL)
 
         // Resample to 16kHz if needed
-        let audio16k: [Float]
-        if sampleRate != 16000 {
-            let ratio = Double(16000) / Double(sampleRate)
-            let outLen = Int(Double(samples.count) * ratio)
-            audio16k = (0..<outLen).map { i in
-                let src = Double(i) / ratio
-                let idx = Int(src)
-                let frac = Float(src - Double(idx))
-                if idx + 1 < samples.count {
-                    return samples[idx] * (1 - frac) + samples[idx + 1] * frac
-                }
-                return idx < samples.count ? samples[idx] : 0
-            }
-        } else {
-            audio16k = samples
-        }
+        let audio16k = sampleRate != 16000
+            ? AudioFileLoader.resample(samples, from: sampleRate, to: 16000)
+            : samples
 
         let extractor = MelFeatureExtractor()
         let mel = extractor.extract(audio16k)

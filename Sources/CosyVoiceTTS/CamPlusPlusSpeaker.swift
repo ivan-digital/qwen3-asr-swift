@@ -78,10 +78,10 @@ public final class CamPlusPlusSpeaker {
     ///   - sampleRate: Sample rate of input audio (resampled to 16kHz if needed)
     /// - Returns: 192-dim speaker embedding (not L2-normalized; flow model normalizes internally)
     public func embed(audio: [Float], sampleRate: Int = 16000) throws -> [Float] {
-        // Resample to 16kHz if needed using Apple's AVAudioConverter
+        // Resample to 16kHz if needed
         let samples: [Float]
         if sampleRate != 16000 {
-            samples = try Self.resample(audio, from: sampleRate, to: 16000)
+            samples = AudioFileLoader.resample(audio, from: sampleRate, to: 16000)
         } else {
             samples = audio
         }
@@ -142,54 +142,5 @@ public final class CamPlusPlusSpeaker {
         return embedding
     }
 
-    /// Resample audio using Apple's AVAudioConverter (high-quality sinc interpolation).
-    private static func resample(_ samples: [Float], from sourceSR: Int, to targetSR: Int) throws -> [Float] {
-        guard sourceSR != targetSR else { return samples }
-
-        let sourceFormat = AVAudioFormat(
-            commonFormat: .pcmFormatFloat32,
-            sampleRate: Double(sourceSR),
-            channels: 1,
-            interleaved: false)!
-        let targetFormat = AVAudioFormat(
-            commonFormat: .pcmFormatFloat32,
-            sampleRate: Double(targetSR),
-            channels: 1,
-            interleaved: false)!
-
-        guard let converter = AVAudioConverter(from: sourceFormat, to: targetFormat) else {
-            throw CosyVoiceTTSError.generationFailed("Failed to create audio converter")
-        }
-
-        let sourceBuffer = AVAudioPCMBuffer(pcmFormat: sourceFormat, frameCapacity: AVAudioFrameCount(samples.count))!
-        sourceBuffer.frameLength = AVAudioFrameCount(samples.count)
-        samples.withUnsafeBufferPointer { src in
-            sourceBuffer.floatChannelData![0].update(from: src.baseAddress!, count: samples.count)
-        }
-
-        let ratio = Double(targetSR) / Double(sourceSR)
-        let outputFrameCount = AVAudioFrameCount(Double(samples.count) * ratio)
-        let targetBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: outputFrameCount)!
-
-        var error: NSError?
-        var inputConsumed = false
-        converter.convert(to: targetBuffer, error: &error) { _, outStatus in
-            if inputConsumed {
-                outStatus.pointee = .noDataNow
-                return nil
-            }
-            inputConsumed = true
-            outStatus.pointee = .haveData
-            return sourceBuffer
-        }
-
-        if let error {
-            throw CosyVoiceTTSError.generationFailed("Audio resampling failed: \(error.localizedDescription)")
-        }
-
-        return Array(UnsafeBufferPointer(
-            start: targetBuffer.floatChannelData![0],
-            count: Int(targetBuffer.frameLength)))
-    }
 }
 #endif

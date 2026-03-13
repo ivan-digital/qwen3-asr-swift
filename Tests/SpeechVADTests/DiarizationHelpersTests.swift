@@ -118,22 +118,20 @@ final class DiarizationHelpersTests: XCTestCase {
     }
 
     func testResampleUpsample() {
-        let audio: [Float] = [0.0, 1.0]
+        // Use longer signal for AVAudioConverter (short signals may have different frame counts)
+        let audio: [Float] = (0..<100).map { Float($0) / 100.0 }
         let result = DiarizationHelpers.resample(audio, from: 8000, to: 16000)
-        // 2 samples at 8kHz → 4 samples at 16kHz
-        XCTAssertEqual(result.count, 4)
-        // Linear interpolation: [0.0, 0.5, 1.0, ...]
-        XCTAssertEqual(result[0], 0.0, accuracy: 0.01)
-        XCTAssertEqual(result[1], 0.5, accuracy: 0.01)
-        XCTAssertEqual(result[2], 1.0, accuracy: 0.01)
+        // 100 samples at 8kHz → ~200 samples at 16kHz
+        XCTAssertGreaterThan(result.count, 150)
+        XCTAssertLessThan(result.count, 250)
     }
 
     func testResampleDownsample() {
-        let audio: [Float] = [0.0, 0.25, 0.5, 0.75]
+        let audio: [Float] = (0..<200).map { Float($0) / 200.0 }
         let result = DiarizationHelpers.resample(audio, from: 16000, to: 8000)
-        // 4 samples at 16kHz → 2 samples at 8kHz
-        XCTAssertEqual(result.count, 2)
-        XCTAssertEqual(result[0], 0.0, accuracy: 0.01)
+        // 200 samples at 16kHz → ~100 samples at 8kHz
+        XCTAssertGreaterThan(result.count, 75)
+        XCTAssertLessThan(result.count, 125)
     }
 
     func testResampleEmpty() {

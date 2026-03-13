@@ -311,7 +311,7 @@ public class WhisperFeatureExtractor {
 
         // Resample if needed
         if inputSampleRate != sampleRate {
-            processedAudio = resample(audio, from: inputSampleRate, to: sampleRate)
+            processedAudio = AudioFileLoader.resample(audio, from: inputSampleRate, to: sampleRate)
         }
 
         // NOTE: HuggingFace WhisperFeatureExtractor does NOT normalize audio amplitude
@@ -320,26 +320,5 @@ public class WhisperFeatureExtractor {
 
         // Extract features
         return extractFeatures(processedAudio)
-    }
-
-    /// Simple linear resampling
-    private func resample(_ audio: [Float], from inputRate: Int, to outputRate: Int) -> [Float] {
-        let ratio = Double(outputRate) / Double(inputRate)
-        let outputLength = Int(Double(audio.count) * ratio)
-
-        guard outputLength > 0 else { return [] }
-
-        var output = [Float](repeating: 0, count: outputLength)
-
-        for i in 0..<outputLength {
-            let srcIndex = Double(i) / ratio
-            let srcIndexFloor = Int(srcIndex)
-            let srcIndexCeil = min(srcIndexFloor + 1, audio.count - 1)
-            let fraction = Float(srcIndex - Double(srcIndexFloor))
-
-            output[i] = audio[srcIndexFloor] * (1 - fraction) + audio[srcIndexCeil] * fraction
-        }
-
-        return output
     }
 }

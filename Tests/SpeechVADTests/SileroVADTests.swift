@@ -266,23 +266,9 @@ final class SileroVADTests: XCTestCase {
         let (samples, sampleRate) = try AudioFileLoader.loadWAV(url: audioURL)
 
         // Resample to 16kHz if needed
-        let audio: [Float]
-        if sampleRate != 16000 {
-            // Simple linear resample
-            let ratio = 16000.0 / Double(sampleRate)
-            let outLen = Int(Double(samples.count) * ratio)
-            audio = (0 ..< outLen).map { i in
-                let src = Double(i) / ratio
-                let idx = Int(src)
-                let frac = Float(src - Double(idx))
-                if idx + 1 < samples.count {
-                    return samples[idx] * (1 - frac) + samples[idx + 1] * frac
-                }
-                return idx < samples.count ? samples[idx] : 0
-            }
-        } else {
-            audio = samples
-        }
+        let audio = sampleRate != 16000
+            ? AudioFileLoader.resample(samples, from: sampleRate, to: 16000)
+            : samples
 
         // Streaming mode
         let processor = StreamingVADProcessor(model: model)
@@ -415,22 +401,9 @@ final class SileroVADTests: XCTestCase {
         let (samples, sampleRate) = try AudioFileLoader.loadWAV(url: audioURL)
 
         // Resample to 16kHz
-        let audio: [Float]
-        if sampleRate != 16000 {
-            let ratio = 16000.0 / Double(sampleRate)
-            let outLen = Int(Double(samples.count) * ratio)
-            audio = (0 ..< outLen).map { i in
-                let src = Double(i) / ratio
-                let idx = Int(src)
-                let frac = Float(src - Double(idx))
-                if idx + 1 < samples.count {
-                    return samples[idx] * (1 - frac) + samples[idx + 1] * frac
-                }
-                return idx < samples.count ? samples[idx] : 0
-            }
-        } else {
-            audio = samples
-        }
+        let audio = sampleRate != 16000
+            ? AudioFileLoader.resample(samples, from: sampleRate, to: 16000)
+            : samples
 
         // Collect per-chunk probabilities
         model.resetState()
