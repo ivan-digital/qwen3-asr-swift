@@ -2,14 +2,40 @@
 
 ## Overview
 
-Speaker diarization identifies **who spoke when** in an audio recording. This module combines two models:
+Speaker diarization identifies **who spoke when** in an audio recording. Two engines are available:
 
-1. **Pyannote Segmentation** (PyanNet) — already used for VAD, outputs 7-class powerset probabilities for up to 3 local speakers per window
-2. **WeSpeaker ResNet34-LM** — speaker embedding model that produces 256-dim vectors from speech, used to link local speakers across windows
+1. **Pyannote** (default) — three-stage pipeline: Pyannote segmentation → WeSpeaker embedding → agglomerative clustering
+2. **Sortformer** (CoreML) — NVIDIA's end-to-end neural diarization model, runs on Neural Engine
 
 ## Architecture
 
-### Three-Stage Pipeline
+### Engine Selection
+
+```bash
+audio diarize meeting.wav                    # Pyannote (default)
+audio diarize meeting.wav --engine sortformer  # Sortformer (CoreML)
+```
+
+### Sortformer (End-to-End, CoreML)
+
+NVIDIA Sortformer predicts per-frame speaker activity for up to 4 speakers directly from mel features. No separate embedding or clustering stages.
+
+```
+Audio → [128-dim Mel] → [Chunk Sliding Window] → [CoreML Neural Engine] → [Sigmoid + Binarize] → Segments
+                             ↕ streaming state
+                        (spkcache + fifo buffers)
+```
+
+- **Input**: 128-dim log-mel features (Hann window, nFFT=400, hop=160, 16kHz)
+- **Chunking**: 112 mel frames per chunk (6 core + 1 left + 7 right context × 8 subsampling)
+- **CoreML model**: `[1,112,128]` chunk + `[1,188,512]` spkcache + `[1,40,512]` fifo → `[1,242,4]` speaker preds
+- **State management**: FIFO overflow → spkcache (streaming state carried across chunks)
+- **Post-processing**: Sigmoid → hysteresis binarization (onset=0.5, offset=0.3) → segment merging
+- **Frame duration**: 0.08s per prediction frame
+
+No speaker embeddings are produced — `--target-speaker` and `--embedding-engine` are not available with Sortformer.
+
+### Pyannote Three-Stage Pipeline
 
 ```
 Audio → [Stage 1: Segmentation] → [Stage 2: Embedding] → [Stage 3: Clustering] → Diarized Segments
@@ -114,19 +140,34 @@ let segments = pipeline.extractSpeaker(
 )
 ```
 
+### Sortformer Swift API
+
+```swift
+let diarizer = try await SortformerDiarizer.fromPretrained()
+let result = diarizer.diarize(audio: samples, sampleRate: 16000, config: .default)
+
+for seg in result.segments {
+    print("Speaker \(seg.speakerId): [\(seg.startTime)s - \(seg.endTime)s]")
+}
+// result.speakerEmbeddings is empty (end-to-end model)
+```
+
 ### CLI Commands
 
 ```bash
-# Full diarization
+# Pyannote diarization (default)
 audio diarize meeting.wav
 
-# CoreML embeddings (Neural Engine)
+# Sortformer diarization (CoreML, Neural Engine)
+audio diarize meeting.wav --engine sortformer
+
+# CoreML embeddings (Neural Engine, pyannote only)
 audio diarize meeting.wav --embedding-engine coreml
 
 # With options
 audio diarize meeting.wav --min-speakers 2 --max-speakers 3 --json
 
-# Speaker extraction
+# Speaker extraction (pyannote only)
 audio diarize meeting.wav --target-speaker enrollment.wav
 
 # Embed a speaker's voice
@@ -139,6 +180,7 @@ audio embed-speaker enrollment.wav --engine coreml --json
 - **Segmentation**: `aufklarer/Pyannote-Segmentation-MLX` (~5.7 MB)
 - **Speaker Embedding (MLX)**: `aufklarer/WeSpeaker-ResNet34-LM-MLX` (~25 MB)
 - **Speaker Embedding (CoreML)**: `aufklarer/WeSpeaker-ResNet34-LM-CoreML` (~13 MB)
+- **Sortformer (CoreML)**: `FluidInference/diar-streaming-sortformer-coreml` (~50 MB)
 - Cache: `~/Library/Caches/qwen3-speech/`
 
 ### Weight Conversion
@@ -157,24 +199,33 @@ extension WeSpeakerModel: SpeakerEmbeddingModel {}
 extension DiarizationPipeline: SpeakerDiarizationModel {
     func diarize(audio: [Float], sampleRate: Int) -> [DiarizedSegment]
 }
+
+// SpeakerDiarizationModel (end-to-end, CoreML)
+extension SortformerDiarizer: SpeakerDiarizationModel {
+    func diarize(audio: [Float], sampleRate: Int) -> [DiarizedSegment]
+}
 ```
 
 ## File Structure
 
 ```
 Sources/SpeechVAD/
-├── MelFeatureExtractor.swift          80-dim fbank via vDSP (extractRaw() for CoreML)
+├── MelFeatureExtractor.swift          80-dim fbank via vDSP (WeSpeaker)
 ├── WeSpeakerModel.swift               ResNet34 network (BN-fused Conv2d)
 ├── WeSpeakerWeightLoading.swift       Weight loading from safetensors
 ├── WeSpeaker.swift                    Public API: embed(), fromPretrained(), engine selection
 ├── CoreMLWeSpeakerInference.swift     CoreML inference (EnumeratedShapes, float16)
 ├── PowersetDecoder.swift              7-class powerset → per-speaker probs
 ├── SpectralClustering.swift           GMM-BIC + spectral clustering (Accelerate/LAPACK)
-├── DiarizationPipeline.swift          Full pipeline + speaker extraction
+├── DiarizationPipeline.swift          Full Pyannote pipeline + speaker extraction
+├── SortformerConfig.swift             Sortformer model configuration
+├── SortformerMelExtractor.swift       128-dim log-mel for Sortformer (Hann window)
+├── SortformerModel.swift              CoreML wrapper for Sortformer inference
+├── SortformerDiarizer.swift           End-to-end Sortformer pipeline (streaming)
 └── SpeechVAD+Protocols.swift          Protocol conformances
 
 Sources/AudioCommon/Protocols.swift    DiarizedSegment, SpeakerEmbeddingModel, SpeakerDiarizationModel
-Sources/AudioCLILib/DiarizeCommand.swift       `audio diarize` (--embedding-engine)
+Sources/AudioCLILib/DiarizeCommand.swift       `audio diarize` (--engine, --embedding-engine)
 Sources/AudioCLILib/EmbedSpeakerCommand.swift  `audio embed-speaker` (--engine)
 scripts/convert_wespeaker.py                    MLX weight conversion
 scripts/convert_wespeaker_coreml.py             CoreML weight conversion

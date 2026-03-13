@@ -74,7 +74,8 @@ The `audio` binary is the main entry point:
 .build/release/audio transcribe recording.wav          # ASR
 .build/release/audio speak "Hello" --output hi.wav     # TTS
 .build/release/audio respond --input q.wav             # Speech-to-speech
-.build/release/audio diarize meeting.wav               # Speaker diarization
+.build/release/audio diarize meeting.wav               # Speaker diarization (pyannote)
+.build/release/audio diarize meeting.wav --engine sortformer  # Sortformer (CoreML, end-to-end)
 .build/release/audio diarize meeting.wav --rttm        # RTTM output
 .build/release/audio vad audio.wav                     # Voice activity detection
 .build/release/audio embed-speaker voice.wav           # Speaker embedding
