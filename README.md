@@ -16,7 +16,7 @@ AI speech models for Apple Silicon, powered by [MLX Swift](https://github.com/ml
 - **Pyannote VAD** — Offline voice activity detection (10s windows, multi-speaker overlap)
 - **Speaker Diarization** — Who spoke when (Pyannote pipeline or end-to-end Sortformer on Neural Engine)
 
-Papers: [Qwen3-ASR](https://arxiv.org/abs/2601.21337), [Qwen3-TTS](https://arxiv.org/abs/2601.15621), [CosyVoice 3](https://arxiv.org/abs/2505.17589), [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M) (StyleTTS 2), [PersonaPlex](https://arxiv.org/abs/2602.06053), [Mimi](https://arxiv.org/abs/2410.00037) (audio codec)
+Papers: [Qwen3-ASR](https://arxiv.org/abs/2601.21337), [Qwen3-TTS](https://arxiv.org/abs/2601.15621), [CosyVoice 3](https://arxiv.org/abs/2505.17589), [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M) (StyleTTS 2), [PersonaPlex](https://arxiv.org/abs/2602.06053), [Mimi](https://arxiv.org/abs/2410.00037) (audio codec), [Sortformer](https://arxiv.org/abs/2409.06656) (speaker diarization)
 
 ## Roadmap
 
