@@ -99,6 +99,53 @@ The `StreamingVADProcessor` wraps `SileroVADModel` with a four-state machine for
 - **speech** — Confirmed speech, `speechStarted` event emitted
 - **pendingSilence** — Offset crossed, waiting for `minSilenceDuration` before ending
 
+## Energy Pre-Filter
+
+An optional DSP energy pre-filter (Stage 1) can skip clearly-silent chunks without running neural inference. Enabled by default in `StreamingVADProcessor` and `vad-stream` CLI.
+
+```
+┌────────────────────────────────────────────────────────────┐
+│  EnergyPreFilter (vDSP/Accelerate)                         │
+│                                                            │
+│  512 samples → Hanning window → 512-pt real FFT            │
+│    → 8 log-spaced frequency bands (62–8000 Hz)             │
+│    → per-band log energy (dB)                              │
+│    → compare against adaptive noise floor + margin         │
+│                                                            │
+│  Decision: invoke Silero if ANY band exceeds threshold     │
+│  Noise floor: EMA (α=0.01), updated during silence only    │
+│  Warmup: first 10 chunks always invoke Silero              │
+└────────────────────────────────────────────────────────────┘
+```
+
+**Band layout** (512-point FFT @ 16kHz, bin = 31.25 Hz):
+
+| Band | Hz | FFT Bins |
+|------|----|----------|
+| 0 | 62–125 | 2–4 |
+| 1 | 125–250 | 4–8 |
+| 2 | 250–500 | 8–16 |
+| 3 | 500–1000 | 16–32 |
+| 4 | 1000–2000 | 32–64 |
+| 5 | 2000–4000 | 64–128 |
+| 6 | 4000–6000 | 128–192 |
+| 7 | 6000–8000 | 192–256 |
+
+**LSTM state strategy when skipping:**
+- `updateContextOnly()` saves last 64 samples (context buffer) even on skipped chunks
+- After 50 consecutive skips (~1.6s), `resetLSTMState()` prevents stale state
+- 2-chunk look-back replay on skip→invoke transition warms up LSTM before onset detection
+
+**Configuration (`EnergyPreFilterConfig`):**
+
+```swift
+noiseAlpha:         0.01  // EMA decay for noise floor
+warmupChunks:       10    // ~320ms before pre-filter activates
+marginDB:           10.0  // Energy must exceed floor by this dB
+maxConsecutiveSkips: 50   // ~1.6s → LSTM reset
+lookBackChunks:     2     // Replay on skip→invoke transition
+```
+
 ## Configuration
 
 ```swift
