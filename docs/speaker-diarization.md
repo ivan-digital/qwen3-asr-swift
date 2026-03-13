@@ -38,7 +38,7 @@ No speaker embeddings are produced — `--target-speaker` and `--embedding-engin
 ### Pyannote Three-Stage Pipeline
 
 ```
-Audio → [Stage 1: Segmentation] → [Stage 2: Embedding] → [Stage 3: Clustering] → Diarized Segments
+Audio → [Stage 1: Segmentation] → [Stage 2: Embedding] → [Stage 3: Speaker Chaining] → Diarized Segments
 ```
 
 **Stage 1 — Segmentation**: Pyannote model processes 10s sliding windows. Instead of collapsing the 7-class powerset to binary VAD, we use `PowersetDecoder` to extract per-speaker probabilities:
@@ -50,7 +50,7 @@ Hysteresis binarization produces local speaker segments per window.
 
 **Stage 2 — Embedding**: For each local segment, crop the audio and extract a 256-dim speaker embedding using WeSpeaker ResNet34-LM.
 
-**Stage 3 — Clustering**: Spectral clustering with GMM-BIC automatically estimates the number of speakers and assigns global speaker IDs. Cosine affinity → normalized Laplacian → LAPACK eigendecomposition → GMM-BIC model selection → k-means on spectral embedding. No manual threshold tuning required.
+**Stage 3 — Speaker Chaining**: Activity-based speaker chaining links local speakers across overlapping windows. Pearson correlation on speaker probability tracks in overlap regions determines which local speakers correspond to the same global speaker. Greedy exclusive matching assigns global speaker IDs.
 
 ### WeSpeaker ResNet34-LM
 
