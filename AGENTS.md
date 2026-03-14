@@ -66,6 +66,25 @@ Full test suite (requires metallib + model downloads):
 make test
 ```
 
+### Testing requirements for new code
+
+**Every new feature, model, or module MUST include tests:**
+
+- **Unit tests**: Config parsing, data structures, weight loading, math/DSP logic — no GPU or model downloads needed
+- **E2E tests**: Full pipeline with real model weights — verify correct output (e.g., ASR round-trip, correct transcription text)
+- **Regression tests**: When fixing bugs, add a test that would have caught the bug
+
+**Test organization**: Place tests in `Tests/<ModuleName>Tests/`. Follow existing patterns (e.g., `Qwen3ASRTests/`, `SpeechVADTests/`).
+
+**What to test per category:**
+| Change | Required tests |
+|--------|---------------|
+| New model/module | Unit (config, weight loading) + E2E (inference produces correct output) |
+| New CLI command | Unit (argument parsing) + E2E (end-to-end with real files) |
+| Bug fix | Regression test reproducing the bug |
+| New protocol/type | Unit test for conformance and behavior |
+| DSP/audio processing | Unit test with known input/output pairs |
+
 ## CLI
 
 The `audio` binary is the main entry point:
