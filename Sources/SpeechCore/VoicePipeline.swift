@@ -1,6 +1,7 @@
 import CSpeechCore
 import AudioCommon
 import Foundation
+import os
 
 // MARK: - Pipeline Types
 
@@ -97,7 +98,11 @@ private final class STTBridge {
 /// Bridges a SpeechGenerationModel to the C vtable.
 private final class TTSBridge {
     let model: SpeechGenerationModel
-    var cancelled = false
+    private let _cancelled = OSAllocatedUnfairLock(initialState: false)
+    var cancelled: Bool {
+        get { _cancelled.withLock { $0 } }
+        set { _cancelled.withLock { $0 = newValue } }
+    }
 
     init(_ model: SpeechGenerationModel) { self.model = model }
 }

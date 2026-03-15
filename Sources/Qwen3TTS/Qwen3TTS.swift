@@ -269,7 +269,7 @@ public class Qwen3TTSModel {
         languageExplicit: Bool = false
     ) -> AsyncThrowingStream<AudioChunk, Error> {
         AsyncThrowingStream { continuation in
-            Task {
+            let task = Task {
                 do {
                     try self.runStreamingGeneration(
                         text: text,
@@ -285,6 +285,7 @@ public class Qwen3TTSModel {
                     continuation.finish(throwing: error)
                 }
             }
+            continuation.onTermination = { @Sendable _ in task.cancel() }
         }
     }
 

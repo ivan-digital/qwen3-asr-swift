@@ -19,6 +19,10 @@ import AudioCommon
 /// print(response)       // "Hi there! How can I help?"
 /// print(chat.lastMetrics) // tokens/sec, prefill time, etc.
 /// ```
+///
+/// - Important: Not safe for concurrent access. Use from a single task/thread.
+///   The `@unchecked Sendable` conformance allows passing across isolation
+///   boundaries but does not provide internal synchronization.
 public final class Qwen3ChatModel: @unchecked Sendable {
     public static let defaultModelId = "aufklarer/Qwen3-0.6B-Chat-CoreML"
 

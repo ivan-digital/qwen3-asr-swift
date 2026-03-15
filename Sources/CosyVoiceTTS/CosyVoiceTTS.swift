@@ -236,25 +236,29 @@ public final class CosyVoiceTTSModel {
         language: String = "english",
         chunkSize: Int = 25
     ) -> AsyncThrowingStream<AudioChunk, Error> {
-        let (stream, continuation) = AsyncThrowingStream<AudioChunk, Error>.makeStream()
-
-        Task { [weak self] in
-            guard let self else {
-                continuation.finish()
-                return
+        let rate = config.sampleRate
+        return AsyncThrowingStream { continuation in
+            let task = Task { [weak self] in
+                guard let self else {
+                    continuation.finish()
+                    return
+                }
+                do {
+                    let samples = self.synthesize(text: text, language: language)
+                    let chunk = AudioChunk(
+                        samples: samples,
+                        sampleRate: rate,
+                        frameIndex: 0,
+                        isFinal: true
+                    )
+                    continuation.yield(chunk)
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
             }
-            let samples = self.synthesize(text: text, language: language)
-            let chunk = AudioChunk(
-                samples: samples,
-                sampleRate: config.sampleRate,
-                frameIndex: 0,
-                isFinal: true
-            )
-            continuation.yield(chunk)
-            continuation.finish()
+            continuation.onTermination = { @Sendable _ in task.cancel() }
         }
-
-        return stream
     }
 
     /// Token ID for `<|endofprompt|>` — added by CosyVoice3 but not in base tokenizer config.
