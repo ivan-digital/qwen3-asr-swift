@@ -72,6 +72,25 @@ Full test suite (requires metallib + model downloads):
 make test
 ```
 
+### Testing requirements for new code
+
+**Every new feature, model, or module MUST include tests:**
+
+- **Unit tests**: Config parsing, data structures, weight loading, math/DSP logic — no GPU or model downloads needed
+- **E2E tests**: Full pipeline with real model weights — verify correct output (e.g., ASR round-trip, correct transcription text)
+- **Regression tests**: When fixing bugs, add a test that would have caught the bug
+
+**Test organization**: Place tests in `Tests/<ModuleName>Tests/`. Follow existing patterns (e.g., `Qwen3ASRTests/`, `SpeechVADTests/`).
+
+**What to test per category:**
+| Change | Required tests |
+|--------|---------------|
+| New model/module | Unit (config, weight loading) + E2E (inference produces correct output) |
+| New CLI command | Unit (argument parsing) + E2E (end-to-end with real files) |
+| Bug fix | Regression test reproducing the bug |
+| New protocol/type | Unit test for conformance and behavior |
+| DSP/audio processing | Unit test with known input/output pairs |
+
 ## CLI
 
 The `audio` binary is the main entry point:
@@ -89,11 +108,39 @@ The `audio` binary is the main entry point:
 .build/release/audio kokoro "Hello" --voice af_heart   # Kokoro TTS (iOS)
 ```
 
-## Documentation Site
+## Documentation
 
-The documentation is hosted at **https://soniqo.audio** (Firebase Hosting) and lives in a separate private repository: **soniqo-web**.
+### Local docs (`docs/`)
 
-**Whenever code changes are made in this repo, the corresponding documentation must be updated.**
+Architecture and implementation docs live in this repo:
+
+```
+docs/
+  models/                   Model architecture, weights, layers
+    asr-model.md            Qwen3-ASR architecture
+    tts-model.md            Qwen3-TTS architecture
+    cosyvoice-tts.md        CosyVoice3 architecture
+    kokoro-tts.md           Kokoro-82M architecture
+    parakeet-asr.md         Parakeet TDT architecture
+    personaplex.md          PersonaPlex architecture
+  inference/                Pipelines, usage, configs
+    asr-inference.md        ASR inference pipeline
+    qwen3-tts-inference.md  TTS inference pipeline
+    forced-aligner.md       Forced alignment pipeline
+    silero-vad.md           Silero VAD streaming
+    speaker-diarization.md  Speaker diarization pipeline
+    speech-enhancement.md   DeepFilterNet3 pipeline
+  benchmarks/               WER, DER, RTF results
+  shared-protocols.md       Protocol reference (cross-cutting)
+```
+
+**Keep local docs in sync when making code changes.**
+
+### Documentation site (soniqo-web)
+
+The public documentation is hosted at **https://soniqo.audio** (Firebase Hosting) and lives in a separate private repository: **soniqo-web**.
+
+**Whenever code changes are made in this repo, both local docs AND the soniqo-web site must be updated.**
 
 ### What requires a docs update
 
@@ -131,11 +178,11 @@ soniqo-web/public/
 
 ### Mapping: code changes → docs pages
 
-| Code change | Docs page(s) to update |
-|---|---|
-| CLI flag added/changed | `/cli/index.html` + relevant guide page |
-| New model/module | Landing page feature grid + new guide page + architecture |
-| Protocol change | `/api/index.html` |
-| Performance improvement | Landing page perf section + relevant guide |
-| Build/install change | `/getting-started/index.html` |
-| New CLI command | `/cli/index.html` + new guide page + landing page |
+| Code change | Local docs | soniqo-web page(s) |
+|---|---|---|
+| CLI flag added/changed | Relevant inference doc | `/cli/index.html` + relevant guide |
+| New model/module | New model + inference doc | Landing page + new guide + architecture |
+| Protocol change | `shared-protocols.md` | `/api/index.html` |
+| Performance improvement | `benchmarks/` | Landing page perf section + relevant guide |
+| Build/install change | — | `/getting-started/index.html` |
+| New CLI command | Relevant inference doc | `/cli/index.html` + new guide + landing page |

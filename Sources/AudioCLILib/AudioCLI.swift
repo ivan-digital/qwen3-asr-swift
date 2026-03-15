@@ -6,6 +6,7 @@ public struct AudioCLI: ParsableCommand {
         abstract: "AI speech models for Apple Silicon",
         subcommands: [
             TranscribeCommand.self,
+            TranscribeBatchCommand.self,
             AlignCommand.self,
             SpeakCommand.self,
             RespondCommand.self,

@@ -273,7 +273,7 @@ Output:
 ...
 ```
 
-Non-autoregressive — single forward pass, no sampling loop. See [Forced Aligner](docs/forced-aligner.md) for architecture details.
+Non-autoregressive — single forward pass, no sampling loop. See [Forced Aligner](docs/inference/forced-aligner.md) for architecture details.
 
 ## Text-to-Speech (TTS) — Generate Speech in Swift
 
@@ -819,7 +819,7 @@ make build
 .build/release/audio embed-speaker enrollment.wav --engine coreml
 ```
 
-See [Speaker Diarization](docs/speaker-diarization.md) for architecture details.
+See [Speaker Diarization](docs/inference/speaker-diarization.md) for architecture details.
 
 ## Speech Enhancement — Noise Suppression and Audio Cleanup
 
@@ -848,7 +848,7 @@ make build
 .build/release/audio denoise noisy.wav --output clean.wav
 ```
 
-See [Speech Enhancement](docs/speech-enhancement.md) for architecture details.
+See [Speech Enhancement](docs/inference/speech-enhancement.md) for architecture details.
 
 ## Pipelines — Compose Multiple Models
 
@@ -1060,7 +1060,11 @@ CoreML models are available for Qwen3-ASR encoder, Silero VAD, and WeSpeaker. Fo
 
 ## Architecture
 
-See [ASR Inference](docs/asr-inference.md), [ASR Model](docs/asr-model.md), [Parakeet TDT ASR](docs/parakeet-asr.md), [Forced Aligner](docs/forced-aligner.md), [Qwen3-TTS Inference](docs/qwen3-tts-inference.md), [TTS Model](docs/tts-model.md), [CosyVoice TTS](docs/cosyvoice-tts.md), [Kokoro TTS](docs/kokoro-tts.md), [PersonaPlex](docs/personaplex.md), [Silero VAD](docs/silero-vad.md), [Speaker Diarization](docs/speaker-diarization.md), [Speech Enhancement](docs/speech-enhancement.md), [Shared Protocols](docs/shared-protocols.md) for detailed architecture docs.
+**Models:** [ASR Model](docs/models/asr-model.md), [TTS Model](docs/models/tts-model.md), [CosyVoice TTS](docs/models/cosyvoice-tts.md), [Kokoro TTS](docs/models/kokoro-tts.md), [Parakeet TDT](docs/models/parakeet-asr.md), [PersonaPlex](docs/models/personaplex.md)
+
+**Inference:** [ASR Inference](docs/inference/asr-inference.md), [TTS Inference](docs/inference/qwen3-tts-inference.md), [Forced Aligner](docs/inference/forced-aligner.md), [Silero VAD](docs/inference/silero-vad.md), [Speaker Diarization](docs/inference/speaker-diarization.md), [Speech Enhancement](docs/inference/speech-enhancement.md)
+
+**Reference:** [Shared Protocols](docs/shared-protocols.md)
 
 ## Cache Configuration
 
