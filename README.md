@@ -10,6 +10,7 @@ AI speech models for Apple Silicon, powered by [MLX Swift](https://github.com/ml
 - **Qwen3-TTS** — Text-to-speech synthesis (highest quality, custom speakers)
 - **CosyVoice TTS** — Text-to-speech with streaming, voice cloning, multi-speaker dialogue, and emotion tags (9 languages, DiT flow matching, CAM++ speaker encoder)
 - **Kokoro TTS** — On-device text-to-speech (82M params, CoreML/Neural Engine, 50 voices, iOS-ready)
+- **Qwen3-Chat** — On-device LLM chat (0.6B, CoreML/Neural Engine, INT4, streaming tokens, thinking mode)
 - **PersonaPlex** — Full-duplex speech-to-speech (7B, audio in → audio out)
 - **DeepFilterNet3** — Speech enhancement / noise suppression (2.1M params, real-time 48kHz)
 - **Silero VAD** — Streaming voice activity detection (32ms chunks, ~309K params)
@@ -41,6 +42,7 @@ See [Roadmap discussion](https://github.com/soniqo/speech-swift/discussions/81) 
 | Qwen3-TTS-1.7B Base | Text → Speech | Yes (~120ms) | 10 languages | [4-bit](https://huggingface.co/aufklarer/Qwen3-TTS-12Hz-1.7B-Base-MLX-4bit) 3.2 GB · [8-bit](https://huggingface.co/aufklarer/Qwen3-TTS-12Hz-1.7B-Base-MLX-8bit) 4.8 GB |
 | CosyVoice3-0.5B | Text → Speech | Yes (~150ms) | 9 languages | [4-bit](https://huggingface.co/aufklarer/CosyVoice3-0.5B-MLX-4bit) 1.2 GB |
 | Kokoro-82M | Text → Speech | No | 10 languages | [CoreML](https://huggingface.co/aufklarer/Kokoro-82M-CoreML) ~325 MB |
+| Qwen3-0.6B Chat | Text → Text (LLM) | Yes (streaming) | Multi | [CoreML INT4](https://huggingface.co/aufklarer/Qwen3-0.6B-Chat-CoreML) 318 MB |
 | PersonaPlex-7B | Speech → Speech | Yes (~2s chunks) | EN | [4-bit](https://huggingface.co/aufklarer/PersonaPlex-7B-MLX-4bit) 4.9 GB · [8-bit](https://huggingface.co/aufklarer/PersonaPlex-7B-MLX-8bit) 9.1 GB |
 | Silero-VAD-v5 | Voice Activity Detection | Yes (32ms chunks) | Language-agnostic | [MLX](https://huggingface.co/aufklarer/Silero-VAD-v5-MLX) · [CoreML](https://huggingface.co/aufklarer/Silero-VAD-v5-CoreML) ~1.2 MB |
 | Pyannote-Segmentation-3.0 | VAD + Speaker Segmentation | No (10s windows) | Language-agnostic | [MLX](https://huggingface.co/aufklarer/Pyannote-Segmentation-MLX) ~5.7 MB |
@@ -63,6 +65,7 @@ Weight memory is the GPU (MLX) or ANE (CoreML) memory consumed by model paramete
 | Qwen3-TTS-0.6B (4-bit, MLX) | 977 MB | ~2 GB |
 | CosyVoice3-0.5B (4-bit, MLX) | 732 MB | ~1.5 GB |
 | Kokoro-82M (CoreML) | 325 MB | ~500 MB |
+| Qwen3-Chat-0.6B (INT4, CoreML) | 318 MB | ~600 MB |
 | PersonaPlex-7B (4-bit, MLX) | 4,900 MB | ~6.5 GB |
 | Silero-VAD-v5 (MLX) | 1.2 MB | ~5 MB |
 | Silero-VAD-v5 (CoreML) | 0.7 MB | ~3 MB |
@@ -117,6 +120,7 @@ import ParakeetASR   // Speech recognition (CoreML)
 import Qwen3TTS      // Text-to-speech (Qwen3)
 import CosyVoiceTTS  // Text-to-speech (streaming)
 import KokoroTTS     // Text-to-speech (CoreML, iOS-ready)
+import Qwen3Chat     // On-device LLM chat (CoreML)
 import PersonaPlex   // Speech-to-speech (full-duplex)
 import SpeechVAD          // Voice activity detection (pyannote + Silero)
 import SpeechEnhancement  // Noise suppression (DeepFilterNet3)
@@ -644,6 +648,27 @@ make build
 # List available voices
 .build/release/audio kokoro --list-voices
 ```
+
+## Qwen3 Chat (On-Device LLM)
+
+```swift
+import Qwen3Chat
+
+let chat = try await Qwen3ChatModel.fromPretrained()
+// Downloads ~318 MB on first run (INT4 CoreML model + tokenizer)
+
+// Single response
+let response = try chat.generate("What is Swift?", systemPrompt: "Answer briefly.")
+print(response)
+
+// Streaming tokens
+let stream = chat.chatStream("Tell me a joke", systemPrompt: "Be funny.")
+for try await token in stream {
+    print(token, terminator: "")
+}
+```
+
+Qwen3-0.6B INT4 quantized for CoreML. Runs on Neural Engine with ~2 tok/s on iPhone, ~15 tok/s on M-series. Supports multi-turn conversation with KV cache, thinking mode (`<think>` tokens), and configurable sampling (temperature, top-k, top-p, repetition penalty).
 
 ## Voice Activity Detection
 
