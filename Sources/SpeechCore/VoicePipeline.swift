@@ -66,24 +66,9 @@ public struct PipelineConfig {
     public init() {}
 }
 
-// MARK: - LLM Protocol
-
-/// Protocol for language model integration with the voice pipeline.
-public protocol PipelineLLM: AnyObject {
-    /// Chat with streaming token output.
-    func chat(messages: [(role: MessageRole, content: String)],
-              onToken: @escaping (String, Bool) -> Void)
-    /// Cancel in-progress generation.
-    func cancel()
-}
-
-/// Message roles matching speech-core's sc_role_t.
-public enum MessageRole: Int {
-    case system = 0
-    case user = 1
-    case assistant = 2
-    case tool = 3
-}
+// PipelineLLM and MessageRole are defined in AudioCommon.
+// Re-exported here for backward compatibility.
+// import AudioCommon to access them directly.
 
 // MARK: - Bridge Classes
 
