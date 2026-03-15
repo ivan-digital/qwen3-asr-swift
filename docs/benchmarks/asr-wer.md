@@ -54,7 +54,7 @@ CER used for CJK languages (no word boundaries). Parakeet is English-only (25 Eu
 | German | WER | 9.45 | 6.81 | 12.33 | 12.33 |
 | French | WER | 11.42 | 8.50 | 13.02 | 13.02 |
 | Japanese | CER | 16.11 | 8.64 | — | — |
-| Russian | WER | 16.35 | 10.52 | pending | pending |
+| Russian | WER | 16.35 | 10.52 | 11.49 | 11.49 |
 | Korean | WER | 19.95 | 6.89 | — | — |
 | Hindi | WER | 25.93 | 18.57 | — | — |
 | Arabic | WER | 33.47 | 20.31 | — | — |
