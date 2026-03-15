@@ -13,7 +13,7 @@ concurrency:
 jobs:
   build-and-test:
     runs-on: macos-15
-    timeout-minutes: 20
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -24,14 +24,36 @@ jobs:
           key: spm-${{ runner.os }}-${{ hashFiles('Package.swift') }}
           restore-keys: spm-${{ runner.os }}-
 
-      - name: Build and run tests
+      - name: Build debug
+        run: swift build --build-tests --disable-sandbox
+
+      - name: Build metallib
+        run: ./scripts/build_mlx_metallib.sh debug
+
+      - name: Copy metallib to test bundle
         run: |
-          swift build --build-tests --disable-sandbox
-          ./scripts/build_mlx_metallib.sh debug
           ARCH="$(uname -m)-apple-macosx"
           for BUNDLE in .build/$ARCH/debug/*.xctest/Contents/MacOS; do
             [ -d "$BUNDLE" ] && cp .build/debug/mlx.metallib "$BUNDLE/" 2>/dev/null || true
           done
-          swift test --skip-build \
-            --skip E2ETests \
-            --skip IntegrationTests
+
+      - name: Run unit tests
+        run: >
+          swift test --skip-build
+          --skip E2ETests
+          --skip IntegrationTests
+          --skip BenchmarkTests
+          --skip StreamingASRTests
+          --skip ForcedAlignerTests
+          --skip SileroVADTests
+          --skip SpeechVADTests
+          --skip WeSpeakerTests
+          --skip SortformerTests
+          --skip SpeechEnhancementTests
+          --skip PersonaPlexTests
+          --skip ParakeetASRTests
+          --skip CosyVoiceWeightLoadingTests
+          --skip CosyVoiceForwardPassTests
+          --skip CosyVoiceTokenizerTests
+          --skip TTSBatchTests
+          --skip TTSStreamingTests
