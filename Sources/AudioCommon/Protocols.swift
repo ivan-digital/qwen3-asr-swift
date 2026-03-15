@@ -89,10 +89,29 @@ public struct AlignedWord: Sendable {
 public protocol SpeechGenerationModel: AnyObject {
     /// Output sample rate in Hz
     var sampleRate: Int { get }
-    /// Synthesize audio from text (blocking, returns full waveform)
+    /// Synthesize audio from text (returns full waveform)
     func generate(text: String, language: String?) async throws -> [Float]
-    /// Synthesize audio from text with streaming output
+    /// Synthesize audio from text with streaming output.
+    /// Default implementation wraps `generate()` as a single chunk.
     func generateStream(text: String, language: String?) -> AsyncThrowingStream<AudioChunk, Error>
+}
+
+extension SpeechGenerationModel {
+    /// Default: wraps `generate()` as a single-chunk stream.
+    public func generateStream(text: String, language: String?) -> AsyncThrowingStream<AudioChunk, Error> {
+        let rate = sampleRate
+        return AsyncThrowingStream { continuation in
+            Task {
+                do {
+                    let samples = try await self.generate(text: text, language: language)
+                    continuation.yield(AudioChunk(samples: samples, sampleRate: rate, frameIndex: 0, isFinal: true))
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+        }
+    }
 }
 
 // MARK: - Speech Recognition (STT)
