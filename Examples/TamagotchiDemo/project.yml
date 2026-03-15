@@ -1,0 +1,38 @@
+name: TamagotchiDemo
+options:
+  bundleIdPrefix: audio.soniqo
+  deploymentTarget:
+    iOS: "17.0"
+
+packages:
+  speech-swift:
+    path: ../..
+
+targets:
+  TamagotchiDemo:
+    type: application
+    platform: iOS
+    sources:
+      - TamagotchiDemo
+    info:
+      path: TamagotchiDemo/Info.plist
+      properties:
+        UILaunchScreen: {}
+        NSMicrophoneUsageDescription: Voice input for the companion chat
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: audio.soniqo.TamagotchiDemo
+      INFOPLIST_KEY_NSMicrophoneUsageDescription: "Voice input for the companion chat"
+      CODE_SIGN_STYLE: Automatic
+    dependencies:
+      - package: speech-swift
+        product: Qwen3Chat
+      - package: speech-swift
+        product: KokoroTTS
+      - package: speech-swift
+        product: ParakeetASR
+      - package: speech-swift
+        product: SpeechVAD
+      - package: speech-swift
+        product: SpeechCore
+      - package: speech-swift
+        product: AudioCommon

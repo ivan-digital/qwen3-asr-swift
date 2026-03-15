@@ -241,8 +241,12 @@ public final class SileroVADModel {
             try await HuggingFaceDownloader.downloadWeights(
                 modelId: resolvedModelId,
                 to: cacheDir,
+                localCheckFiles: ["config.json"],
                 progressHandler: { progress in
-                    progressHandler?(progress * 0.8, "Downloading weights...")
+                    progressHandler?(progress * 0.8, "")
+                },
+                statusHandler: { status in
+                    progressHandler?(0.0, status)
                 }
             )
 
@@ -260,8 +264,12 @@ public final class SileroVADModel {
                 modelId: resolvedModelId,
                 to: cacheDir,
                 additionalFiles: ["silero_vad.mlmodelc/**", "config.json"],
+                localCheckFiles: ["config.json", "silero_vad.mlmodelc"],
                 progressHandler: { progress in
-                    progressHandler?(progress * 0.8, "Downloading CoreML model...")
+                    progressHandler?(progress * 0.8, "")
+                },
+                statusHandler: { status in
+                    progressHandler?(0.0, status)
                 }
             )
 
