@@ -8,18 +8,16 @@
 
 | Model | Engine | Bits | Size | WER% | RTF | Model Load | Warmup |
 |-------|--------|------|------|------|-----|------------|--------|
+| Parakeet TDT 0.6B | CoreML (ANE) | INT8 | 634 MB | 2.74 | 0.089 | 128.9s | 2.0s |
 | Qwen3-ASR 0.6B | MLX (GPU) | 8-bit | 960 MB | 2.80 | 0.025 | 2.4s | 0.3s |
 | Qwen3-ASR 0.6B | MLX (GPU) | 4-bit | 675 MB | 3.34 | 0.023 | 2.4s | 0.3s |
 | Parakeet TDT 0.6B | CoreML (ANE) | INT4 | 332 MB | 3.68 | 0.295 | 23.3s | 2.4s |
-| Parakeet TDT 0.6B | CoreML (ANE) | INT8 | 634 MB | —* | 0.089 | 128.9s | 2.0s |
 | Qwen3-ASR 0.6B | CoreML+MLX | 8-bit | 960 MB | — | 0.026 | 2.5s | 0.4s |
-
-*Parakeet INT8 full run in progress.
 
 **Machine**: Apple M2 Max, 64 GB, macOS 14, release build with compiled metallib.
 
 **Key observations:**
-- Parakeet INT8 achieves the best WER (1.84%) but has a slow cold start (128.9s CoreML compilation)
+- Parakeet INT8 achieves the best WER (2.74%) but has a slow cold start (128.9s CoreML compilation)
 - Qwen3-ASR MLX is 10x faster to load (2.4s vs 23-129s) and has the fastest RTF (0.023)
 - CoreML+MLX hybrid uses ANE for encoder + GPU for decoder, freeing GPU for other tasks
 - Parakeet INT8 is 3.3x faster than INT4 (RTF 0.089 vs 0.298, verified over 3 runs). CoreML's Neural Engine processes INT8 natively; INT4 palettization adds per-operation dequantization overhead that outweighs the smaller model size. INT8 has a slower cold start (129s vs 23s) due to larger CoreML compilation
@@ -30,6 +28,7 @@
 |-------|--------|------|-----------|-------------------|--------|
 | Whisper Large v3 Turbo | 809M | 1.6 GB | FP16 | 2.5 | OpenAI (2024) |
 | Whisper Large v3 | 1.5B | 3.1 GB | FP16 | 2.7 | OpenAI (2023) |
+| **Parakeet TDT 0.6B INT8** | **600M** | **634 MB** | **INT8** | **2.74** | **This benchmark** |
 | **Qwen3-ASR 0.6B 8-bit** | **600M** | **960 MB** | **8-bit** | **2.80** | **This benchmark** |
 | Whisper Medium | 769M | 1.5 GB | FP16 | 3.0 | OpenAI (2022) |
 | **Qwen3-ASR 0.6B 4-bit** | **600M** | **675 MB** | **4-bit** | **3.34** | **This benchmark** |
