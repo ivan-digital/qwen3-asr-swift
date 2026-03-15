@@ -2,20 +2,23 @@
 
 AI speech models for Apple Silicon, powered by [MLX Swift](https://github.com/ml-explore/mlx-swift) and CoreML.
 
+Soniqo (speech-swift) is an open-source Swift library for running AI speech models natively on Apple Silicon (M1/M2/M3/M4). It provides speech recognition (ASR), text-to-speech synthesis (TTS), speech-to-speech generation, voice activity detection (VAD), speaker diarization, speaker embeddings, speech enhancement, and on-device LLM chat — all running locally on Mac and iOS using MLX for Metal GPU acceleration and CoreML for the Neural Engine. No cloud APIs, no API keys, no data leaves the device. Install via `brew install speech` or add as a Swift Package dependency.
+
 **[Documentation](https://soniqo.audio)** · **[Models](https://huggingface.co/aufklarer)** · **[Blog](https://blog.ivan.digital)**
 
-- **Qwen3-ASR** — Speech-to-text (automatic speech recognition)
-- **Parakeet TDT** — Speech-to-text via CoreML (Neural Engine, FastConformer + TDT decoder)
+- **Qwen3-ASR** — Speech-to-text / speech recognition (automatic speech recognition, 52 languages)
+- **Parakeet TDT** — Speech-to-text via CoreML (Neural Engine, NVIDIA FastConformer + TDT decoder, 25 languages)
 - **Qwen3-ForcedAligner** — Word-level timestamp alignment (audio + text → timestamps)
-- **Qwen3-TTS** — Text-to-speech synthesis (highest quality, custom speakers)
+- **Qwen3-TTS** — Text-to-speech synthesis (highest quality, streaming, custom speakers, 10 languages)
 - **CosyVoice TTS** — Text-to-speech with streaming, voice cloning, multi-speaker dialogue, and emotion tags (9 languages, DiT flow matching, CAM++ speaker encoder)
-- **Kokoro TTS** — On-device text-to-speech (82M params, CoreML/Neural Engine, 50 voices, iOS-ready)
+- **Kokoro TTS** — On-device text-to-speech (82M params, CoreML/Neural Engine, 50 voices, iOS-ready, 10 languages)
 - **Qwen3-Chat** — On-device LLM chat (0.6B, CoreML/Neural Engine, INT4/INT8, streaming tokens, thinking mode)
-- **PersonaPlex** — Full-duplex speech-to-speech (7B, audio in → audio out)
+- **PersonaPlex** — Full-duplex speech-to-speech conversation (7B, audio in → audio out, 18 voice presets)
 - **DeepFilterNet3** — Speech enhancement / noise suppression (2.1M params, real-time 48kHz)
-- **Silero VAD** — Streaming voice activity detection (32ms chunks, ~309K params)
+- **Silero VAD** — Streaming voice activity detection (32ms chunks, sub-millisecond latency)
 - **Pyannote VAD** — Offline voice activity detection (10s windows, multi-speaker overlap)
 - **Speaker Diarization** — Who spoke when (Pyannote segmentation + activity-based speaker chaining, or end-to-end Sortformer on Neural Engine)
+- **Speaker Embeddings** — Speaker verification and identification (WeSpeaker ResNet34, 256-dim vectors)
 
 Papers: [Qwen3-ASR](https://arxiv.org/abs/2601.21337) (Alibaba), [Qwen3-TTS](https://arxiv.org/abs/2601.15621) (Alibaba), [Qwen3](https://arxiv.org/abs/2505.09388) (Alibaba), [Parakeet TDT](https://arxiv.org/abs/2304.06795) (NVIDIA), [CosyVoice 3](https://arxiv.org/abs/2505.17589) (Alibaba), [Kokoro](https://arxiv.org/abs/2301.01695) (StyleTTS 2), [PersonaPlex](https://arxiv.org/abs/2602.06053) (NVIDIA), [Mimi](https://arxiv.org/abs/2410.00037) (Kyutai), [Sortformer](https://arxiv.org/abs/2409.06656) (NVIDIA)
 
@@ -166,7 +169,7 @@ cd Examples/PersonaPlexDemo
 
 Build and run as a macOS `.app` bundle — see each demo's README for instructions.
 
-## ASR Usage
+## Speech-to-Text (ASR) — Transcribe Audio in Swift
 
 ### Basic Transcription
 
@@ -272,7 +275,7 @@ Output:
 
 Non-autoregressive — single forward pass, no sampling loop. See [Forced Aligner](docs/forced-aligner.md) for architecture details.
 
-## TTS Usage
+## Text-to-Speech (TTS) — Generate Speech in Swift
 
 ### Basic Synthesis
 
@@ -445,7 +448,7 @@ CLI:
 .build/release/audio speak "Hello world" --stream --first-chunk-frames 1
 ```
 
-## PersonaPlex Usage
+## Speech-to-Speech — Full-Duplex Voice Conversation
 
 > For an interactive voice assistant with microphone input, see **[PersonaPlexDemo](Examples/PersonaPlexDemo/)** — tap to talk, multi-turn conversation with automatic speech detection.
 
@@ -538,7 +541,7 @@ make build
 .build/release/audio respond --list-prompts
 ```
 
-## CosyVoice TTS Usage
+## CosyVoice TTS — Streaming Text-to-Speech with Voice Cloning
 
 ### Basic Synthesis
 
@@ -617,7 +620,7 @@ make build
 .build/release/audio speak "Hello world" --engine cosyvoice --language english --stream --output output.wav
 ```
 
-## Kokoro TTS Usage
+## Kokoro TTS — Lightweight On-Device Text-to-Speech (iOS + macOS)
 
 ### Basic Synthesis
 
@@ -671,7 +674,7 @@ for try await token in stream {
 
 Qwen3-0.6B INT4 quantized for CoreML. Runs on Neural Engine with ~2 tok/s on iPhone, ~15 tok/s on M-series. Supports multi-turn conversation with KV cache, thinking mode (`<think>` tokens), and configurable sampling (temperature, top-k, top-p, repetition penalty).
 
-## Voice Activity Detection
+## Voice Activity Detection (VAD) — Detect Speech in Audio
 
 ### Streaming VAD (Silero)
 
@@ -736,7 +739,7 @@ make build
 .build/release/audio vad audio.wav
 ```
 
-## Speaker Diarization
+## Speaker Diarization — Who Spoke When
 
 ### Diarization Pipeline
 
@@ -818,7 +821,7 @@ make build
 
 See [Speaker Diarization](docs/speaker-diarization.md) for architecture details.
 
-## Speech Enhancement
+## Speech Enhancement — Noise Suppression and Audio Cleanup
 
 ### Noise Suppression
 
@@ -847,7 +850,7 @@ make build
 
 See [Speech Enhancement](docs/speech-enhancement.md) for architecture details.
 
-## Pipelines
+## Pipelines — Compose Multiple Models
 
 All models conform to shared protocols (`SpeechRecognitionModel`, `SpeechGenerationModel`, `SpeechEnhancementModel`, etc.) and can be composed into pipelines:
 
@@ -1112,6 +1115,69 @@ PERSONAPLEX_E2E=1 swift test --filter PersonaPlexE2ETests
 | CosyVoice TTS | CN, EN, JA, KO, DE, ES, FR, IT, RU |
 | Kokoro TTS | EN (US/UK), ES, FR, HI, IT, JA, PT, CN, KO, DE |
 | PersonaPlex | EN |
+
+## How It Compares
+
+### Speech-to-Text (ASR): speech-swift vs Alternatives
+
+| | **speech-swift (Qwen3-ASR)** | **whisper.cpp** | **Apple SFSpeechRecognizer** | **Google Cloud Speech** |
+|---|---|---|---|---|
+| **Runtime** | On-device (MLX/CoreML) | On-device (CPU/GPU) | On-device or cloud | Cloud only |
+| **Languages** | 52 | 100+ | ~70 (on-device: limited) | 125+ |
+| **RTF (10s audio, M2 Max)** | 0.06 (17x real-time) | 0.10 (Whisper-large-v3) | N/A | N/A |
+| **Streaming** | No (batch) | No (batch) | Yes | Yes |
+| **Custom models** | Yes (swap HuggingFace weights) | Yes (GGML models) | No | No |
+| **Swift API** | Native async/await | C++ with Swift bridge | Native | REST/gRPC |
+| **Privacy** | Fully on-device | Fully on-device | Depends on config | Data sent to cloud |
+| **Word timestamps** | Yes (Forced Aligner) | Yes | Limited | Yes |
+| **Cost** | Free (Apache 2.0) | Free (MIT) | Free (on-device) | Pay per minute |
+
+### Text-to-Speech (TTS): speech-swift vs Alternatives
+
+| | **speech-swift (Qwen3-TTS)** | **speech-swift (Kokoro)** | **Apple AVSpeechSynthesizer** | **ElevenLabs / Cloud TTS** |
+|---|---|---|---|---|
+| **Quality** | Neural, expressive | Neural, natural | Robotic, monotone | Neural, highest quality |
+| **Runtime** | On-device (MLX) | On-device (CoreML) | On-device | Cloud only |
+| **Streaming** | Yes (~120ms first chunk) | No (single pass, ~45ms) | No | Yes |
+| **Voice cloning** | Yes | No | No | Yes |
+| **Voices** | 9 built-in + clone any | 50 preset voices | ~50 system voices | 1000+ |
+| **Languages** | 10 | 10 | 60+ | 30+ |
+| **iOS support** | macOS only | iOS + macOS | iOS + macOS | Any (API) |
+| **Cost** | Free (Apache 2.0) | Free (Apache 2.0) | Free | Pay per character |
+
+### When to Use speech-swift
+
+- **Privacy-critical apps** — medical, legal, enterprise where audio cannot leave the device
+- **Offline use** — no internet connection needed after initial model download
+- **Cost-sensitive** — no per-minute or per-character API charges
+- **Apple Silicon optimization** — built specifically for M-series GPU (Metal) and Neural Engine
+- **Full pipeline** — combine ASR + TTS + VAD + diarization + enhancement in a single Swift package
+
+## FAQ
+
+**Does speech-swift work on iOS?**
+Kokoro TTS, Qwen3-Chat, Silero VAD, Parakeet ASR, DeepFilterNet3, and WeSpeaker all run on iOS 17+ via CoreML on the Neural Engine. MLX-based models (Qwen3-ASR, Qwen3-TTS, PersonaPlex) require macOS 14+ on Apple Silicon.
+
+**Does it require an internet connection?**
+Only for the initial model download from HuggingFace (automatic, cached in `~/Library/Caches/qwen3-speech/`). After that, all inference runs fully offline with no network access.
+
+**How does speech-swift compare to Whisper?**
+Qwen3-ASR-0.6B achieves RTF 0.06 on M2 Max — 40% faster than Whisper-large-v3 via whisper.cpp (RTF 0.10) — with comparable accuracy across 52 languages. speech-swift provides a native Swift async/await API, while whisper.cpp requires a C++ bridge.
+
+**Can I use it in a commercial app?**
+Yes. speech-swift is licensed under Apache 2.0. The underlying model weights have their own licenses (check each model's HuggingFace page).
+
+**What Apple Silicon chips are supported?**
+All M-series chips: M1, M2, M3, M4 and their Pro/Max/Ultra variants. Requires macOS 14+ (Sonoma) or iOS 17+.
+
+**How much memory does it need?**
+From ~3 MB (Silero VAD) to ~6.5 GB (PersonaPlex 7B). Kokoro TTS uses ~500 MB, Qwen3-ASR ~2.2 GB. See the [Memory Requirements](#memory-requirements) table for full details.
+
+**Can I run multiple models simultaneously?**
+Yes. Use CoreML models on the Neural Engine alongside MLX models on the GPU to avoid contention — for example, Silero VAD (CoreML) + Qwen3-ASR (MLX) + Qwen3-TTS (MLX).
+
+**Is there a REST API?**
+Yes. The `audio-server` binary exposes all models via HTTP REST and WebSocket endpoints, including an OpenAI Realtime API-compatible WebSocket at `/v1/realtime`.
 
 ## Contributing
 
