@@ -304,6 +304,9 @@ public final class PersonaPlexModel: Module {
         let entropyWindow = cfg.sampling.entropyWindow
 
         for step in promptLen..<(prefillLen + maxSteps) {
+            // Check cancellation in long-running generation loop
+            if Task.isCancelled { break }
+
             // Build input tokens for this step.
             // Original Moshi reads (offset - 1) % CT — the PREVIOUS step's token.
             let readIdx = step - 1
