@@ -936,7 +936,7 @@ public final class PersonaPlexModel: Module {
         verbose: Bool = false
     ) -> AsyncThrowingStream<[Float], Error> {
         AsyncThrowingStream { continuation in
-            let task = Task {
+            let task = Task.detached(priority: .userInitiated) { [self] in
                 do {
                     let startTime = CFAbsoluteTimeGetCurrent()
                     // 1920 samples @ 24kHz = one 80ms Mimi frame
@@ -1263,7 +1263,7 @@ public final class PersonaPlexModel: Module {
         let userFrameCount = userCodes.shape[2]
 
         let voiceEmbeddings: MLXArray?
-        let voiceCache2: MLXArray?
+        let voiceCache: MLXArray?
         do {
             let modelDir = try HuggingFaceDownloader.getCacheDirectory(for: "aufklarer/PersonaPlex-7B-MLX-4bit")
             let voiceDir = modelDir.appendingPathComponent("voices")
@@ -1271,11 +1271,11 @@ public final class PersonaPlexModel: Module {
             if FileManager.default.fileExists(atPath: voiceFile.path) {
                 let weights = try MLX.loadArrays(url: voiceFile)
                 voiceEmbeddings = weights["embeddings"]
-                voiceCache2 = weights["cache"]
-            } else { voiceEmbeddings = nil; voiceCache2 = nil }
+                voiceCache = weights["cache"]
+            } else { voiceEmbeddings = nil; voiceCache = nil }
         } catch {
             AudioLog.modelLoading.warning("Voice preset '\(voice.rawValue)' failed to load: \(error)")
-            voiceEmbeddings = nil; voiceCache2 = nil
+            voiceEmbeddings = nil; voiceCache = nil
         }
 
         let voiceFrameCount = voiceEmbeddings?.shape[0] ?? 0
@@ -1306,7 +1306,7 @@ public final class PersonaPlexModel: Module {
             }
         }
         // Apply voice prompt cache (same as respond)
-        if let vc = voiceCache2, voiceFrameCount > 0 {
+        if let vc = voiceCache, voiceFrameCount > 0 {
             let CT = cfg.maxDelay + 3
             eval(vc)
             for s in 0..<numStreams {
@@ -1323,26 +1323,47 @@ public final class PersonaPlexModel: Module {
         var pos = voiceFrameCount
         for _ in 0..<silenceFrameCount {
             tokenCache[0][pos + delays[0]] = Int32(cfg.temporal.textPaddingId)
-            for cb in 0..<nQ { let s = 1+cb; tokenCache[s][pos+delays[s]] = TemporalTransformerConfig.silenceTokens[cb] }
-            for cb in 0..<nQ { let s = 1+nQ+cb; tokenCache[s][pos+delays[s]] = TemporalTransformerConfig.sineTokens[cb] }
+            for cb in 0..<nQ {
+                let s = 1 + cb
+                tokenCache[s][pos + delays[s]] = TemporalTransformerConfig.silenceTokens[cb]
+            }
+            for cb in 0..<nQ {
+                let s = 1 + nQ + cb
+                tokenCache[s][pos + delays[s]] = TemporalTransformerConfig.sineTokens[cb]
+            }
             pos += 1
         }
         for t in 0..<textPromptLen {
             tokenCache[0][pos + delays[0]] = textPromptTokens[t]
-            for cb in 0..<nQ { let s = 1+cb; tokenCache[s][pos+delays[s]] = TemporalTransformerConfig.silenceTokens[cb] }
-            for cb in 0..<nQ { let s = 1+nQ+cb; tokenCache[s][pos+delays[s]] = TemporalTransformerConfig.sineTokens[cb] }
+            for cb in 0..<nQ {
+                let s = 1 + cb
+                tokenCache[s][pos + delays[s]] = TemporalTransformerConfig.silenceTokens[cb]
+            }
+            for cb in 0..<nQ {
+                let s = 1 + nQ + cb
+                tokenCache[s][pos + delays[s]] = TemporalTransformerConfig.sineTokens[cb]
+            }
             pos += 1
         }
         for _ in 0..<silenceFrameCount {
             tokenCache[0][pos + delays[0]] = Int32(cfg.temporal.textPaddingId)
-            for cb in 0..<nQ { let s = 1+cb; tokenCache[s][pos+delays[s]] = TemporalTransformerConfig.silenceTokens[cb] }
-            for cb in 0..<nQ { let s = 1+nQ+cb; tokenCache[s][pos+delays[s]] = TemporalTransformerConfig.sineTokens[cb] }
+            for cb in 0..<nQ {
+                let s = 1 + cb
+                tokenCache[s][pos + delays[s]] = TemporalTransformerConfig.silenceTokens[cb]
+            }
+            for cb in 0..<nQ {
+                let s = 1 + nQ + cb
+                tokenCache[s][pos + delays[s]] = TemporalTransformerConfig.sineTokens[cb]
+            }
             pos += 1
         }
         let userCodesArr = userCodes.asType(.int32); eval(userCodesArr)
         for t in 0..<userFrameCount {
             tokenCache[0][pos + delays[0]] = Int32(cfg.temporal.textPaddingId)
-            for cb in 0..<nQ { let s = 1+cb; tokenCache[s][pos+delays[s]] = TemporalTransformerConfig.silenceTokens[cb] }
+            for cb in 0..<nQ {
+                let s = 1 + cb
+                tokenCache[s][pos + delays[s]] = TemporalTransformerConfig.silenceTokens[cb]
+            }
             for cb in 0..<min(nQ, userCodes.shape[1]) {
                 let s = 1+nQ+cb; tokenCache[s][pos+delays[s]] = userCodesArr[0, cb, t].item(Int32.self)
             }
@@ -1386,7 +1407,7 @@ public final class PersonaPlexModel: Module {
                 let tl = textLogits.squeezed(axes: [0, 1])  // [vocabSize]
                 let topIdx = argMax(tl).item(Int32.self)
                 let topVal = tl[Int(topIdx)].item(Float.self)
-                let probs = softMax(tl, axis: -1)
+                let probs = softmax(tl, axis: -1)
                 let logProbs = log(probs + MLXArray(Float(1e-10)))
                 let ent = -(probs * logProbs).sum().item(Float.self)
                 diag.textLogitStats.append((topToken: topIdx, topLogit: topVal, entropy: ent))

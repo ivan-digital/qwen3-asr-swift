@@ -9,7 +9,7 @@ enum ConversationState: String {
     case listening
     case processing
     case speaking
-    case fullduplex
+    case fullDuplex
 }
 
 /// Thread-safe bool shared between the main actor and the audio capture thread.
@@ -135,7 +135,7 @@ final class PersonaPlexViewModel {
     func toggleConversation() {
         if conversationState == .inactive {
             if isFullDuplexMode {
-                conversationState = .fullduplex
+                conversationState = .fullDuplex
                 conversationTask = Task { await startFullDuplex() }
             } else {
                 startListening()
@@ -256,7 +256,9 @@ final class PersonaPlexViewModel {
                 // Flush any remaining pre-buffered frames
                 for frame in prebuffer { playerRef.scheduleChunk(frame) }
             } catch {
-                // Inference error — fall through to cleanup
+                await MainActor.run { [weak self] in
+                    self?.errorMessage = "Full-duplex inference error: \(error.localizedDescription)"
+                }
             }
 
             await MainActor.run { [weak self] in
@@ -319,13 +321,8 @@ final class PersonaPlexViewModel {
 
             // Decode model transcript
             var transcript = ""
-            print("[Transcript] textTokens count: \(textTokens.count), spmDecoder: \(spmDec != nil)")
-            if !textTokens.isEmpty {
-                print("[Transcript] tokens: \(textTokens.prefix(20))...")
-            }
             if let dec = spmDec, !textTokens.isEmpty {
                 transcript = dec.decode(textTokens)
-                print("[Transcript] decoded: \(transcript)")
             } else if !textTokens.isEmpty {
                 transcript = "(\(textTokens.count) text tokens)"
             }

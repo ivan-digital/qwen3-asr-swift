@@ -1187,6 +1187,143 @@ final class PersonaPlexE2ETests: XCTestCase {
     }
 }
 
+// MARK: - AudioRingBuffer Tests
+
+final class AudioRingBufferTests: XCTestCase {
+
+    // MARK: Basic write / read
+
+    func testWriteAndRead() {
+        let buf = AudioRingBuffer(capacity: 8)
+        buf.write([1, 2, 3, 4])
+        XCTAssertEqual(buf.available, 4)
+        let result = buf.read(4)
+        XCTAssertEqual(result, [1, 2, 3, 4])
+        XCTAssertEqual(buf.available, 0)
+    }
+
+    func testPartialRead() {
+        let buf = AudioRingBuffer(capacity: 8)
+        buf.write([10, 20, 30, 40])
+        let first = buf.read(2)
+        XCTAssertEqual(first, [10, 20])
+        XCTAssertEqual(buf.available, 2)
+        let second = buf.read(2)
+        XCTAssertEqual(second, [30, 40])
+        XCTAssertEqual(buf.available, 0)
+    }
+
+    // MARK: Underrun — pad with zeros
+
+    func testReadUnderrunReturnsPaddedZeros() {
+        let buf = AudioRingBuffer(capacity: 8)
+        buf.write([5, 6])
+        let result = buf.read(4)
+        XCTAssertEqual(result, [5, 6, 0, 0])
+        XCTAssertEqual(buf.available, 0)
+    }
+
+    func testReadFromEmptyBufferReturnsZeros() {
+        let buf = AudioRingBuffer(capacity: 8)
+        let result = buf.read(4)
+        XCTAssertEqual(result, [0, 0, 0, 0])
+    }
+
+    // MARK: Overwrite — drops oldest when full
+
+    func testOverwriteDropsOldest() {
+        let buf = AudioRingBuffer(capacity: 4)
+        buf.write([1, 2, 3, 4])   // buffer full
+        buf.write([5])             // overwrites sample 1
+        XCTAssertEqual(buf.available, 4)
+        let result = buf.read(4)
+        XCTAssertEqual(result, [2, 3, 4, 5])
+    }
+
+    func testOverwriteByLargeBlockDropsCorrectly() {
+        let buf = AudioRingBuffer(capacity: 4)
+        buf.write([1, 2, 3, 4])
+        buf.write([5, 6, 7, 8])   // completely replaces all old data
+        XCTAssertEqual(buf.available, 4)
+        let result = buf.read(4)
+        XCTAssertEqual(result, [5, 6, 7, 8])
+    }
+
+    // MARK: Wrap-around boundary
+
+    func testWriteAndReadAcrossBufferBoundary() {
+        let buf = AudioRingBuffer(capacity: 4)
+        buf.write([1, 2, 3])
+        _ = buf.read(2)            // consume 2 → readPos now at 2
+        buf.write([4, 5])          // writePos wraps around
+        XCTAssertEqual(buf.available, 3)
+        let result = buf.read(3)
+        XCTAssertEqual(result, [3, 4, 5])
+    }
+
+    func testMultipleWriteReadCycles() {
+        let buf = AudioRingBuffer(capacity: 4)
+        for i in 0..<10 {
+            let sample = Float(i)
+            buf.write([sample])
+            let result = buf.read(1)
+            XCTAssertEqual(result, [sample], "cycle \(i)")
+        }
+        XCTAssertEqual(buf.available, 0)
+    }
+
+    // MARK: Thread safety
+
+    func testConcurrentWriteAndRead() {
+        let capacity = 1024
+        let buf = AudioRingBuffer(capacity: capacity)
+        let iterations = 10_000
+        let expectation = XCTestExpectation(description: "concurrent write+read")
+        expectation.expectedFulfillmentCount = 2
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            for i in 0..<iterations {
+                buf.write([Float(i % 128)])
+            }
+            expectation.fulfill()
+        }
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            for _ in 0..<iterations {
+                _ = buf.read(1)
+            }
+            expectation.fulfill()
+        }
+
+        wait(for: [expectation], timeout: 10)
+        // No crash = thread-safety holds; available count must be 0..capacity
+        XCTAssertGreaterThanOrEqual(buf.available, 0)
+        XCTAssertLessThanOrEqual(buf.available, capacity)
+    }
+
+    func testConcurrentMultipleWriters() {
+        let buf = AudioRingBuffer(capacity: 512)
+        let group = DispatchGroup()
+        let writerCount = 4
+        let samplesPerWriter = 1000
+
+        for _ in 0..<writerCount {
+            group.enter()
+            DispatchQueue.global(qos: .userInitiated).async {
+                for i in 0..<samplesPerWriter {
+                    buf.write([Float(i)])
+                }
+                group.leave()
+            }
+        }
+
+        group.wait()
+        // Available must be within [0, capacity]; no crash or data corruption
+        XCTAssertGreaterThanOrEqual(buf.available, 0)
+        XCTAssertLessThanOrEqual(buf.available, 512)
+    }
+}
+
 // MARK: - Utility
 
 /// Simple linear resampling (for ASR which expects 16kHz from PersonaPlex's 24kHz output).
