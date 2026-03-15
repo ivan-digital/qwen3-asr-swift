@@ -5,9 +5,13 @@ extension Qwen3ChatModel: ModelMemoryManageable {
 
     public func unload() {
         guard _isLoaded else { return }
-        generator = nil
+        // CoreMLGenerator holds MLModel references which are the main memory consumers.
+        // We can't nil out a `let` property, but we can clear caches and mark as unloaded.
+        // To fully release memory, discard this instance and create a new one via fromPretrained().
         conversationHistory.removeAll()
         systemPromptCached = false
+        generator.resetCache()
+        generator.clearPromptCache()
         _isLoaded = false
     }
 
