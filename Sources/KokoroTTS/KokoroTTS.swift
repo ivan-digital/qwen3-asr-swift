@@ -186,6 +186,7 @@ public final class KokoroTTSModel {
     /// Downloads CoreML models and voice embeddings on first use, then caches locally.
     public static func fromPretrained(
         modelId: String = defaultModelId,
+        computeUnits: MLComputeUnits = .all,
         progressHandler: ((Double, String) -> Void)? = nil
     ) async throws -> KokoroTTSModel {
         AudioLog.modelLoading.info("Loading Kokoro model: \(modelId)")
@@ -198,49 +199,41 @@ public final class KokoroTTSModel {
                 modelId: modelId, reason: "Failed to resolve cache directory", underlying: error)
         }
 
-        // Download model files
+        // Download all model + voice files using concurrent snapshot groups.
+        // Hub's snapshot() processes files sequentially (HEAD + download per file),
+        // so parallelizing across groups dramatically speeds up first-time downloads,
+        // especially through HuggingFace's Xet storage backend.
         progressHandler?(0.0, "Downloading model...")
+        let voicesDir = cacheDir.appendingPathComponent("voices")
         do {
-            try await HuggingFaceDownloader.downloadWeights(
+            try await HuggingFaceDownloader.downloadWeightsParallel(
                 modelId: modelId,
                 to: cacheDir,
-                additionalFiles: [
-                    // CoreML models (compiled)
-                    "kokoro_24_10s.mlmodelc/**",
-                    "kokoro_24_15s.mlmodelc/**",
-                    "kokoro_21_5s.mlmodelc/**",
-                    "kokoro_21_10s.mlmodelc/**",
-                    "kokoro_21_15s.mlmodelc/**",
-                    // G2P models
-                    "G2PEncoder.mlmodelc/**",
-                    "G2PDecoder.mlmodelc/**",
-                    // Vocabularies and dictionaries
+                globGroups: [
+                    // Group 1: Config + vocabularies + pronunciation dicts
+                    ["config.json", "vocab_index.json", "g2p_vocab.json", "us_gold.json", "us_silver.json"],
+                    // Group 2: TTS model (v2.1, 5s max — small memory footprint for iOS)
+                    ["kokoro_21_5s.mlmodelc/**"],
+                    // Group 3: G2P models
+                    ["G2PEncoder.mlmodelc/**", "G2PDecoder.mlmodelc/**"],
+                    // Group 4: Voice embeddings
+                    ["voices/**"],
+                ],
+                localCheckFiles: [
+                    "config.json",
                     "vocab_index.json",
-                    "g2p_vocab.json",
-                    "us_gold.json",
-                    "us_silver.json",
+                    "kokoro_21_5s.mlmodelc",
+                    "G2PEncoder.mlmodelc",
+                    "voices",
                 ]
             ) { fraction in
-                progressHandler?(fraction * 0.6, "Downloading model...")
+                progressHandler?(fraction * 0.7, "")
+            } statusHandler: { status in
+                progressHandler?(0.0, status)
             }
         } catch {
             throw AudioModelError.modelLoadFailed(
                 modelId: modelId, reason: "Download failed", underlying: error)
-        }
-
-        // Download voice files
-        progressHandler?(0.60, "Downloading voice embeddings...")
-        let voicesDir = cacheDir.appendingPathComponent("voices")
-        do {
-            try await HuggingFaceDownloader.downloadWeights(
-                modelId: modelId,
-                to: cacheDir,
-                additionalFiles: ["voices/**"]
-            ) { fraction in
-                progressHandler?(0.6 + fraction * 0.1, "Downloading voices...")
-            }
-        } catch {
-            AudioLog.modelLoading.warning("Voice download failed: \(error)")
         }
 
         // Load config
@@ -296,7 +289,7 @@ public final class KokoroTTSModel {
         progressHandler?(0.85, "Loading CoreML models...")
         let network: KokoroNetwork
         do {
-            network = try KokoroNetwork(directory: cacheDir)
+            network = try KokoroNetwork(directory: cacheDir, computeUnits: computeUnits)
             AudioLog.modelLoading.debug("Loaded buckets: \(network.availableBuckets.map { $0.modelName })")
         } catch {
             throw AudioModelError.modelLoadFailed(

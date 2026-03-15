@@ -137,8 +137,7 @@ let package = Package(
         ),
         .binaryTarget(
             name: "CSpeechCore",
-            url: "https://github.com/soniqo/speech-core/releases/download/v0.0.2/SpeechCore.xcframework.zip",
-            checksum: "67a714baf4ada80dd550a40da0c31f1dcd2be1fd41f2cbf3b45bf0891d8afbc7"
+            path: "../speech-core/dist/SpeechCore.xcframework"
         ),
         .target(
             name: "SpeechCore",
@@ -237,6 +236,7 @@ let package = Package(
             name: "KokoroTTSTests",
             dependencies: [
                 "KokoroTTS",
+                "ParakeetASR",
                 "AudioCommon",
             ]
         ),

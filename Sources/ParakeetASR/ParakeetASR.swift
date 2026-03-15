@@ -195,9 +195,16 @@ public class ParakeetASRModel {
                     "joint.mlmodelc/**",
                     "vocab.json",
                     "config.json",
+                ],
+                localCheckFiles: [
+                    "config.json",
+                    "vocab.json",
+                    "encoder.mlmodelc",
                 ]
             ) { fraction in
-                progressHandler?(fraction * 0.7, "Downloading model...")
+                progressHandler?(fraction * 0.7, "")
+            } statusHandler: { status in
+                progressHandler?(0.0, status)
             }
         } catch {
             throw AudioModelError.modelLoadFailed(

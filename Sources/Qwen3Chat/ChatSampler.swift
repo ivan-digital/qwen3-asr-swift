@@ -20,6 +20,13 @@ enum ChatSampler {
     ) -> Int {
         var logits = logits
 
+        // Suppress specified tokens (e.g. <think> to disable thinking mode)
+        for id in config.suppressedTokenIds {
+            if id >= 0 && id < logits.count {
+                logits[id] = -Float.infinity
+            }
+        }
+
         // Repetition penalty
         if config.repetitionPenalty > 1.0 {
             let seen = Set(previousTokens.suffix(64))

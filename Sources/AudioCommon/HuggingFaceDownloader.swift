@@ -73,12 +73,33 @@ public enum HuggingFaceDownloader {
     /// - If `additionalFiles` doesn't contain `.safetensors` files, adds `*.safetensors`
     ///   and `model.safetensors.index.json` to discover sharded weights automatically
     /// - All entries in `additionalFiles` are added as-is (they work as glob patterns)
+    ///
+    /// - Parameter localCheckFiles: Concrete file/directory paths (relative to `directory`)
+    ///   to check before contacting the Hub. If **all** exist locally, the download is
+    ///   skipped entirely — avoiding sequential HEAD-request verification for every cached
+    ///   file. Pass an empty array (the default) to always verify against the Hub.
     public static func downloadWeights(
         modelId: String,
         to directory: URL,
         additionalFiles: [String] = [],
-        progressHandler: ((Double) -> Void)? = nil
+        localCheckFiles: [String] = [],
+        progressHandler: ((Double) -> Void)? = nil,
+        statusHandler: ((String) -> Void)? = nil
     ) async throws {
+        // Fast path: skip network verification when key files already exist locally.
+        if !localCheckFiles.isEmpty {
+            let fm = FileManager.default
+            let allPresent = localCheckFiles.allSatisfy { path in
+                fm.fileExists(atPath: directory.appendingPathComponent(path).path)
+            }
+            if allPresent {
+                AudioLog.download.info("All local check files present for \(modelId), skipping download")
+                statusHandler?("Cached")
+                progressHandler?(1.0)
+                return
+            }
+        }
+
         var globs: [String] = ["config.json"]
 
         let hasExplicitWeights = additionalFiles.contains { $0.hasSuffix(".safetensors") }
@@ -90,13 +111,15 @@ public enum HuggingFaceDownloader {
             globs.append(file)
         }
 
-        // Derive the download base from the directory.
-        // getCacheDirectory returns either:
-        //   old: base/cacheKey         (flat, already has weights — won't reach here)
-        //   new: base/models/org/model  (Hub-style)
-        // For Hub API we need `base` as downloadBase.
         let hub = makeHubApi(for: modelId, repoDir: directory)
         let repo = Hub.Repo(id: modelId)
+
+        // Report total download size
+        if let totalBytes = try? await getDownloadSize(hub: hub, repo: repo, globs: globs) {
+            statusHandler?("Downloading \(formatBytes(totalBytes))...")
+        } else {
+            statusHandler?("Downloading...")
+        }
 
         do {
             try await hub.snapshot(from: repo, matching: globs) { progress in
@@ -105,6 +128,87 @@ public enum HuggingFaceDownloader {
         } catch {
             throw DownloadError.failedToDownload("\(modelId): \(error.localizedDescription)")
         }
+    }
+
+    /// Download model files using concurrent snapshot groups for faster first-time downloads.
+    ///
+    /// Each group of glob patterns runs its own `HubApi.snapshot()` call concurrently,
+    /// parallelizing HEAD-request verification and file downloads across groups.
+    /// This is significantly faster than a single sequential snapshot for models with
+    /// many files (e.g. CoreML bundles + voices).
+    ///
+    /// - Parameter globGroups: Array of glob-pattern arrays, each group downloads concurrently.
+    /// - Parameter localCheckFiles: Same as `downloadWeights` — skip everything if all present.
+    public static func downloadWeightsParallel(
+        modelId: String,
+        to directory: URL,
+        globGroups: [[String]],
+        localCheckFiles: [String] = [],
+        progressHandler: ((Double) -> Void)? = nil,
+        statusHandler: ((String) -> Void)? = nil
+    ) async throws {
+        // Fast path: skip network when cached
+        if !localCheckFiles.isEmpty {
+            let fm = FileManager.default
+            let allPresent = localCheckFiles.allSatisfy { path in
+                fm.fileExists(atPath: directory.appendingPathComponent(path).path)
+            }
+            if allPresent {
+                AudioLog.download.info("All local check files present for \(modelId), skipping download")
+                statusHandler?("Cached")
+                progressHandler?(1.0)
+                return
+            }
+        }
+
+        let hub = makeHubApi(for: modelId, repoDir: directory)
+        let repo = Hub.Repo(id: modelId)
+
+        // Query total download size before starting
+        let allGlobs = globGroups.flatMap { $0 }
+        if let totalBytes = try? await getDownloadSize(hub: hub, repo: repo, globs: allGlobs) {
+            statusHandler?("Downloading \(formatBytes(totalBytes))...")
+        } else {
+            statusHandler?("Downloading...")
+        }
+
+        let totalGroups = Double(globGroups.count)
+        let completedGroups = OSAllocatedUnfairLock(initialState: 0.0)
+
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for globs in globGroups {
+                group.addTask {
+                    try await hub.snapshot(from: repo, matching: globs) { progress in
+                        let groupFraction = progress.fractionCompleted / totalGroups
+                        let base = completedGroups.withLock { $0 }
+                        progressHandler?(base + groupFraction)
+                    }
+                }
+            }
+            for try await _ in group {
+                completedGroups.withLock { $0 += 1.0 / totalGroups }
+            }
+        }
+
+        progressHandler?(1.0)
+    }
+
+    /// Query total download size for given glob patterns (via HF API metadata).
+    private static func getDownloadSize(hub: HubApi, repo: Hub.Repo, globs: [String]) async throws -> Int {
+        let metadata = try await hub.getFileMetadata(from: repo, matching: globs)
+        return metadata.compactMap(\.size).reduce(0, +)
+    }
+
+    /// Format byte count as human-readable string.
+    private static func formatBytes(_ bytes: Int) -> String {
+        if bytes >= 1_000_000_000 {
+            return String(format: "%.1f GB", Double(bytes) / 1_000_000_000)
+        } else if bytes >= 1_000_000 {
+            return String(format: "%.0f MB", Double(bytes) / 1_000_000)
+        } else if bytes >= 1_000 {
+            return String(format: "%.0f KB", Double(bytes) / 1_000)
+        }
+        return "\(bytes) B"
     }
 
     // MARK: - Security Helpers (kept for backward compat + security tests)

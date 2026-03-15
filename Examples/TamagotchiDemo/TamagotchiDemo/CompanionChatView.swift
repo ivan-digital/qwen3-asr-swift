@@ -11,7 +11,11 @@ struct CompanionChatView: View {
                 } else {
                     chatList
 
+                    statusBar
+
                     if vm.isListening {
+                        DiagnosticsView(monitor: vm.diagnostics)
+
                         VoiceLevelBar(level: vm.audioLevel)
                             .frame(height: 4)
                             .padding(.horizontal)
@@ -30,6 +34,12 @@ struct CompanionChatView: View {
                         Menu {
                             Button("Clear Chat") { vm.clearChat() }
                             Toggle("Speak Responses", isOn: $vm.speakEnabled)
+                            Divider()
+                            if vm.isListening {
+                                Button("Stop Listening") { vm.stopListening() }
+                            } else {
+                                Button("Start Listening") { vm.startListening() }
+                            }
                         } label: {
                             Image(systemName: "ellipsis.circle")
                         }
@@ -57,12 +67,13 @@ struct CompanionChatView: View {
                     .font(.system(size: 48))
                     .foregroundStyle(.tint)
 
-                Text("On-Device Chat")
+                Text("On-Device Companion")
                     .font(.title2.bold())
 
-                Text("Qwen3-0.6B + Kokoro TTS + Parakeet ASR")
+                Text("Parakeet ASR + Silero VAD + Qwen3 Chat + Kokoro TTS")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
 
                 Button("Load Models") {
                     Task { await vm.loadModels() }
@@ -122,7 +133,38 @@ struct CompanionChatView: View {
         }
     }
 
-    // MARK: - Input
+    // MARK: - Status Bar
+
+    private var statusBar: some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(statusColor)
+                .frame(width: 8, height: 8)
+
+            Text(vm.pipelineState)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+
+            Spacer()
+
+            if vm.isSpeechDetected {
+                Image(systemName: "waveform")
+                    .foregroundStyle(.red)
+                    .font(.caption)
+            }
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 4)
+    }
+
+    private var statusColor: Color {
+        if vm.isSpeechDetected { return .red }
+        if vm.isGenerating { return .orange }
+        if vm.isListening { return .green }
+        return .gray
+    }
+
+    // MARK: - Input (text fallback)
 
     private var inputBar: some View {
         HStack(spacing: 8) {
@@ -133,11 +175,10 @@ struct CompanionChatView: View {
                     vm.startListening()
                 }
             } label: {
-                Image(systemName: vm.isListening ? "mic.fill" : "mic")
+                Image(systemName: vm.isListening ? "mic.fill" : "mic.slash")
                     .font(.title3)
-                    .foregroundStyle(vm.isListening ? .red : .primary)
+                    .foregroundStyle(vm.isSpeechDetected ? .red : (vm.isListening ? .green : .gray))
             }
-            .disabled(vm.isGenerating)
 
             TextField("Message...", text: $vm.inputText, axis: .vertical)
                 .textFieldStyle(.plain)
@@ -168,6 +209,6 @@ struct CompanionChatView: View {
     private func sendIfReady() {
         let text = vm.inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !vm.isGenerating else { return }
-        Task { await vm.send(text) }
+        vm.send(text)
     }
 }

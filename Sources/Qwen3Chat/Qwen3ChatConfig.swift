@@ -63,19 +63,33 @@ public struct ChatSamplingConfig: Sendable {
     public var topP: Float
     public var maxTokens: Int
     public var repetitionPenalty: Float
+    /// Token IDs to suppress (set logit to -inf before sampling).
+    public var suppressedTokenIds: [Int]
+    /// Prefill `<think>\n</think>\n` so the model skips thinking and responds directly.
+    public var disableThinking: Bool
+    /// Max tokens allowed inside `<think>...</think>`. After this many thinking tokens,
+    /// `</think>` is force-injected and generation continues with the response.
+    /// 0 = no cap (unlimited thinking).
+    public var maxThinkingTokens: Int
 
     public init(
         temperature: Float = 0.7,
         topK: Int = 50,
         topP: Float = 0.9,
         maxTokens: Int = 256,
-        repetitionPenalty: Float = 1.1
+        repetitionPenalty: Float = 1.1,
+        suppressedTokenIds: [Int] = [],
+        disableThinking: Bool = false,
+        maxThinkingTokens: Int = 0
     ) {
         self.temperature = temperature
         self.topK = topK
         self.topP = topP
         self.maxTokens = maxTokens
         self.repetitionPenalty = repetitionPenalty
+        self.suppressedTokenIds = suppressedTokenIds
+        self.disableThinking = disableThinking
+        self.maxThinkingTokens = maxThinkingTokens
     }
 
     public static let `default` = ChatSamplingConfig()

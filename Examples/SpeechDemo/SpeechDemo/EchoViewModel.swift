@@ -23,7 +23,7 @@ final class EchoViewModel {
     private var tts: Qwen3TTSModel?
     private var pipeline: VoicePipeline?
     private var audioEngine: AVAudioEngine?
-    private let player = AudioPlayer()
+    private let player = StreamingAudioPlayer()
     private var debugRecordBuffer: [Float] = []
     private var debugTTSBuffer: [Float] = []
     private var isRecordingDebug = false
@@ -318,6 +318,7 @@ final class EchoViewModel {
             ) else { return }
             appendLog("[Player] Mixer: \(Int(engineRate))Hz, \(mixerFormat.channelCount)ch → Player: mono \(Int(engineRate))Hz")
             player.attach(to: engine, format: playerFormat)
+            player.startPlayback()
             appendLog("[Player] Attached to shared engine")
         } catch {
             appendLog("[Mic] Engine error: \(error.localizedDescription)")

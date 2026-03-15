@@ -14,9 +14,12 @@ let package = Package(
                 .product(name: "Qwen3Chat", package: "speech-swift"),
                 .product(name: "KokoroTTS", package: "speech-swift"),
                 .product(name: "ParakeetASR", package: "speech-swift"),
+                .product(name: "SpeechVAD", package: "speech-swift"),
+                .product(name: "SpeechCore", package: "speech-swift"),
                 .product(name: "AudioCommon", package: "speech-swift"),
             ],
-            path: "TamagotchiDemo"
+            path: "TamagotchiDemo",
+            exclude: ["Info.plist"]
         ),
     ]
 )
