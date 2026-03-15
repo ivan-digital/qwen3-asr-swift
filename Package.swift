@@ -224,6 +224,12 @@ let package = Package(
             ]
         ),
         .testTarget(
+            name: "AudioCommonTests",
+            dependencies: [
+                "AudioCommon",
+            ]
+        ),
+        .testTarget(
             name: "KokoroTTSTests",
             dependencies: [
                 "KokoroTTS",
