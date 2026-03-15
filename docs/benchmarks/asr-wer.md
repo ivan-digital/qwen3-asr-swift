@@ -13,14 +13,12 @@
 | Qwen3-ASR 0.6B | MLX (GPU) | 8-bit | 960 MB | 2.80 | 0.025 | 2.4s | 0.3s |
 | Qwen3-ASR 0.6B | MLX (GPU) | 4-bit | 675 MB | 3.34 | 0.023 | 2.4s | 0.3s |
 | Parakeet TDT 0.6B | CoreML (ANE) | INT4 | 332 MB | 3.68 | 0.295 | 23.3s | 2.4s |
-| Qwen3-ASR 0.6B | CoreML+MLX | 8-bit | 960 MB | — | 0.026 | 2.5s | 0.4s |
 
 **Machine**: Apple M2 Max, 64 GB, macOS 14, release build with compiled metallib.
 
 **Key observations:**
 - Parakeet INT8 achieves the best WER (2.74%) but has a slow cold start (128.9s CoreML compilation)
 - Qwen3-ASR MLX is 10x faster to load (2.4s vs 23-129s) and has the fastest RTF (0.023)
-- CoreML+MLX hybrid uses ANE for encoder + GPU for decoder, freeing GPU for other tasks
 - Parakeet INT8 is 3.3x faster than INT4 (RTF 0.089 vs 0.298, verified over 3 runs). CoreML's Neural Engine processes INT8 natively; INT4 palettization adds per-operation dequantization overhead that outweighs the smaller model size
 - CoreML cold start (first-ever load) compiles a device-specific execution plan: 129s for INT8, 23s for INT4. Warm start (cached) is 5.4s — CoreML caches compiled plans in `~/Library/Caches/com.apple.CoreML/`. The 129s only happens once per device. Encoder currently uses `.all` compute units; switching to `.cpuAndNeuralEngine` would skip GPU plan compilation
 
