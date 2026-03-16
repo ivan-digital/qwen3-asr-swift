@@ -4,45 +4,44 @@
 
 Synthesize text → transcribe audio back → compute WER vs original text. Measures TTS intelligibility end-to-end.
 
-## Results (Qwen3-TTS base, 30 sentences)
+## Results
 
-| Metric | Value |
-|--------|-------|
-| Round-trip WER | 2.27% |
-| Sentences | 30/30 (0 failed) |
-| Mean TTS RTF | 0.56 |
-| Mean embed | 2ms |
-| Mean generate | 2526ms (38ms/step) |
-| Mean decode | 211ms |
+| Corpus | Sentences | WER% | TTS RTF | ms/step | Embed | Generate | Decode |
+|--------|-----------|------|---------|---------|-------|----------|--------|
+| Built-in (conversational) | 30 | 2.27 | 0.56 | 38 | 2ms | 2526ms | 211ms |
+| LibriSpeech transcripts | 47/50 | 18.55 | 0.57 | 40 | 2ms | 6353ms | 469ms |
 
 **Machine**: Apple M2 Max, 64 GB, macOS 14, release build.
+
+**Observations:**
+- Built-in corpus (short, conversational): 2.27% WER — 25/30 perfect round-trip
+- LibriSpeech transcripts (long, literary): 18.55% WER — archaic vocabulary and long sentences increase errors
+- Generation dominates at ~92% of total time (38-40ms/step)
+- RTF ~0.57 (faster than real-time) regardless of input complexity
 
 ## Latency breakdown
 
 | Stage | Time | Description |
 |-------|------|-------------|
 | Embed | 2ms | Text embedding preparation |
-| Generate | 2526ms | Autoregressive codec token generation |
-| Decode | 211ms | Codec decoder → waveform |
-| Total | ~2.7s | For ~4.8s of audio (RTF 0.56) |
+| Generate | 2.5-6.4s | Autoregressive codec token generation |
+| Decode | 0.2-0.5s | Codec decoder → waveform |
 
-Generation dominates at 92% of total time (38ms/step). Decode is fast (211ms for full waveform).
+Longer sentences produce more tokens → longer generation time, but ms/step is constant (~39ms).
 
 ## Error analysis
 
-5/30 sentences had errors (WER > 0):
-
-- **Number compounding** (2 cases): "twenty three" → "twentythree", "forty five" → "fortyfive". TTS joins compound numbers into single words.
-- **Word drops** (2 cases): Missing "the" or "a" — minor determiners dropped during synthesis.
-- **Truncation** (1 case): "will be shipped tomorrow" → "will be shipped" — sentence cut short near max token limit.
-
-25/30 sentences had perfect round-trip (0% WER).
+Common error types:
+- **Number compounding**: "twenty three" → "twentythree"
+- **Word drops**: Determiners ("the", "a") occasionally dropped
+- **Archaic words**: "honour" → "honor", "connexion" → "connection"
+- **Truncation**: Very long sentences cut short near max token limit (2 failures in 50)
 
 ## Reproduction
 
 ```bash
 make build
-python scripts/benchmark_tts.py                           # Qwen3-TTS (30 sentences)
+python scripts/benchmark_tts.py                           # Built-in 30 sentences
+python scripts/benchmark_tts.py --input-file corpus.txt   # Custom corpus
 python scripts/benchmark_tts.py --compare                 # All TTS engines
-python scripts/benchmark_tts.py --input-file sentences.txt # Custom corpus
 ```
