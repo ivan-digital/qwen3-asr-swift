@@ -80,6 +80,10 @@ enum ChatTemplate {
             tokens.append(imStartId)
             tokens.append(contentsOf: tokenizer.encode("assistant"))
             tokens.append(newlineId)
+
+            // Note: /no_think is handled by the decode loop (thinking budget),
+            // not by template injection. Injecting empty <think></think> in the
+            // prompt causes the model to emit EOS immediately.
         }
 
         return tokens

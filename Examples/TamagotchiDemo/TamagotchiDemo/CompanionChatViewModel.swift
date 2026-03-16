@@ -56,8 +56,11 @@ final class CompanionChatViewModel {
     private var audioEngine: AVAudioEngine?
     private let player = StreamingAudioPlayer()
     private var waitingForPlaybackEnd = false
+    #if targetEnvironment(simulator)
+    private let speechSynth = AVSpeechSynthesizer()
+    #endif
 
-    private let systemPrompt = "Answer briefly in 5 words max."
+    private let systemPrompt = "You are a helpful assistant. Reply in one short sentence."
 
     // MARK: - Load Models
 
@@ -250,21 +253,33 @@ final class CompanionChatViewModel {
             pipelineLog.warning("Event: responseAudioDelta \(samples.count) samples")
             pipelineState = "speaking..."
             recordTTSSamples(samples, sampleRate: 24000)
+            #if !targetEnvironment(simulator)
             do {
                 try player.play(samples: samples, sampleRate: 24000)
             } catch {
                 pipelineLog.error("Playback error: \(error)")
             }
+            #endif
 
         case .responseDone:
             pipelineLog.warning("Event: responseDone")
             isGenerating = false
+            let responseText = currentResponseText
             currentAssistantIdx = nil
+            #if targetEnvironment(simulator)
+            if speakEnabled, !responseText.isEmpty {
+                let utterance = AVSpeechUtterance(string: responseText)
+                utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+                speechSynth.speak(utterance)
+            }
+            resumeAfterResponse()
+            #else
             if player.isPlaying {
                 waitingForPlaybackEnd = true
             } else {
                 resumeAfterResponse()
             }
+            #endif
 
         case .toolCallStarted(let name):
             pipelineLog.info("Tool call: \(name)")

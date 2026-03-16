@@ -76,7 +76,9 @@ public final class Qwen3PipelineLLM: PipelineLLM {
         let sem = DispatchSemaphore(value: 0)
         var fullResponse = ""
         let task = Task {
-            defer { sem.signal() }
+            defer {
+                sem.signal()
+            }
             do {
                 for try await token in stream {
                     guard !self.cancelled else {
