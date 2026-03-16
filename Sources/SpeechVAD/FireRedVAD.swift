@@ -407,7 +407,11 @@ final class KaldiFbankExtractor {
         return allFeatures
     }
 
-    /// Build mel filterbank matrix [nMels, nBins].
+    /// Build mel filterbank matrix [nMels, nBins] matching Kaldi's computation.
+    ///
+    /// Key differences from naive implementation:
+    /// - Uses `floor()` for bin indices (Kaldi convention)
+    /// - Uses `(nFFT + 1) / sampleRate` for Hz-to-bin conversion (Kaldi convention)
     private static func buildMelFilterbank(
         nMels: Int, nBins: Int, sampleRate: Int, nFFT: Int
     ) -> [Float] {
@@ -429,25 +433,27 @@ final class KaldiFbankExtractor {
             melPoints[i] = melMin + Float(i) * (melMax - melMin) / Float(nMels + 1)
         }
 
-        // Convert to FFT bin indices
-        var binPoints = [Float](repeating: 0, count: nMels + 2)
+        // Convert to FFT bin indices (Kaldi: floor, (nFFT+1)/sr)
+        var binCenters = [Int](repeating: 0, count: nMels + 2)
         for i in 0..<(nMels + 2) {
-            binPoints[i] = melToHz(melPoints[i]) * Float(nFFT) / Float(sampleRate)
+            binCenters[i] = Int(floor(melToHz(melPoints[i]) * Float(nFFT + 1) / Float(sampleRate)))
         }
 
-        // Build triangular filters
+        // Build triangular filters using integer bin centers
         var filterbank = [Float](repeating: 0, count: nMels * nBins)
         for m in 0..<nMels {
-            let left = binPoints[m]
-            let center = binPoints[m + 1]
-            let right = binPoints[m + 2]
+            let left = binCenters[m]
+            let center = binCenters[m + 1]
+            let right = binCenters[m + 2]
 
-            for b in 0..<nBins {
-                let fb = Float(b)
-                if fb >= left && fb <= center && center > left {
-                    filterbank[m * nBins + b] = (fb - left) / (center - left)
-                } else if fb > center && fb <= right && right > center {
-                    filterbank[m * nBins + b] = (right - fb) / (right - center)
+            if center > left {
+                for b in max(0, left)...min(nBins - 1, center) {
+                    filterbank[m * nBins + b] = Float(b - left) / Float(center - left)
+                }
+            }
+            if right > center {
+                for b in max(0, center + 1)...min(nBins - 1, right) {
+                    filterbank[m * nBins + b] = Float(right - b) / Float(right - center)
                 }
             }
         }
