@@ -423,7 +423,12 @@ public final class VoicePipeline {
             input_sample_rate: { ctx in
                 let bridge = Unmanaged<STTBridge>.fromOpaque(ctx!).takeUnretainedValue()
                 return Int32(bridge.model.inputSampleRate)
-            }
+            },
+            begin_stream: nil,
+            push_chunk: nil,
+            flush_stream: nil,
+            end_stream: nil,
+            cancel_stream: nil
         )
     }
 
@@ -434,6 +439,7 @@ public final class VoicePipeline {
         return sc_tts_vtable_t(
             context: ctx,
             synthesize: { ctx, text, language, onChunk, chunkCtx in
+                // Legacy batch synthesis — called when streaming not available
                 let bridge = Unmanaged<TTSBridge>.fromOpaque(ctx!).takeUnretainedValue()
                 bridge.cancelled = false
                 let textStr = String(cString: text!)
@@ -540,7 +546,8 @@ public final class VoicePipeline {
             cancel: { ctx in
                 let bridge = Unmanaged<LLMBridge>.fromOpaque(ctx!).takeUnretainedValue()
                 bridge.model.cancel()
-            }
+            },
+            count_tokens: nil  // Token counting not implemented yet
         )
     }
 
