@@ -4,7 +4,7 @@
 
 Synthesize text → transcribe audio back (Qwen3-ASR 0.6B) → compute WER vs original text. Measures TTS intelligibility end-to-end.
 
-## Results (30 built-in sentences, conversational English)
+## Results (30 built-in English sentences, conversational style)
 
 | TTS Engine | Model | Params | Size | WER% | RTF | ms/step | Embed (TTFT) |
 |------------|-------|--------|------|------|-----|---------|-------------|
@@ -17,7 +17,7 @@ Synthesize text → transcribe audio back (Qwen3-ASR 0.6B) → compute WER vs or
 
 **Machine**: Apple M2 Max, 64 GB, macOS 14, release build.
 
-## Extended results (111 LibriSpeech sentences, literary English)
+## Extended results (111 LibriSpeech sentences, literary English, Qwen3-TTS only)
 
 | TTS Engine | Model | WER% | RTF | Sentences |
 |------------|-------|------|-----|-----------|
