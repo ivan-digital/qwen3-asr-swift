@@ -6,13 +6,14 @@ Synthesize text → transcribe audio back (Qwen3-ASR 0.6B) → compute WER vs or
 
 ## Results (30 built-in sentences, conversational English)
 
-| TTS Engine | Model | WER% | RTF | ms/step | Embed | Decode |
-|------------|-------|------|-----|---------|-------|--------|
-| CosyVoice3 | default | 3.25 | 0.59 | — | — | — |
-| Qwen3-TTS | 1.7B 4-bit | 3.47 | 0.79 | 54 | 1ms | 382ms |
-| Qwen3-TTS | 1.7B 8-bit | 3.66 | 0.85 | 58 | 1ms | 244ms |
-| Qwen3-TTS | 0.6B 8-bit | 9.74 | 0.76 | 53 | 2ms | 457ms |
-| Qwen3-TTS | 0.6B 4-bit | 15.58 | 0.76 | 52 | 3ms | 360ms |
+| TTS Engine | Model | Params | Size | WER% | RTF | ms/step | Embed (TTFT) |
+|------------|-------|--------|------|------|-----|---------|-------------|
+| CosyVoice3 | 0.5B 4-bit | 500M | ~1.9 GB | 3.25 | 0.59 | — | — |
+| Qwen3-TTS | 1.7B 4-bit | 1.7B | ~2.3 GB | 3.47 | 0.79 | 54 | 1ms |
+| Qwen3-TTS | 1.7B 8-bit | 1.7B | ~3.5 GB | 3.66 | 0.85 | 58 | 1ms |
+| Kokoro-82M | 82M CoreML | 82M | ~170 MB | 3.90 | ~0.4 | — | — |
+| Qwen3-TTS | 0.6B 8-bit | 600M | ~960 MB | 9.74 | 0.76 | 53 | 2ms |
+| Qwen3-TTS | 0.6B 4-bit | 600M | ~675 MB | 15.58 | 0.76 | 52 | 3ms |
 
 **Machine**: Apple M2 Max, 64 GB, macOS 14, release build.
 
