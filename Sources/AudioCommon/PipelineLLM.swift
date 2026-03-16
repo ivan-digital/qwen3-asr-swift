@@ -24,3 +24,30 @@ public enum MessageRole: Int, Sendable {
     case assistant = 2
     case tool = 3
 }
+
+// MARK: - Tool Calling
+
+/// A tool that can be invoked by the LLM during voice pipeline execution.
+public struct PipelineTool {
+    public let name: String
+    public let description: String
+    public let handler: (String) -> String
+    public let cooldown: Int
+
+    /// - Parameters:
+    ///   - name: Tool name (used by LLM to invoke)
+    ///   - description: What the tool does (included in LLM system prompt)
+    ///   - cooldown: Minimum seconds between invocations (0 = no limit)
+    ///   - handler: Synchronous handler `(arguments) -> result`. Called on pipeline worker thread.
+    public init(
+        name: String,
+        description: String,
+        cooldown: Int = 0,
+        handler: @escaping (String) -> String
+    ) {
+        self.name = name
+        self.description = description
+        self.cooldown = cooldown
+        self.handler = handler
+    }
+}
