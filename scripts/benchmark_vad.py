@@ -109,10 +109,10 @@ def run_vad(cli_path: str, audio_path: str, engine: str = "pyannote",
             timeout: int = 300) -> list:
     """Run VAD on an audio file, return list of (start, end) segments."""
     if engine == "silero":
-        # Silero uses vad-stream command
         cmd = [cli_path, "vad-stream", str(audio_path)]
+    elif engine == "firered":
+        cmd = [cli_path, "vad", str(audio_path), "--engine", "firered"]
     else:
-        # Pyannote uses vad command
         cmd = [cli_path, "vad", str(audio_path)]
 
     result = subprocess.run(
@@ -135,7 +135,7 @@ def run_vad(cli_path: str, audio_path: str, engine: str = "pyannote",
                 segments.append((current_start, float(m.group(1))))
                 current_start = None
     else:
-        # Parse: [0.10s - 0.73s] (0.63s)
+        # Pyannote and FireRedVAD: [0.10s - 0.73s] (0.63s)
         for line in result.stdout.split("\n"):
             m = re.search(r"\[([\d.]+)s\s*[-–]\s*([\d.]+)s\]", line)
             if m:
@@ -317,8 +317,8 @@ def main():
         description="VAD benchmark (VoxConverse + FireRedVAD comparison)")
     parser.add_argument("--cli-path", default=".build/release/audio")
     parser.add_argument("--engine", default="pyannote",
-                        choices=["pyannote", "silero"],
-                        help="VAD engine: pyannote (MLX) or silero (streaming)")
+                        choices=["pyannote", "silero", "firered"],
+                        help="VAD engine: pyannote (MLX), silero (streaming), or firered (CoreML)")
     parser.add_argument("--num-files", type=int, default=0,
                         help="Limit number of files (0 = all)")
     parser.add_argument("--timeout", type=int, default=300)
@@ -339,7 +339,7 @@ def main():
 
     if args.compare:
         all_results = []
-        for engine in ["pyannote", "silero"]:
+        for engine in ["pyannote", "silero", "firered"]:
             print(f"\n--- VAD engine: {engine} ---")
             per_file = run_benchmark(
                 args.cli_path, engine, args.num_files, args.timeout)

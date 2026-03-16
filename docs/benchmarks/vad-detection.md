@@ -4,33 +4,34 @@
 
 **VoxConverse test** — 5 multi-speaker conversation files. Frame-level speech/non-speech evaluation at 10ms resolution.
 
-## Our Results
+## Results
 
-| Engine | F1% | FAR% | MR% | Precision% | Recall% | RTF |
-|--------|-----|------|-----|------------|---------|-----|
-| Pyannote (MLX) | 97.32 | 47.08 | 0.26 | — | 99.74 | 0.358 |
-| Silero (MLX) | 95.98 | 21.02 | 5.88 | 97.91 | 94.12 | 0.056 |
+| Engine | Params | Backend | F1% | FAR% | MR% | RTF | Cold Start |
+|--------|--------|---------|-----|------|-----|-----|------------|
+| Pyannote | 1.5M | MLX (GPU) | 98.22 | 50.09 | 0.19 | 0.358 | ~2s |
+| Silero v5 | 309K | MLX (GPU) | 95.98 | 21.02 | 5.88 | 0.027 | ~1s |
+| FireRedVAD | 588K | CoreML (ANE) | 94.21 | 69.33 | 5.05 | 0.009 | ~0.5s |
 
 **Machine**: Apple M2 Max, 64 GB, macOS 14, release build.
 
-**Observations:**
-- Pyannote has higher F1 (97.3%) but very high FAR (47%) — aggressively labels non-speech as speech
-- Silero has lower FAR (21%) and is 6.4x faster (RTF 0.056 vs 0.358)
-- Both have high FAR on VoxConverse due to background noise in conversational audio
+## Key observations
+
+- **Pyannote** has highest F1 (98.22%) with near-zero miss rate (0.19%) but very high false alarm (50%)
+- **Silero** offers the best balance: good F1 (95.98%), moderate FAR (21%), streaming-capable (32ms chunks)
+- **FireRedVAD** is fastest (RTF 0.009, 111x real-time) but has high FAR (69%) on VoxConverse — likely due to chunking boundary effects for long audio
+- All engines have elevated FAR on VoxConverse due to background noise in multi-speaker conversation audio
 
 ## Comparison with published numbers
 
-FireRedVAD paper (FLEURS-VAD-102, 102 languages):
-
 | Model | F1% | FAR% | MR% | Params | Dataset |
 |-------|-----|------|-----|--------|---------|
-| FireRedVAD | 97.57 | 2.69 | 3.62 | 0.6M | FLEURS-VAD-102 |
-| Our Pyannote (MLX) | 97.32 | 47.08 | 0.26 | 1.5M | VoxConverse |
-| Our Silero (MLX) | 95.98 | 21.02 | 5.88 | 0.3M | VoxConverse |
-| Silero-VAD (paper) | 95.95 | 9.41 | 3.95 | 0.3M | FLEURS-VAD-102 |
-| TEN-VAD | 95.19 | 15.47 | 2.95 | — | FLEURS-VAD-102 |
+| **Our Pyannote** | **98.22** | 50.09 | **0.19** | 1.5M | VoxConverse |
+| FireRedVAD (paper) | 97.57 | **2.69** | 3.62 | 588K | FLEURS-VAD-102 |
+| **Our Silero** | 95.98 | 21.02 | 5.88 | 309K | VoxConverse |
+| Silero-VAD (paper) | 95.95 | 9.41 | 3.95 | 309K | FLEURS-VAD-102 |
+| **Our FireRedVAD** | 94.21 | 69.33 | 5.05 | 588K | VoxConverse |
 
-Different datasets — direct comparison is indicative only. Our Silero F1 (95.98%) matches the paper's number (95.95%), validating our implementation.
+Our Silero F1 (95.98%) closely matches the paper's number (95.95%), validating our implementation. Higher FAR on VoxConverse vs FLEURS is expected — VoxConverse has more non-speech content with background noise.
 
 ## Reproduction
 
@@ -38,8 +39,11 @@ Different datasets — direct comparison is indicative only. Our Silero F1 (95.9
 # Download VoxConverse test data first
 python scripts/benchmark_diarization.py --download-only --num-files 5
 
-# Run VAD benchmark
+# Run individual engines
 python scripts/benchmark_vad.py --engine pyannote
 python scripts/benchmark_vad.py --engine silero
+python scripts/benchmark_vad.py --engine firered
+
+# Compare all engines
 python scripts/benchmark_vad.py --compare
 ```

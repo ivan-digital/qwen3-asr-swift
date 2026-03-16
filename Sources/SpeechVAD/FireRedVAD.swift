@@ -120,9 +120,27 @@ public final class FireRedVADModel {
 
         let numFrames = features.count / 80
 
-        // Run CoreML inference
+        // Run CoreML inference (chunk if > 6000 frames / 60s)
         #if canImport(CoreML)
-        let probs = runCoreML(features: features, numFrames: numFrames)
+        let maxFrames = 6000
+        let probs: [Float]
+        if numFrames <= maxFrames {
+            probs = runCoreML(features: features, numFrames: numFrames)
+        } else {
+            // Process in chunks
+            var allProbs = [Float]()
+            var offset = 0
+            while offset < numFrames {
+                let chunkFrames = min(maxFrames, numFrames - offset)
+                let chunkStart = offset * 80
+                let chunkEnd = chunkStart + chunkFrames * 80
+                let chunkFeatures = Array(features[chunkStart..<chunkEnd])
+                let chunkProbs = runCoreML(features: chunkFeatures, numFrames: chunkFrames)
+                allProbs.append(contentsOf: chunkProbs)
+                offset += chunkFrames
+            }
+            probs = allProbs
+        }
         #else
         return []
         #endif
