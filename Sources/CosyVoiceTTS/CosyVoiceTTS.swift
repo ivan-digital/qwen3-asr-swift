@@ -1,4 +1,5 @@
 import Foundation
+import MLXCommon
 import MLX
 import MLXNN
 import AudioCommon
@@ -143,8 +144,42 @@ public final class CosyVoiceTTSModel {
         language: String = "english",
         verbose: Bool = false
     ) -> [Float] {
+        synthesize(text: text, language: language, instruction: "You are a helpful assistant.",
+                   speakerEmbedding: nil, verbose: verbose)
+    }
+
+    /// Synthesize speech from text with a cloned voice.
+    ///
+    /// Uses a 192-dim CAM++ speaker embedding to condition the flow model,
+    /// producing speech that mimics the voice characteristics of the embedding.
+    public func synthesize(
+        text: String,
+        language: String = "english",
+        speakerEmbedding: [Float],
+        verbose: Bool = false
+    ) -> [Float] {
+        synthesize(text: text, language: language, instruction: "You are a helpful assistant.",
+                   speakerEmbedding: speakerEmbedding, verbose: verbose)
+    }
+
+    /// Unified synthesis with both instruction and optional speaker embedding.
+    ///
+    /// - Parameters:
+    ///   - text: Text to synthesize
+    ///   - language: Target language
+    ///   - instruction: Style instruction prefix (before `<|endofprompt|>`)
+    ///   - speakerEmbedding: Optional 192-dim CAM++ speaker embedding
+    ///   - verbose: Print timing info
+    /// - Returns: Array of float audio samples at 24kHz
+    public func synthesize(
+        text: String,
+        language: String = "english",
+        instruction: String = "You are a helpful assistant.",
+        speakerEmbedding: [Float]? = nil,
+        verbose: Bool = false
+    ) -> [Float] {
         // 1. Tokenize text via Qwen2.5 BPE tokenizer
-        let textTokens = tokenizeText(text, language: language)
+        let textTokens = tokenizeText(text, language: language, instruction: instruction)
 
         // 2. Generate speech tokens via LLM
         var t0 = CFAbsoluteTimeGetCurrent()
@@ -166,15 +201,22 @@ public final class CosyVoiceTTSModel {
         // 3. Convert speech tokens to mel spectrogram via flow matching
         t0 = CFAbsoluteTimeGetCurrent()
         let tokenArray = MLXArray(speechTokens).expandedDimensions(axis: 0)  // [1, T]
-        let mel = flow(tokens: tokenArray)  // [1, 80, T_mel]
+        let mel: MLXArray
+        if let embedding = speakerEmbedding {
+            let spkEmb = MLXArray(embedding).expandedDimensions(axis: 0)  // [1, 192]
+            mel = flow(tokens: tokenArray, spkEmbedding: spkEmb)
+        } else {
+            mel = flow(tokens: tokenArray)
+        }
         eval(mel)
         if verbose {
-            print(String(format: "  Flow: %.0fms", (CFAbsoluteTimeGetCurrent() - t0) * 1000))
+            let suffix = speakerEmbedding != nil ? " (speaker-conditioned)" : ""
+            print(String(format: "  Flow: %.0fms%@", (CFAbsoluteTimeGetCurrent() - t0) * 1000, suffix))
         }
 
         // 4. Convert mel to waveform via HiFi-GAN
         t0 = CFAbsoluteTimeGetCurrent()
-        let audio = hifigan(mel)  // [1, samples] or [samples]
+        let audio = hifigan(mel)
         eval(audio)
         if verbose {
             print(String(format: "  HiFi-GAN: %.0fms", (CFAbsoluteTimeGetCurrent() - t0) * 1000))
@@ -185,31 +227,39 @@ public final class CosyVoiceTTSModel {
     }
 
     /// Synthesize with streaming output.
+    /// Synthesize speech asynchronously, yielding audio in chunks.
+    ///
+    /// Currently yields a single chunk with the full result (not yet
+    /// incrementally streaming). The async stream interface is preserved
+    /// for forward compatibility with chunked codec decoding.
     public func synthesizeStream(
         text: String,
         language: String = "english",
         chunkSize: Int = 25
     ) -> AsyncThrowingStream<AudioChunk, Error> {
-        let (stream, continuation) = AsyncThrowingStream<AudioChunk, Error>.makeStream()
-
-        Task { [weak self] in
-            guard let self else {
-                continuation.finish()
-                return
+        let rate = config.sampleRate
+        return AsyncThrowingStream { continuation in
+            let task = Task { [weak self] in
+                guard let self else {
+                    continuation.finish()
+                    return
+                }
+                do {
+                    let samples = self.synthesize(text: text, language: language)
+                    let chunk = AudioChunk(
+                        samples: samples,
+                        sampleRate: rate,
+                        frameIndex: 0,
+                        isFinal: true
+                    )
+                    continuation.yield(chunk)
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
             }
-            // Non-streaming for now — stream the full result as a single chunk
-            let samples = self.synthesize(text: text, language: language)
-            let chunk = AudioChunk(
-                samples: samples,
-                sampleRate: config.sampleRate,
-                frameIndex: 0,
-                isFinal: true
-            )
-            continuation.yield(chunk)
-            continuation.finish()
+            continuation.onTermination = { @Sendable _ in task.cancel() }
         }
-
-        return stream
     }
 
     /// Token ID for `<|endofprompt|>` — added by CosyVoice3 but not in base tokenizer config.
@@ -220,9 +270,11 @@ public final class CosyVoiceTTSModel {
     ///
     /// CosyVoice3 requires the text format: `{instruction}<|endofprompt|>{text_to_synthesize}`
     /// The `<|endofprompt|>` token (ID 151646) marks the boundary between instruction and content.
-    private func tokenizeText(_ text: String, language: String) -> [Int32] {
+    private func tokenizeText(
+        _ text: String, language: String,
+        instruction: String = "You are a helpful assistant."
+    ) -> [Int32] {
         // Encode instruction prefix
-        let instruction = "You are a helpful assistant."
         let instructionTokens = tokenizer.encode(instruction).map { Int32($0) }
 
         // Encode text to synthesize

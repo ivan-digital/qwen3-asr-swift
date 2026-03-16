@@ -30,6 +30,25 @@ Three-stage pipeline: LLM → DiT Flow Matching → HiFi-GAN Vocoder → 24kHz a
 - Snake activation in residual blocks
 - ISTFT reconstruction (n_fft=16) → 24kHz waveform
 
+## Voice Cloning
+- CAM++ speaker encoder (CoreML, Neural Engine) extracts 192-dim embedding from reference audio
+- Affine projection (192 → 80) conditions DiT flow model on target voice
+- Model: `aufklarer/CamPlusPlus-Speaker-CoreML` (~14 MB, FP16)
+- CLI: `--voice-sample reference.wav`
+
+## Multi-Speaker Dialogue
+- `DialogueParser` parses `[S1] text [S2] text` speaker tags into `DialogueSegment` structs
+- `DialogueSynthesizer` orchestrates per-segment synthesis with per-speaker embeddings
+- Configurable silence gaps (`--turn-gap`, default 0.2s) and linear crossfade (`--crossfade`)
+- CLI: `--speakers s1=alice.wav,s2=bob.wav` loads CAM++ once, extracts per-speaker embeddings
+
+## Emotion / Style Tags
+- Inline `(emotion)` tags map to instruction prefixes before `<|endofprompt|>` token
+- 8 built-in: happy/excited, sad, angry, whispers/whispering, laughs/laughing, calm, surprised, serious
+- Unknown tags pass through as freeform instructions: `(Speak like a pirate)`
+- `--cosy-instruct` sets the global default instruction (replaces "You are a helpful assistant.")
+- Text format: `{instruction}<|endofprompt|>(token 151646){text_to_synthesize}`
+
 ## Streaming
 - Chunk-aware causal masking in DiT
 - 25-token chunks (~1 second of audio)

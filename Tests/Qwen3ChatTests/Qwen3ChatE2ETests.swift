@@ -21,13 +21,14 @@ final class Qwen3ChatE2ETests: XCTestCase {
         let model = try await loadModelOrSkip()
         let response = try model.generate(
             messages: [
-                ChatMessage(role: .user, content: "Say hello in one word.")
+                ChatMessage(role: .user, content: "What is 2+2? Reply with just the number.")
             ],
-            sampling: ChatSamplingConfig(temperature: 0.3, topK: 20, topP: 0.8, maxTokens: 512)
+            sampling: ChatSamplingConfig(temperature: 0.3, topK: 20, maxTokens: 20)
         )
 
-        XCTAssertFalse(response.isEmpty, "Should generate non-empty response")
-        print("Generation: '\(response.trimmingCharacters(in: .whitespacesAndNewlines))'")
+        let trimmed = response.trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertFalse(trimmed.isEmpty, "Should generate non-empty response")
+        print("Generation: '\(trimmed)'")
 
         let metrics = model.lastMetrics
         XCTAssertTrue(metrics.tokensPerSec > 0, "Should measure decode speed")
@@ -94,14 +95,16 @@ final class Qwen3ChatE2ETests: XCTestCase {
     func testMultiTurnConversation() async throws {
         let model = try await loadModelOrSkip()
 
-        let sampling = ChatSamplingConfig(maxTokens: 512)
+        let sampling = ChatSamplingConfig(temperature: 0.3, topK: 20, maxTokens: 30)
 
-        let r1 = try model.chat("My name is Alice.", systemPrompt: "Be brief.", sampling: sampling)
+        let r1 = try model.chat("My name is Alice.", systemPrompt: "Remember the user's name. Be brief.", sampling: sampling)
         XCTAssertFalse(r1.isEmpty)
 
-        let r2 = try model.chat("What is my name?", systemPrompt: "Be brief.", sampling: sampling)
-        XCTAssertFalse(r2.isEmpty)
-        print("Multi-turn response: \(r2)")
+        let r2 = try model.chat("What is my name?", sampling: sampling)
+        let r2lower = r2.lowercased()
+        XCTAssertTrue(r2lower.contains("alice"),
+            "Should remember 'Alice' from previous turn but got: '\(r2)'")
+        print("Multi-turn: '\(r2.trimmingCharacters(in: .whitespacesAndNewlines))'")
     }
 
     func testStreamingChat() async throws {
@@ -163,11 +166,56 @@ final class Qwen3ChatE2ETests: XCTestCase {
         XCTAssertFalse(trimmed.isEmpty, "Should generate non-empty response")
     }
 
+    // MARK: - INT8 Variant
+
+    func testINT8ModelLoading() async throws {
+        let model = try await loadModelOrSkip(quantization: .int8)
+        let metrics = model.lastMetrics
+        XCTAssertEqual(metrics.tokensPerSec, 0)
+    }
+
+    func testINT8Generation() async throws {
+        let model = try await loadModelOrSkip(quantization: .int8)
+        let response = try model.generate(
+            messages: [ChatMessage(role: .user, content: "What is 2+2? Reply with just the number.")],
+            sampling: ChatSamplingConfig(temperature: 0.3, topK: 20, maxTokens: 20)
+        )
+        let trimmed = response.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertFalse(trimmed.isEmpty, "INT8 model should generate non-empty response")
+        XCTAssertTrue(trimmed.contains("4"), "INT8 should answer '4' but got: '\(trimmed)'")
+        print("INT8 generation: '\(trimmed)'")
+
+        let m = model.lastMetrics
+        print("INT8 performance: \(String(format: "%.1f", m.tokensPerSec)) tok/s, "
+            + "\(String(format: "%.0f", m.prefillMs))ms prefill")
+    }
+
+    func testINT8StreamingChat() async throws {
+        let model = try await loadModelOrSkip(quantization: .int8)
+        var chunks: [String] = []
+
+        let stream = model.chatStream(
+            "What is 1+1?",
+            systemPrompt: "Answer in one word.",
+            sampling: ChatSamplingConfig(temperature: 0.3, maxTokens: 10)
+        )
+
+        for try await chunk in stream {
+            chunks.append(chunk)
+        }
+
+        XCTAssertTrue(chunks.count > 0, "INT8 streaming should yield tokens")
+        let text = chunks.joined()
+        XCTAssertFalse(text.isEmpty)
+        print("INT8 streaming: '\(text.trimmingCharacters(in: .whitespacesAndNewlines))'")
+    }
+
     // MARK: - Helpers
 
-    private func loadModelOrSkip() async throws -> Qwen3ChatModel {
+    private func loadModelOrSkip(quantization: Qwen3ChatModel.Quantization = .int4) async throws -> Qwen3ChatModel {
         return try await Qwen3ChatModel.fromPretrained(
             modelId: Self.modelId,
+            quantization: quantization,
             computeUnits: .all
         ) { progress, status in
             print("[\(Int(progress * 100))%] \(status)")

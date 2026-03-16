@@ -41,9 +41,11 @@ struct TDTGreedyDecoder {
     /// - Parameters:
     ///   - encoded: Encoder output as MLMultiArray, shape `[1, T, encoderHidden]`
     ///   - encodedLength: Number of valid encoder frames
-    /// - Returns: Token IDs (text tokens only, blank and special tokens filtered out)
-    func decode(encoded: MLMultiArray, encodedLength: Int) throws -> [Int] {
+    /// - Returns: Tuple of (token IDs, confidence 0.0–1.0)
+    func decode(encoded: MLMultiArray, encodedLength: Int) throws -> (tokens: [Int], confidence: Float) {
         var tokens = [Int]()
+        var logProbSum: Float = 0
+        var logProbCount: Int = 0
 
         // Initialize LSTM state
         let hShape = [config.decoderLayers, 1, config.decoderHidden] as [NSNumber]
@@ -103,6 +105,10 @@ struct TDTGreedyDecoder {
             } else {
                 if tokenId >= firstTextTokenId {
                     tokens.append(tokenId)
+                    // Accumulate log-prob for confidence: log(softmax(logit_max))
+                    let logitMax = tokenLogits[tokenId].floatValue
+                    logProbSum += logitMax
+                    logProbCount += 1
                 }
 
                 let durationIdx = argmax(durationLogits, count: config.numDurationBins, floatBuf: nil)
@@ -123,7 +129,15 @@ struct TDTGreedyDecoder {
             }
         }
 
-        return tokens
+        // Confidence: sigmoid of mean logit (maps to 0–1 range)
+        let confidence: Float
+        if logProbCount > 0 {
+            let meanLogit = logProbSum / Float(logProbCount)
+            confidence = 1.0 / (1.0 + exp(-meanLogit * 0.1))  // scaled sigmoid
+        } else {
+            confidence = 0.0
+        }
+        return (tokens, confidence)
     }
 
     // MARK: - Array Operations

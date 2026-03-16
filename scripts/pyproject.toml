@@ -1,0 +1,19 @@
+[tool.poetry]
+name = "speech-swift-scripts"
+version = "0.1.0"
+description = "Model conversion scripts for speech-swift"
+authors = []
+package-mode = false
+
+[tool.poetry.dependencies]
+python = "^3.11"
+torch = "^2.3.0,<2.4"
+coremltools = "^8.3"
+transformers = "^4.40,<4.50"
+numpy = "^1.26,<2"
+huggingface-hub = ">=0.20"
+loguru = "*"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

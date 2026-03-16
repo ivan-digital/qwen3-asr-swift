@@ -22,7 +22,7 @@ final class SendableTests: XCTestCase {
     func testDiarizationConfigSendable() async {
         let config = DiarizationConfig.default
         let result = await Task { config }.value
-        XCTAssertEqual(result.minSpeakers, 0)
+        XCTAssertEqual(result.onset, 0.5, accuracy: 0.001)
     }
 
     func testQwen3AudioEncoderConfigSendable() async {
@@ -45,7 +45,7 @@ final class SendableTests: XCTestCase {
 
             group.addTask { vadConfig.onset > 0 }
             group.addTask { segConfig.sampleRate == 16000 }
-            group.addTask { diarConfig.maxSpeakers == 0 }
+            group.addTask { diarConfig.onset == 0.5 }
 
             for await result in group {
                 XCTAssertTrue(result)

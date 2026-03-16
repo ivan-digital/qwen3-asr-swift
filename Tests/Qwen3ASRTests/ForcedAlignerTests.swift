@@ -99,7 +99,7 @@ final class ForcedAlignerTests: XCTestCase {
         let targetSampleRate = 24000
         let audio: [Float]
         if sampleRate != targetSampleRate {
-            audio = AudioFileLoader.resampleForTest(samples, from: sampleRate, to: targetSampleRate)
+            audio = AudioFileLoader.resample(samples, from: sampleRate, to: targetSampleRate)
         } else {
             audio = samples
         }
@@ -162,7 +162,7 @@ final class ForcedAlignerTests: XCTestCase {
         let targetSR = 24000
         let audio: [Float]
         if sampleRate != targetSR {
-            audio = AudioFileLoader.resampleForTest(samples, from: sampleRate, to: targetSR)
+            audio = AudioFileLoader.resample(samples, from: sampleRate, to: targetSR)
         } else {
             audio = samples
         }

@@ -35,7 +35,7 @@ public struct KokoroConfig: Codable, Sendable {
 ///
 /// CoreML models on the Neural Engine require fixed output shapes. The model
 /// is compiled into multiple variants for different maximum durations.
-/// FluidInference provides v2.1 (iOS 16+) and v2.4 (iOS 17+) variants.
+/// aufklarer/Kokoro-82M-CoreML provides v2.1 (iOS 16+) and v2.4 (iOS 17+) variants.
 public enum ModelBucket: CaseIterable, Sendable, Hashable {
     /// v2.1, max ~5s output, 124 token input
     case v21_5s

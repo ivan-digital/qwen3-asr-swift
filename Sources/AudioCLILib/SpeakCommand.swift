@@ -37,7 +37,7 @@ public struct SpeakCommand: ParsableCommand {
     @Option(name: .long, help: "[qwen3] Style instruction (requires CustomVoice model)")
     public var instruct: String?
 
-    @Option(name: .long, help: "[qwen3] Reference audio file for voice cloning (Base model)")
+    @Option(name: .long, help: "Reference audio file for voice cloning (qwen3 Base or cosyvoice)")
     public var voiceSample: String?
 
     @Option(name: .long, help: "[qwen3] Model variant: base (default), base-8bit, 1.7b, 1.7b-8bit, customVoice, or full HF model ID. Note: --speaker requires customVoice.")
@@ -71,6 +71,18 @@ public struct SpeakCommand: ParsableCommand {
 
     @Option(name: .long, help: "[cosyvoice] HuggingFace model ID")
     public var modelId: String = "aufklarer/CosyVoice3-0.5B-MLX-4bit"
+
+    @Option(name: .long, help: "[cosyvoice] Speaker mapping: s1=alice.wav,s2=bob.wav")
+    public var speakers: String?
+
+    @Option(name: .long, help: "[cosyvoice] Style instruction (overrides default)")
+    public var cosyInstruct: String?
+
+    @Option(name: .long, help: "[cosyvoice] Silence gap between turns in seconds (default 0.2)")
+    public var turnGap: Float = 0.2
+
+    @Option(name: .long, help: "[cosyvoice] Crossfade between turns in seconds (default 0)")
+    public var crossfade: Float = 0.0
 
     @Flag(name: .long, help: "Show detailed timing info")
     public var verbose: Bool = false
@@ -336,12 +348,122 @@ public struct SpeakCommand: ParsableCommand {
                 throw ExitCode(1)
             }
 
-            print("Synthesizing: \"\(inputText)\"")
+            // Parse speaker mapping: "s1=alice.wav,s2=bob.wav"
+            var speakerFiles: [String: String] = [:]
+            if let speakersArg = speakers {
+                for pair in speakersArg.split(separator: ",") {
+                    let parts = pair.split(separator: "=", maxSplits: 1)
+                    guard parts.count == 2 else {
+                        print("Error: Invalid speaker mapping '\(pair)'. Expected format: name=file.wav")
+                        throw ExitCode(1)
+                    }
+                    speakerFiles[String(parts[0]).uppercased()] = String(parts[1])
+                }
+            }
+
+            // Load speaker embeddings from voice samples
+            var speakerEmbeddings: [String: [Float]] = [:]
+            #if canImport(CoreML)
+            // Single --voice-sample (no --speakers) → used as default embedding
+            var defaultEmbedding: [Float]?
+            if let voiceSamplePath = voiceSample, speakerFiles.isEmpty {
+                let refURL = URL(fileURLWithPath: voiceSamplePath)
+                let refSamples = try AudioFileLoader.load(url: refURL, targetSampleRate: 16000)
+                print("  Reference audio: \(refSamples.count) samples (\(String(format: "%.1f", Double(refSamples.count) / 16000.0))s)")
+
+                print("Loading CAM++ speaker encoder...")
+                let campp = try await CamPlusPlusSpeaker.fromPretrained { progress, status in
+                    reportProgress(progress, status)
+                }
+
+                let embedding = try campp.embed(audio: refSamples, sampleRate: 16000)
+                defaultEmbedding = embedding
+                print("  Speaker embedding: \(embedding.count)-dim")
+            }
+
+            // Multi-speaker: load CAM++ once, extract embedding per speaker file
+            if !speakerFiles.isEmpty {
+                print("Loading CAM++ speaker encoder...")
+                let campp = try await CamPlusPlusSpeaker.fromPretrained { progress, status in
+                    reportProgress(progress, status)
+                }
+
+                for (name, path) in speakerFiles {
+                    let refURL = URL(fileURLWithPath: path)
+                    let refSamples = try AudioFileLoader.load(url: refURL, targetSampleRate: 16000)
+                    let embedding = try campp.embed(audio: refSamples, sampleRate: 16000)
+                    speakerEmbeddings[name] = embedding
+                    print("  Speaker \(name): \(embedding.count)-dim embedding from \(path)")
+                }
+            }
+            #else
+            let defaultEmbedding: [Float]? = nil
+            #endif
+
+            // Parse dialogue segments
+            let segments = DialogueParser.parse(inputText)
+            let isDialogue = segments.count > 1
+                || segments.first?.speaker != nil
+                || segments.first?.emotion != nil
+
+            let defaultInstruction = cosyInstruct ?? "You are a helpful assistant."
+
             print("  Language: \(effectiveLanguage)")
 
             let startTime = CFAbsoluteTimeGetCurrent()
 
-            if stream {
+            if isDialogue {
+                // Multi-segment dialogue synthesis
+                if verbose {
+                    print("  Dialogue: \(segments.count) segments")
+                    for (i, seg) in segments.enumerated() {
+                        var desc = "    [\(i + 1)] \"\(seg.text)\""
+                        if let spk = seg.speaker { desc += " speaker=\(spk)" }
+                        if let emo = seg.emotion { desc += " emotion=\(emo)" }
+                        print(desc)
+                    }
+                }
+
+                // Merge default embedding into per-speaker map for segments without speaker tags
+                var allEmbeddings = speakerEmbeddings
+                if let defEmb = defaultEmbedding {
+                    // Assign default embedding to any speaker tag not in the map
+                    for seg in segments {
+                        if let spk = seg.speaker?.uppercased(), allEmbeddings[spk] == nil {
+                            allEmbeddings[spk] = defEmb
+                        }
+                    }
+                }
+
+                let config = DialogueSynthesisConfig(
+                    turnGapSeconds: turnGap,
+                    crossfadeSeconds: self.crossfade,
+                    defaultInstruction: defaultInstruction
+                )
+
+                let samples = DialogueSynthesizer.synthesize(
+                    segments: segments,
+                    speakerEmbeddings: allEmbeddings,
+                    model: cosyModel,
+                    language: effectiveLanguage,
+                    config: config,
+                    verbose: verbose
+                )
+
+                let elapsed = CFAbsoluteTimeGetCurrent() - startTime
+                let duration = Double(samples.count) / 24000.0
+                print(String(format: "  Duration: %.2fs, Time: %.2fs, RTF: %.2f",
+                             duration, elapsed, elapsed / max(duration, 0.001)))
+
+                if !self.play {
+                    let outputURL = URL(fileURLWithPath: self.output)
+                    try WAVWriter.write(samples: samples, sampleRate: 24000, to: outputURL)
+                    print("Saved to \(self.output)")
+                } else {
+                    self.playAudio(samples: samples, sampleRate: 24000)
+                }
+            } else if stream {
+                // Streaming (single segment, no dialogue)
                 var allSamples: [Float] = []
                 var chunkCount = 0
                 for try await chunk in cosyModel.synthesizeStream(text: inputText, language: effectiveLanguage) {
@@ -364,8 +486,22 @@ public struct SpeakCommand: ParsableCommand {
                     self.playAudio(samples: allSamples, sampleRate: 24000)
                 }
             } else {
+                // Single segment synthesis
+                let instruction = segments.first?.emotion.map {
+                    DialogueParser.emotionToInstruction($0)
+                } ?? defaultInstruction
+
+                var info = "Synthesizing: \"\(inputText)\""
+                if defaultEmbedding != nil || !speakerEmbeddings.isEmpty { info += " [voice clone]" }
+                if instruction != "You are a helpful assistant." { info += " [instruction: \(instruction)]" }
+                print(info)
+
                 let samples = cosyModel.synthesize(
-                    text: inputText, language: self.effectiveLanguage, verbose: self.verbose)
+                    text: inputText, language: effectiveLanguage,
+                    instruction: instruction,
+                    speakerEmbedding: defaultEmbedding,
+                    verbose: verbose
+                )
 
                 let elapsed = CFAbsoluteTimeGetCurrent() - startTime
                 let duration = Double(samples.count) / 24000.0

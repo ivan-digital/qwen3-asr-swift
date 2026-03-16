@@ -82,10 +82,33 @@ struct PersonaPlexView: View {
                 .frame(width: 140)
             }
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Max Steps").font(.caption).foregroundStyle(.secondary)
-                Stepper("\(vm.maxSteps)", value: $vm.maxSteps, in: 50...500, step: 50)
-                    .frame(width: 120)
+            if !vm.isFullDuplexMode {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Max Steps").font(.caption).foregroundStyle(.secondary)
+                    Stepper("\(vm.maxSteps)", value: $vm.maxSteps, in: 50...500, step: 50)
+                        .frame(width: 120)
+                }
+            }
+
+            Spacer()
+
+            VStack(alignment: .trailing, spacing: 4) {
+                Text("Mode").font(.caption).foregroundStyle(.secondary)
+                Picker("Mode", selection: $vm.isFullDuplexMode) {
+                    Text("Turn-based").tag(false)
+                    Text("Full-Duplex").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 180)
+            }
+
+            if vm.isFullDuplexMode {
+                VStack(alignment: .trailing, spacing: 4) {
+                    Text("Echo Suppression").font(.caption).foregroundStyle(.secondary)
+                    Toggle("", isOn: $vm.echoSuppression)
+                        .labelsHidden()
+                        .help("Enable when using speakers to prevent the mic from picking up agent audio. Disable when using headphones.")
+                }
             }
         }
         .disabled(vm.isActive || vm.isBusy)
@@ -153,7 +176,7 @@ struct PersonaPlexView: View {
                     .fill(buttonColor)
                     .frame(width: size, height: size)
                     .overlay {
-                        if vm.conversationState == .listening {
+                        if vm.conversationState == .listening || vm.conversationState == .fullDuplex {
                             Circle()
                                 .stroke(Color.white.opacity(0.6), lineWidth: 3 + CGFloat(vm.audioLevel) * 12)
                                 .frame(width: size + 10, height: size + 10)
@@ -176,6 +199,7 @@ struct PersonaPlexView: View {
         case .listening: return .green
         case .processing: return .orange
         case .speaking: return .purple
+        case .fullDuplex: return .teal
         }
     }
 
@@ -185,6 +209,7 @@ struct PersonaPlexView: View {
         case .listening: return .green.opacity(0.4)
         case .processing: return .orange.opacity(0.4)
         case .speaking: return .purple.opacity(0.4)
+        case .fullDuplex: return .teal.opacity(0.4)
         }
     }
 
@@ -205,6 +230,10 @@ struct PersonaPlexView: View {
                 .tint(.white)
         case .speaking:
             Image(systemName: "speaker.wave.2.fill")
+                .font(.system(size: 36))
+                .foregroundStyle(.white)
+        case .fullDuplex:
+            Image(systemName: "waveform.and.mic")
                 .font(.system(size: 36))
                 .foregroundStyle(.white)
         }
@@ -229,6 +258,10 @@ struct PersonaPlexView: View {
             Text("Speaking... tap to stop")
                 .font(.callout)
                 .foregroundStyle(.purple)
+        case .fullDuplex:
+            Text("Full-duplex active... tap to stop")
+                .font(.callout)
+                .foregroundStyle(.teal)
         }
     }
 }

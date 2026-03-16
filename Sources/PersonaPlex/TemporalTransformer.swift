@@ -1,4 +1,5 @@
 import Foundation
+import MLXCommon
 import MLX
 import MLXFast
 import MLXNN

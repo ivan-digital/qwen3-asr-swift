@@ -10,8 +10,8 @@ extension SpeechEnhancer: ModelMemoryManageable {
     }
 
     public var memoryFootprint: Int {
-        // CoreML models don't expose weight memory easily; return 0
         guard _isLoaded else { return 0 }
-        return 0
+        // DeepFilterNet3 CoreML FP16: ~4.2 MB
+        return 4_200_000
     }
 }

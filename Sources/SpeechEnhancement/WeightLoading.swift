@@ -1,4 +1,5 @@
 import Foundation
+import MLXCommon
 import AudioCommon
 
 /// Weight loading for DeepFilterNet3 Core ML model.

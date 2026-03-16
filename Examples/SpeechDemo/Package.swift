@@ -21,5 +21,10 @@ let package = Package(
             path: "SpeechDemo",
             exclude: ["SpeechDemo.entitlements", "Info.plist"]
         ),
+        .testTarget(
+            name: "SpeechDemoTests",
+            dependencies: ["SpeechDemo"],
+            path: "Tests"
+        ),
     ]
 )

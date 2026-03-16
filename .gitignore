@@ -49,3 +49,4 @@ Frameworks/
 
 # Benchmark data (downloaded at runtime)
 benchmarks/
+!docs/benchmarks/

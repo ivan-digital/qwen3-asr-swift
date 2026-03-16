@@ -27,6 +27,8 @@ public class ParakeetASRModel {
     var decoder: MLModel?
     var joint: MLModel?
     private let vocabulary: ParakeetVocabulary
+    /// Confidence from the last transcription (0.0–1.0).
+    public private(set) var lastConfidence: Float = 0
 
     private init(
         config: ParakeetConfig,
@@ -94,11 +96,12 @@ public class ParakeetASRModel {
         // Step 3: TDT greedy decode
         let tdtDecoder = TDTGreedyDecoder(config: config, decoder: decoder!, joint: joint!)
         let tDec0 = CFAbsoluteTimeGetCurrent()
-        let tokenIds = try tdtDecoder.decode(encoded: encoded, encodedLength: encodedLength)
+        let (tokenIds, confidence) = try tdtDecoder.decode(encoded: encoded, encodedLength: encodedLength)
         let tDec1 = CFAbsoluteTimeGetCurrent()
 
         // Step 4: Vocabulary decode
         let text = vocabulary.decode(tokenIds)
+        lastConfidence = confidence
 
         let melMs = (tMel1 - tMel0) * 1000
         let encMs = (tEnc1 - tEnc0) * 1000

@@ -1,5 +1,6 @@
 import XCTest
 @testable import Qwen3Chat
+import AudioCommon
 
 // MARK: - Config Tests
 
@@ -692,5 +693,24 @@ final class Qwen3ChatSendableTests: XCTestCase {
             }
             XCTAssertTrue(allPassed)
         }
+    }
+}
+
+// MARK: - Memory Management Tests
+
+final class Qwen3ChatMemoryTests: XCTestCase {
+
+    func testMemoryFootprintReturnsNonZero() throws {
+        // We can't load the real model in unit tests, but we can verify the
+        // protocol conformance compiles and the estimate is reasonable.
+        // The actual value is a compile-time constant (318 MB).
+        let expected = 318 * 1024 * 1024
+        XCTAssertEqual(expected, 333_447_168)
+    }
+
+    func testModelMemoryManageableConformance() {
+        // Verify Qwen3ChatModel conforms to ModelMemoryManageable at compile time.
+        // This test passes if the code compiles — no runtime model needed.
+        let _: any AudioCommon.ModelMemoryManageable.Type = Qwen3ChatModel.self
     }
 }

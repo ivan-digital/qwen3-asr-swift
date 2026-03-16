@@ -32,8 +32,11 @@ enum PowersetDecoder {
 
     /// Apply hysteresis binarization to per-speaker probabilities.
     ///
+    /// Expects probabilities in `[0, 1]` range (post-softmax or post-sigmoid).
+    /// If values outside this range are passed, apply sigmoid first.
+    ///
     /// - Parameters:
-    ///   - probs: per-frame probabilities for one speaker `[frames]`
+    ///   - probs: per-frame probabilities for one speaker `[frames]`, values in [0, 1]
     ///   - onset: threshold to start a segment
     ///   - offset: threshold to end a segment
     ///   - frameDuration: duration of one frame in seconds

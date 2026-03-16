@@ -270,4 +270,25 @@ final class ParakeetASRTests: XCTestCase {
             XCTAssertEqual(mean, 0.0, accuracy: 0.1, "Bin \(bin) should be ~zero-mean after normalization")
         }
     }
+
+    // MARK: - Confidence Tests
+
+    func testTranscriptionResultHasConfidence() {
+        let result = TranscriptionResult(text: "hello", confidence: 0.85)
+        XCTAssertEqual(result.confidence, 0.85, accuracy: 0.001)
+    }
+
+    func testTranscriptionResultDefaultConfidence() {
+        let result = TranscriptionResult(text: "hello")
+        XCTAssertEqual(result.confidence, 0.0)
+    }
+
+    func testConfidenceSigmoidRange() {
+        // Simulate the sigmoid confidence calculation from TDT decoder
+        for meanLogit: Float in [-10, -1, 0, 1, 5, 10, 50] {
+            let confidence = 1.0 / (1.0 + exp(-meanLogit * 0.1))
+            XCTAssertGreaterThanOrEqual(confidence, 0.0, "Confidence must be >= 0")
+            XCTAssertLessThanOrEqual(confidence, 1.0, "Confidence must be <= 1")
+        }
+    }
 }

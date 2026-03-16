@@ -1,9 +1,6 @@
 import CoreML
 import Foundation
-import os
 import AudioCommon
-
-private let log = Logger(subsystem: "com.qwen3speech", category: "Chat")
 
 /// On-device chat model using Qwen3-0.6B on CoreML.
 ///
@@ -22,14 +19,25 @@ private let log = Logger(subsystem: "com.qwen3speech", category: "Chat")
 /// print(response)       // "Hi there! How can I help?"
 /// print(chat.lastMetrics) // tokens/sec, prefill time, etc.
 /// ```
+///
+/// - Important: Not safe for concurrent access. Use from a single task/thread.
+///   The `@unchecked Sendable` conformance allows passing across isolation
+///   boundaries but does not provide internal synchronization.
 public final class Qwen3ChatModel: @unchecked Sendable {
     public static let defaultModelId = "aufklarer/Qwen3-0.6B-Chat-CoreML"
 
-    private let config: Qwen3ChatConfig
-    private let tokenizer: ChatTokenizer
-    private let generator: CoreMLGenerator
-    private var conversationHistory: [ChatMessage] = []
-    private var systemPromptCached = false
+    let config: Qwen3ChatConfig
+    let tokenizer: ChatTokenizer
+    let generator: CoreMLGenerator
+    var conversationHistory: [ChatMessage] = []
+    var systemPromptCached = false
+    var _isLoaded = true
+
+    /// Quantization variant to load.
+    public enum Quantization: String, Sendable {
+        case int4 = "Qwen3Chat-INT4"
+        case int8 = "Qwen3Chat-INT8"
+    }
 
     /// Metrics from the last generation (tokens/sec, prefill time, etc.).
     public var lastMetrics: (tokensPerSec: Double, prefillMs: Double, decodeMs: Double, msPerToken: Double) {
@@ -57,6 +65,7 @@ public final class Qwen3ChatModel: @unchecked Sendable {
     ///   - progressHandler: Optional callback for download progress
     public static func fromPretrained(
         modelId: String = defaultModelId,
+        quantization: Quantization = .int4,
         computeUnits: MLComputeUnits = .all,
         progressHandler: ((Double, String) -> Void)? = nil
     ) async throws -> Qwen3ChatModel {
@@ -75,16 +84,8 @@ public final class Qwen3ChatModel: @unchecked Sendable {
                 "*.mlmodelc/**",
                 "*.mlpackage/**",
             ],
-            localCheckFiles: [
-                "config.json",
-                "chat_config.json",
-                "vocab.json",
-            ],
             progressHandler: { progress in
-                progressHandler?(progress * 0.7, "")
-            },
-            statusHandler: { status in
-                progressHandler?(0.05, status)
+                progressHandler?(progress * 0.7, "Downloading...")
             }
         )
 
@@ -122,7 +123,8 @@ public final class Qwen3ChatModel: @unchecked Sendable {
                 decodeModel: decodeModel,
                 config: config
             )
-        } else if let singleURL = findModel(named: "Qwen3Chat", in: cacheDir)
+        } else if let singleURL = findModel(named: quantization.rawValue, in: cacheDir)
+                    ?? findModel(named: "Qwen3Chat", in: cacheDir)
                     ?? findAnyModel(in: cacheDir) {
             // Single model fallback
             let model = try MLModel(contentsOf: singleURL, configuration: mlConfig)
@@ -255,7 +257,11 @@ public final class Qwen3ChatModel: @unchecked Sendable {
 
         // Autoregressive decode
         var generatedTokens: [Int] = []
-        for _ in 0..<sampling.maxTokens {
+        var responseTokenCount = 0
+        var inThinking = false
+        let thinkBudget = 100  // extra tokens for <think>...</think>
+
+        for _ in 0..<(sampling.maxTokens + thinkBudget) {
             let nextToken = generator.sample(
                 logits: logits,
                 config: sampling,
@@ -266,6 +272,22 @@ public final class Qwen3ChatModel: @unchecked Sendable {
             if nextToken == ChatTemplate.imEndId { break }
 
             generatedTokens.append(nextToken)
+
+            // Track thinking vs response tokens
+            if nextToken == ChatTemplate.thinkStartId { inThinking = true }
+            else if nextToken == ChatTemplate.thinkEndId { inThinking = false }
+            else if !inThinking { responseTokenCount += 1 }
+
+            // Cap thinking: if thinking exceeds budget, force </think>
+            if inThinking && generatedTokens.count > thinkBudget {
+                generatedTokens.append(ChatTemplate.thinkEndId)
+                logits = try generator.decode(tokenId: ChatTemplate.thinkEndId)
+                inThinking = false
+                continue
+            }
+
+            if responseTokenCount >= sampling.maxTokens { break }
+
             logits = try generator.decode(tokenId: nextToken)
         }
 
@@ -281,7 +303,7 @@ public final class Qwen3ChatModel: @unchecked Sendable {
         sampling: ChatSamplingConfig = .default
     ) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
-            let task = Task {
+            Task {
                 do {
                     self.generator.resetCache()
                     self.generator.resetMetrics()
@@ -298,7 +320,6 @@ public final class Qwen3ChatModel: @unchecked Sendable {
                     // Decode loop — skip thinking block tokens
                     var inThinking = false
                     for _ in 0..<sampling.maxTokens {
-                        if Task.isCancelled { break }
                         let nextToken = self.generator.sample(
                             logits: logits,
                             config: sampling,
@@ -327,9 +348,6 @@ public final class Qwen3ChatModel: @unchecked Sendable {
                 } catch {
                     continuation.finish(throwing: error)
                 }
-            }
-            continuation.onTermination = { @Sendable _ in
-                task.cancel()
             }
         }
     }
@@ -376,24 +394,11 @@ public final class Qwen3ChatModel: @unchecked Sendable {
             tokenizer: tokenizer
         )
 
-        // Prefill turn tokens (optionally with no-think prefix)
-        var logits: [Float]
-        if sampling.disableThinking {
-            let noThinkTokens = [
-                ChatTemplate.thinkStartId,
-                ChatTemplate.newlineId,
-                ChatTemplate.thinkEndId,
-                ChatTemplate.newlineId,
-            ]
-            logits = try generator.prefill(tokenIds: turnTokens + noThinkTokens)
-        } else {
-            logits = try generator.prefill(tokenIds: turnTokens)
-        }
+        // Prefill turn tokens
+        var logits = try generator.prefill(tokenIds: turnTokens)
 
         // Decode response
         var generatedTokens: [Int] = []
-        var inThinking = false
-        var thinkingTokenCount = 0
         for _ in 0..<sampling.maxTokens {
             let nextToken = generator.sample(
                 logits: logits,
@@ -405,25 +410,6 @@ public final class Qwen3ChatModel: @unchecked Sendable {
             if nextToken == ChatTemplate.imEndId { break }
 
             generatedTokens.append(nextToken)
-
-            if nextToken == ChatTemplate.thinkStartId {
-                inThinking = true
-                thinkingTokenCount = 0
-            } else if nextToken == ChatTemplate.thinkEndId {
-                inThinking = false
-            } else if inThinking {
-                thinkingTokenCount += 1
-                if sampling.maxThinkingTokens > 0 &&
-                   thinkingTokenCount >= sampling.maxThinkingTokens {
-                    generatedTokens.append(ChatTemplate.thinkEndId)
-                    logits = try generator.decode(tokenId: ChatTemplate.thinkEndId)
-                    generatedTokens.append(ChatTemplate.newlineId)
-                    logits = try generator.decode(tokenId: ChatTemplate.newlineId)
-                    inThinking = false
-                    continue
-                }
-            }
-
             logits = try generator.decode(tokenId: nextToken)
         }
 
@@ -444,11 +430,9 @@ public final class Qwen3ChatModel: @unchecked Sendable {
         sampling: ChatSamplingConfig = .default
     ) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
-            let task = Task {
+            Task {
                 var fullResponse = ""
                 do {
-                    let t0 = CFAbsoluteTimeGetCurrent()
-
                     // Cache system prompt on first turn
                     if let system = systemPrompt, !self.systemPromptCached {
                         self.generator.resetCache()
@@ -458,7 +442,6 @@ public final class Qwen3ChatModel: @unchecked Sendable {
                             tokenizer: self.tokenizer,
                             addGenerationPrompt: false
                         )
-                        log.warning("chatStream: prefilling system prompt (\(systemTokens.count) tokens)")
                         _ = try self.generator.prefill(tokenIds: systemTokens)
                         self.generator.snapshotPromptCache()
                         self.systemPromptCached = true
@@ -478,144 +461,46 @@ public final class Qwen3ChatModel: @unchecked Sendable {
                         tokenizer: self.tokenizer
                     )
 
-                    var logits: [Float]
-
-                    if sampling.disableThinking {
-                        let noThinkTokens = [
-                            ChatTemplate.thinkStartId,
-                            ChatTemplate.newlineId,
-                            ChatTemplate.thinkEndId,
-                            ChatTemplate.newlineId,
-                        ]
-                        log.warning("chatStream: prefilling \(turnTokens.count) turn tokens + no-think prefix")
-                        logits = try self.generator.prefill(
-                            tokenIds: turnTokens + noThinkTokens)
-                    } else {
-                        log.warning("chatStream: prefilling \(turnTokens.count) turn tokens (maxThink=\(sampling.maxThinkingTokens))")
-                        logits = try self.generator.prefill(tokenIds: turnTokens)
-                    }
-
-                    let tPrefill = CFAbsoluteTimeGetCurrent()
-                    log.warning("chatStream: prefill done in \(String(format: "%.0f", (tPrefill - t0) * 1000))ms")
-
+                    var logits = try self.generator.prefill(tokenIds: turnTokens)
                     var generatedTokens: [Int] = []
-                    var totalThinkingTokens = 0
-                    var totalResponseTokens = 0
-                    var thinkingCapHit = false
 
                     var inThinking = false
-                    var thinkingTokenCount = 0
-                    var skipNextThinkEnd = false  // After cap injection, skip echo </think>
-                    var emptyResponseTokens = 0   // Track consecutive non-response tokens after thinking
-                    for i in 0..<sampling.maxTokens {
-                        // Check cancellation so we stop when consumer disconnects
-                        if Task.isCancelled {
-                            log.warning("chatStream: cancelled at token \(i)")
-                            break
-                        }
+                    for _ in 0..<sampling.maxTokens {
                         let nextToken = self.generator.sample(
                             logits: logits,
                             config: sampling,
                             previousTokens: generatedTokens
                         )
 
-                        let tokenText = self.tokenizer.decodeToken(nextToken) ?? "?"
-                        if i < 5 || nextToken == self.config.eosTokenId || nextToken == ChatTemplate.imEndId ||
-                           nextToken == ChatTemplate.thinkStartId || nextToken == ChatTemplate.thinkEndId {
-                            log.warning("chatStream: token[\(i)] id=\(nextToken) think=\(inThinking) text='\(tokenText)'")
-                        }
-
-                        if nextToken == self.config.eosTokenId {
-                            log.warning("chatStream: EOS at token \(i)")
-                            break
-                        }
-                        if nextToken == ChatTemplate.imEndId {
-                            log.warning("chatStream: imEnd at token \(i)")
-                            break
-                        }
+                        if nextToken == self.config.eosTokenId { break }
+                        if nextToken == ChatTemplate.imEndId { break }
 
                         generatedTokens.append(nextToken)
 
                         if nextToken == ChatTemplate.thinkStartId {
                             inThinking = true
-                            thinkingTokenCount = 0
-                            log.warning("chatStream: <think> started")
                         } else if nextToken == ChatTemplate.thinkEndId {
-                            if skipNextThinkEnd {
-                                // Model echoed </think> after our injection — skip it
-                                skipNextThinkEnd = false
-                                log.warning("chatStream: skipped echo </think>")
-                            } else {
-                                inThinking = false
-                                log.warning("chatStream: </think> ended (natural, \(thinkingTokenCount) tokens)")
-                            }
-                        } else if inThinking {
-                            thinkingTokenCount += 1
-                            totalThinkingTokens += 1
-                            // Force-end thinking if cap reached
-                            if sampling.maxThinkingTokens > 0 &&
-                               thinkingTokenCount >= sampling.maxThinkingTokens {
-                                log.warning("chatStream: THINKING CAP HIT at \(thinkingTokenCount) tokens, injecting </think>")
-                                thinkingCapHit = true
-                                skipNextThinkEnd = true
-                                generatedTokens.append(ChatTemplate.thinkEndId)
-                                logits = try self.generator.decode(
-                                    tokenId: ChatTemplate.thinkEndId)
-                                generatedTokens.append(ChatTemplate.newlineId)
-                                logits = try self.generator.decode(
-                                    tokenId: ChatTemplate.newlineId)
-                                inThinking = false
-                                continue
-                            }
+                            inThinking = false
                         } else if !inThinking,
                                   let text = self.tokenizer.decodeToken(nextToken),
                                   !self.tokenizer.isSpecialToken(nextToken) {
-                            totalResponseTokens += 1
-                            emptyResponseTokens = 0
                             fullResponse += text
                             continuation.yield(text)
-                        } else if !inThinking {
-                            // Non-yielded token after thinking ended (garbage/special)
-                            emptyResponseTokens += 1
-                            if emptyResponseTokens >= 10 {
-                                log.warning("chatStream: aborting — \(emptyResponseTokens) non-response tokens after thinking")
-                                break
-                            }
                         }
 
                         logits = try self.generator.decode(tokenId: nextToken)
                     }
 
-                    let tDone = CFAbsoluteTimeGetCurrent()
-                    let totalMs = (tDone - t0) * 1000
-                    let decodeMs = (tDone - tPrefill) * 1000
-                    let totalTokens = generatedTokens.count
-                    let tokPerSec = totalTokens > 0 ? Double(totalTokens) / (decodeMs / 1000) : 0
-                    log.warning("chatStream: DONE total=\(String(format: "%.0f", totalMs))ms decode=\(String(format: "%.0f", decodeMs))ms tokens=\(totalTokens) (think=\(totalThinkingTokens) resp=\(totalResponseTokens)) \(String(format: "%.1f", tokPerSec)) tok/s capHit=\(thinkingCapHit) response='\(fullResponse)'")
-
-                    // Only save to conversation history if we got a real response.
-                    // Empty responses (e.g. from garbage thinking) poison the context.
-                    let trimmedResponse = fullResponse.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !trimmedResponse.isEmpty {
-                        self.conversationHistory.append(
-                            ChatMessage(role: .user, content: userMessage)
-                        )
-                        self.conversationHistory.append(
-                            ChatMessage(role: .assistant, content: trimmedResponse)
-                        )
-                    } else {
-                        log.warning("chatStream: skipping empty response in conversation history")
-                    }
+                    self.conversationHistory.append(
+                        ChatMessage(role: .user, content: userMessage)
+                    )
+                    self.conversationHistory.append(
+                        ChatMessage(role: .assistant, content: fullResponse)
+                    )
                     continuation.finish()
                 } catch {
-                    log.error("chatStream: ERROR \(error)")
                     continuation.finish(throwing: error)
                 }
-            }
-            // When consumer stops iterating (e.g. cancellation), cancel the producer
-            // so it stops calling decode() on the generator immediately.
-            continuation.onTermination = { @Sendable _ in
-                task.cancel()
             }
         }
     }

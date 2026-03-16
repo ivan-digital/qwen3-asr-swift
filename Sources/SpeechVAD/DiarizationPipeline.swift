@@ -1,10 +1,13 @@
 import Foundation
+import MLXCommon
 import MLX
 import AudioCommon
 
 // MARK: - Configuration
 
-/// Configuration for speaker diarization.
+/// Configuration for speaker diarization thresholds.
+///
+/// Shared by all diarization engines (Pyannote and Sortformer).
 public struct DiarizationConfig: Sendable {
     /// Onset threshold for speaker activity
     public var onset: Float
@@ -14,25 +17,17 @@ public struct DiarizationConfig: Sendable {
     public var minSpeechDuration: Float
     /// Minimum silence duration between segments in seconds
     public var minSilenceDuration: Float
-    /// Minimum number of speakers (0 = automatic)
-    public var minSpeakers: Int
-    /// Maximum number of speakers (0 = automatic)
-    public var maxSpeakers: Int
 
     public init(
         onset: Float = 0.5,
         offset: Float = 0.3,
         minSpeechDuration: Float = 0.3,
-        minSilenceDuration: Float = 0.15,
-        minSpeakers: Int = 0,
-        maxSpeakers: Int = 0
+        minSilenceDuration: Float = 0.15
     ) {
         self.onset = onset
         self.offset = offset
         self.minSpeechDuration = minSpeechDuration
         self.minSilenceDuration = minSilenceDuration
-        self.minSpeakers = minSpeakers
-        self.maxSpeakers = maxSpeakers
     }
 
     public static let `default` = DiarizationConfig()
@@ -58,24 +53,25 @@ public struct DiarizationResult: Sendable {
 
 // MARK: - Pipeline
 
-/// Speaker diarization pipeline: segmentation → embedding → clustering.
+/// Pyannote-based speaker diarization: segmentation + activity-based speaker chaining.
 ///
 /// - Warning: This class is not thread-safe. Create separate instances for concurrent use.
 ///
 /// Pipeline (with optional VAD pre-filter):
 /// 0. **VAD Pre-filter** (optional): Silero VAD masks non-speech regions → reduces false alarms
-/// 1. **Segmentation**: Pyannote segmentation on 10s sliding windows → per-speaker local segments
-/// 2. **Embedding**: For each local segment, crop audio → mel → WeSpeaker → 256-dim embedding
-/// 3. **Clustering**: Spectral clustering with GMM-BIC speaker count estimation → global speaker IDs
+/// 1. **Segmentation + Speaker Chaining**: Pyannote on 10s sliding windows (50% overlap) →
+///    per-speaker probability tracks → Pearson correlation in overlap zones → greedy exclusive
+///    matching → global speaker IDs
+/// 2. **Post-hoc Embedding**: WeSpeaker 256-dim centroid per speaker (for target speaker extraction)
 ///
 /// ```swift
-/// let pipeline = try await DiarizationPipeline.fromPretrained(useVADFilter: true)
+/// let pipeline = try await PyannoteDiarizationPipeline.fromPretrained(useVADFilter: true)
 /// let result = pipeline.diarize(audio: samples, sampleRate: 16000)
 /// for seg in result.segments {
 ///     print("Speaker \(seg.speakerId): [\(seg.startTime)s - \(seg.endTime)s]")
 /// }
 /// ```
-public final class DiarizationPipeline {
+public final class PyannoteDiarizationPipeline {
 
     /// Pyannote segmentation model
     let segmentationModel: SegmentationModel
@@ -117,7 +113,7 @@ public final class DiarizationPipeline {
         embeddingEngine: WeSpeakerEngine = .mlx,
         useVADFilter: Bool = false,
         progressHandler: ((Double, String) -> Void)? = nil
-    ) async throws -> DiarizationPipeline {
+    ) async throws -> PyannoteDiarizationPipeline {
         progressHandler?(0.0, "Downloading segmentation model...")
 
         // Load segmentation model
@@ -159,7 +155,7 @@ public final class DiarizationPipeline {
 
         progressHandler?(1.0, "Ready")
 
-        return DiarizationPipeline(
+        return PyannoteDiarizationPipeline(
             segmentationModel: segModel,
             segConfig: segConfig,
             embeddingModel: embModel,
@@ -179,12 +175,7 @@ public final class DiarizationPipeline {
         sampleRate: Int,
         config: DiarizationConfig = .default
     ) -> DiarizationResult {
-        let samples: [Float]
-        if sampleRate != segConfig.sampleRate {
-            samples = resample(audio, from: sampleRate, to: segConfig.sampleRate)
-        } else {
-            samples = audio
-        }
+        let samples = DiarizationHelpers.resample(audio, from: sampleRate, to: segConfig.sampleRate)
 
         // Stage 0 (optional): VAD pre-filter — mask non-speech to reduce false alarms
         let speechMask: [SpeechSegment]?
@@ -207,7 +198,7 @@ public final class DiarizationPipeline {
             return DiarizationResult(segments: [], numSpeakers: 0, speakerEmbeddings: [])
         }
 
-        let merged = mergeAdjacentSegments(
+        let merged = DiarizationHelpers.mergeSegments(
             segments, minSilence: config.minSilenceDuration)
 
         // Stage 2: Compute per-speaker embeddings from final segments
@@ -435,7 +426,6 @@ public final class DiarizationPipeline {
 
         // Step 3: Binarize and build segments with global speaker IDs
         var diarizedSegments = [DiarizedSegment]()
-        let numGlobalSpeakers = maxGlobalSpk + 1
 
         for (w, wp) in windowProbs.enumerated() {
             let windowStartTime = Float(wp.startSample) / Float(sampleRate)
@@ -493,14 +483,10 @@ public final class DiarizationPipeline {
         diarizedSegments.sort { $0.startTime < $1.startTime }
 
         // Compact speaker IDs (remove gaps)
-        let usedIds = Set(diarizedSegments.map(\.speakerId)).sorted()
-        let idMap = Dictionary(uniqueKeysWithValues: usedIds.enumerated().map { ($1, $0) })
-        diarizedSegments = diarizedSegments.map {
-            DiarizedSegment(startTime: $0.startTime, endTime: $0.endTime,
-                           speakerId: idMap[$0.speakerId] ?? $0.speakerId)
-        }
+        diarizedSegments = DiarizationHelpers.compactSpeakerIds(diarizedSegments)
+        let numCompacted = Set(diarizedSegments.map(\.speakerId)).count
 
-        return (diarizedSegments, usedIds.count)
+        return (diarizedSegments, numCompacted)
     }
 
     /// Correlation between two activity probability vectors.
@@ -556,57 +542,7 @@ public final class DiarizationPipeline {
         return (trimStart, trimEnd)
     }
 
-    // MARK: - Segment Merging
-
-    private func mergeAdjacentSegments(
-        _ segments: [DiarizedSegment],
-        minSilence: Float
-    ) -> [DiarizedSegment] {
-        guard !segments.isEmpty else { return [] }
-
-        var merged = [DiarizedSegment]()
-        var current = segments[0]
-
-        for i in 1..<segments.count {
-            let next = segments[i]
-            let gap = next.startTime - current.endTime
-
-            if next.speakerId == current.speakerId && gap < minSilence {
-                current = DiarizedSegment(
-                    startTime: current.startTime,
-                    endTime: next.endTime,
-                    speakerId: current.speakerId
-                )
-            } else {
-                merged.append(current)
-                current = next
-            }
-        }
-        merged.append(current)
-
-        return merged
-    }
-
-    // MARK: - Resampling
-
-    private func resample(_ audio: [Float], from sourceSR: Int, to targetSR: Int) -> [Float] {
-        guard sourceSR != targetSR else { return audio }
-        let ratio = Double(targetSR) / Double(sourceSR)
-        let outputLen = Int(Double(audio.count) * ratio)
-        var output = [Float](repeating: 0, count: outputLen)
-
-        for i in 0..<outputLen {
-            let srcPos = Double(i) / ratio
-            let srcIdx = Int(srcPos)
-            let frac = Float(srcPos - Double(srcIdx))
-
-            if srcIdx + 1 < audio.count {
-                output[i] = audio[srcIdx] * (1 - frac) + audio[srcIdx + 1] * frac
-            } else if srcIdx < audio.count {
-                output[i] = audio[srcIdx]
-            }
-        }
-
-        return output
-    }
 }
+
+/// Backwards-compatible alias for the renamed pipeline.
+public typealias DiarizationPipeline = PyannoteDiarizationPipeline

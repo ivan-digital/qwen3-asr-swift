@@ -14,6 +14,10 @@ The `AudioCommon` module defines shared protocols that provide model-agnostic in
 │  TranscriptionResult SpeechToSpeechModel                 │
 │                      VoiceActivityDetectionModel (VAD)   │
 │                      StreamingVADProvider (pipeline)      │
+│                      SpeakerEmbeddingModel               │
+│                      SpeakerDiarizationModel             │
+│                      SpeakerExtractionCapable            │
+│                      SpeechEnhancementModel              │
 └─────────────────────────────────────────────────────────┘
         ▲                    ▲                    ▲
         │                    │                    │
@@ -109,6 +113,58 @@ public protocol StreamingVADProvider: AnyObject {
 ```
 
 **Conforming types:** `SileroVADModel`
+
+### SpeakerEmbeddingModel
+
+Models that extract speaker embeddings from audio.
+
+```swift
+public protocol SpeakerEmbeddingModel: AnyObject {
+    var inputSampleRate: Int { get }
+    var embeddingDimension: Int { get }
+    func embed(audio: [Float], sampleRate: Int) -> [Float]
+}
+```
+
+**Conforming types:** `WeSpeakerModel`
+
+### SpeakerDiarizationModel
+
+Models that assign speaker identities to speech segments.
+
+```swift
+public protocol SpeakerDiarizationModel: AnyObject {
+    var inputSampleRate: Int { get }
+    func diarize(audio: [Float], sampleRate: Int) -> [DiarizedSegment]
+}
+```
+
+**Conforming types:** `PyannoteDiarizationPipeline` (aliased as `DiarizationPipeline`), `SortformerDiarizer`
+
+### SpeakerExtractionCapable
+
+Extended diarization protocol for engines that support extracting a target speaker's segments using a reference embedding. Not all engines support this — Sortformer is end-to-end and does not produce speaker embeddings.
+
+```swift
+public protocol SpeakerExtractionCapable: SpeakerDiarizationModel {
+    func extractSpeaker(audio: [Float], sampleRate: Int, targetEmbedding: [Float]) -> [SpeechSegment]
+}
+```
+
+**Conforming types:** `PyannoteDiarizationPipeline`
+
+### SpeechEnhancementModel
+
+Models that enhance speech by removing noise.
+
+```swift
+public protocol SpeechEnhancementModel: AnyObject {
+    var inputSampleRate: Int { get }
+    func enhance(audio: [Float], sampleRate: Int) throws -> [Float]
+}
+```
+
+**Conforming types:** `DeepFilterNet3Model`
 
 ## Voice Pipeline (SpeechCore)
 
@@ -218,6 +274,19 @@ public struct AlignedWord: Sendable {
 }
 ```
 
+### DiarizedSegment
+
+Speech segment with speaker identity, returned by `SpeakerDiarizationModel`:
+
+```swift
+public struct DiarizedSegment: Sendable {
+    public let startTime: Float    // seconds
+    public let endTime: Float      // seconds
+    public let speakerId: Int      // 0-based speaker identifier
+    public var duration: Float     // computed: endTime - startTime
+}
+```
+
 ## Usage
 
 ### Generic TTS Function
@@ -268,7 +337,7 @@ for model in ttsModels {
 ```
 Sources/
 ├── AudioCommon/               Shared types, protocols, utilities
-│   ├── Protocols.swift        AudioChunk, AlignedWord, SpeechSegment, 5 protocols
+│   ├── Protocols.swift        AudioChunk, AlignedWord, SpeechSegment, DiarizedSegment, 9 protocols
 │   ├── AudioModelError.swift  Unified error type for all model operations
 │   ├── Logging.swift          Centralized os.Logger instances (AudioLog)
 │   ├── AudioFileLoader.swift  WAV/audio file loading
@@ -296,12 +365,17 @@ Sources/
 │   ├── PersonaPlex.swift      PersonaPlexModel: SpeechToSpeechModel
 │   └── PersonaPlex+Protocols.swift
 │
-├── SpeechVAD/                 Voice Activity Detection (pyannote + Silero)
+├── SpeechVAD/                 VAD, diarization, speaker embedding
 │   ├── SpeechVAD.swift        PyannoteVADModel: VoiceActivityDetectionModel
-│   ├── SpeechVAD+Protocols.swift
+│   ├── SpeechVAD+Protocols.swift  Protocol conformances
 │   ├── SileroVAD.swift        SileroVADModel: VoiceActivityDetectionModel, StreamingVADProvider
 │   ├── SileroModel.swift      Silero VAD v5 network (STFT + encoder + LSTM)
-│   └── StreamingVADProcessor.swift  Event-driven streaming wrapper
+│   ├── StreamingVADProcessor.swift  Event-driven streaming wrapper
+│   ├── DiarizationPipeline.swift  PyannoteDiarizationPipeline: SpeakerDiarizationModel, SpeakerExtractionCapable
+│   ├── DiarizationHelpers.swift   Shared helpers (merge, compact IDs, resample)
+│   ├── SortformerDiarizer.swift   SortformerDiarizer: SpeakerDiarizationModel (CoreML)
+│   ├── WeSpeaker.swift        WeSpeakerModel: SpeakerEmbeddingModel
+│   └── PowersetDecoder.swift  7-class powerset → per-speaker probabilities
 │
 ├── SpeechCore/                Voice pipeline (wraps speech-core C++ engine)
 │   └── VoicePipeline.swift    VoicePipeline: bridges STT/TTS/VAD to C pipeline
@@ -334,7 +408,7 @@ All model classes are **not thread-safe** by design. ML inference is inherently 
 - `CosyVoiceTTSModel`
 - `PersonaPlexModel`
 - `SileroVADModel`, `StreamingVADProcessor`, `PyannoteVADModel`
-- `DiarizationPipeline`
+- `PyannoteDiarizationPipeline` (aliased as `DiarizationPipeline`), `SortformerDiarizer`
 
 **Thread-safe** (all `let` properties, pure computation):
 - `WeSpeakerModel`

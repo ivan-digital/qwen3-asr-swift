@@ -12,14 +12,11 @@ public struct DiarizeCommand: ParsableCommand {
     @Argument(help: "Audio file to analyze (WAV, any sample rate)")
     public var audioFile: String
 
-    @Option(name: .long, help: "Minimum number of speakers (0 = auto)")
-    public var minSpeakers: Int = 0
-
-    @Option(name: .long, help: "Maximum number of speakers (0 = auto)")
-    public var maxSpeakers: Int = 0
-
     @Option(name: .long, help: "Enrollment audio for target speaker extraction")
     public var targetSpeaker: String?
+
+    @Option(name: .long, help: "Diarization engine: pyannote (default) or sortformer")
+    public var engine: String = "pyannote"
 
     @Option(name: .long, help: "Speaker embedding engine: mlx (default) or coreml")
     public var embeddingEngine: String = "mlx"
@@ -46,103 +43,143 @@ public struct DiarizeCommand: ParsableCommand {
             let duration = formatDuration(audio.count, sampleRate: 16000)
             print("  Loaded \(audio.count) samples (\(duration)s)")
 
-            guard let embEngine = WeSpeakerEngine(rawValue: embeddingEngine) else {
-                print("Error: unknown embedding engine '\(embeddingEngine)'. Use 'mlx' or 'coreml'.")
-                return
-            }
+            let config = DiarizationConfig()
 
-            let config = DiarizationConfig(
-                minSpeakers: minSpeakers,
-                maxSpeakers: maxSpeakers
-            )
-
-            print("Loading diarization models (embedding engine: \(embEngine.rawValue)\(vadFilter ? ", VAD filter" : ""))...")
-            let pipeline = try await DiarizationPipeline.fromPretrained(
-                embeddingEngine: embEngine,
-                useVADFilter: vadFilter,
-                progressHandler: reportProgress
-            )
-
-            if let enrollmentFile = targetSpeaker {
-                // Speaker extraction mode
-                print("Loading enrollment audio: \(enrollmentFile)")
-                let enrollAudio = try AudioFileLoader.load(
-                    url: URL(fileURLWithPath: enrollmentFile), targetSampleRate: 16000)
-
-                print("Extracting target speaker embedding...")
-                let targetEmb = pipeline.embeddingModel.embed(
-                    audio: enrollAudio, sampleRate: 16000)
-
-                print("Extracting target speaker segments...")
-                let start = Date()
-                let segments = pipeline.extractSpeaker(
-                    audio: audio, sampleRate: 16000,
-                    targetEmbedding: targetEmb, config: config
-                )
-                let elapsed = Date().timeIntervalSince(start)
-
-                if json {
-                    printSpeechJSON(segments)
-                } else {
-                    if segments.isEmpty {
-                        print("Target speaker not found.")
-                    } else {
-                        for seg in segments {
-                            let s = String(format: "%.2f", seg.startTime)
-                            let e = String(format: "%.2f", seg.endTime)
-                            let d = String(format: "%.2f", seg.duration)
-                            print("Target: [\(s)s - \(e)s] (\(d)s)")
-                        }
-                        let totalSpeech = segments.reduce(Float(0)) { $0 + $1.duration }
-                        print("\n\(segments.count) segment(s), \(String(format: "%.2f", totalSpeech))s total")
-                    }
-                    print("Extraction took \(String(format: "%.2f", elapsed))s")
-                }
+            if engine == "sortformer" {
+                #if canImport(CoreML)
+                try await runSortformer(audio: audio, config: config)
+                #else
+                print("Error: Sortformer requires CoreML (not available on this platform).")
+                #endif
+            } else if engine == "pyannote" {
+                try await runPyannote(audio: audio, config: config)
             } else {
-                // Full diarization mode
-                print("Running diarization...")
-                let start = Date()
-                let result = pipeline.diarize(
-                    audio: audio, sampleRate: 16000, config: config)
-                let elapsed = Date().timeIntervalSince(start)
-
-                if rttm {
-                    let basename = URL(fileURLWithPath: audioFile).deletingPathExtension().lastPathComponent
-                    let rttmSegments = toRTTM(segments: result.segments, filename: basename)
-                    print(formatRTTM(rttmSegments))
-                } else if json {
-                    printDiarizeJSON(result)
-                } else {
-                    if result.segments.isEmpty {
-                        print("No speech detected.")
-                    } else {
-                        for seg in result.segments {
-                            let s = String(format: "%.2f", seg.startTime)
-                            let e = String(format: "%.2f", seg.endTime)
-                            let d = String(format: "%.2f", seg.duration)
-                            print("Speaker \(seg.speakerId): [\(s)s - \(e)s] (\(d)s)")
-                        }
-                        print("\n--- \(result.numSpeakers) speaker(s) ---")
-                    }
-                    print("Diarization took \(String(format: "%.2f", elapsed))s")
-                }
-
-                // DER scoring against reference
-                if let refFile = scoreAgainst {
-                    let refContent = try String(contentsOfFile: refFile, encoding: .utf8)
-                    let refSegments = parseRTTM(refContent)
-                    let derResult = computeDERWithOptimalMapping(
-                        reference: refSegments, hypothesis: result.segments
-                    )
-                    print("\n--- DER Scoring ---")
-                    print("Total speech: \(String(format: "%.2f", derResult.totalSpeech))s")
-                    print("Missed speech: \(String(format: "%.2f", derResult.missedSpeech))s")
-                    print("False alarm: \(String(format: "%.2f", derResult.falseAlarm))s")
-                    print("Confusion: \(String(format: "%.2f", derResult.confusion))s")
-                    print("DER: \(String(format: "%.1f", derResult.derPercent))%")
-                }
+                print("Error: unknown engine '\(engine)'. Use 'pyannote' or 'sortformer'.")
             }
         }
+    }
+
+    #if canImport(CoreML)
+    private func runSortformer(audio: [Float], config: DiarizationConfig) async throws {
+        if targetSpeaker != nil {
+            print("Warning: --target-speaker is not supported with Sortformer (no speaker embeddings). Ignoring.")
+        }
+
+        print("Loading Sortformer model...")
+        let diarizer = try await SortformerDiarizer.fromPretrained(
+            progressHandler: reportProgress
+        )
+
+        print("Running diarization (Sortformer)...")
+        let start = Date()
+        let result = diarizer.diarize(audio: audio, sampleRate: 16000, config: config)
+        let elapsed = Date().timeIntervalSince(start)
+
+        outputResult(result, elapsed: elapsed)
+
+        if let refFile = scoreAgainst {
+            try scoreDER(result: result, refFile: refFile)
+        }
+    }
+    #endif
+
+    private func runPyannote(audio: [Float], config: DiarizationConfig) async throws {
+        guard let embEngine = WeSpeakerEngine(rawValue: embeddingEngine) else {
+            print("Error: unknown embedding engine '\(embeddingEngine)'. Use 'mlx' or 'coreml'.")
+            return
+        }
+
+        print("Loading diarization models (embedding engine: \(embEngine.rawValue)\(vadFilter ? ", VAD filter" : ""))...")
+        let pipeline = try await DiarizationPipeline.fromPretrained(
+            embeddingEngine: embEngine,
+            useVADFilter: vadFilter,
+            progressHandler: reportProgress
+        )
+
+        if let enrollmentFile = targetSpeaker {
+            print("Loading enrollment audio: \(enrollmentFile)")
+            let enrollAudio = try AudioFileLoader.load(
+                url: URL(fileURLWithPath: enrollmentFile), targetSampleRate: 16000)
+
+            print("Extracting target speaker embedding...")
+            let targetEmb = pipeline.embeddingModel.embed(
+                audio: enrollAudio, sampleRate: 16000)
+
+            print("Extracting target speaker segments...")
+            let start = Date()
+            let segments = pipeline.extractSpeaker(
+                audio: audio, sampleRate: 16000,
+                targetEmbedding: targetEmb, config: config
+            )
+            let elapsed = Date().timeIntervalSince(start)
+
+            if json {
+                printSpeechJSON(segments)
+            } else {
+                if segments.isEmpty {
+                    print("Target speaker not found.")
+                } else {
+                    for seg in segments {
+                        let s = String(format: "%.2f", seg.startTime)
+                        let e = String(format: "%.2f", seg.endTime)
+                        let d = String(format: "%.2f", seg.duration)
+                        print("Target: [\(s)s - \(e)s] (\(d)s)")
+                    }
+                    let totalSpeech = segments.reduce(Float(0)) { $0 + $1.duration }
+                    print("\n\(segments.count) segment(s), \(String(format: "%.2f", totalSpeech))s total")
+                }
+                print("Extraction took \(String(format: "%.2f", elapsed))s")
+            }
+        } else {
+            print("Running diarization...")
+            let start = Date()
+            let result = pipeline.diarize(
+                audio: audio, sampleRate: 16000, config: config)
+            let elapsed = Date().timeIntervalSince(start)
+
+            outputResult(result, elapsed: elapsed)
+
+            if let refFile = scoreAgainst {
+                try scoreDER(result: result, refFile: refFile)
+            }
+        }
+    }
+
+    private func outputResult(_ result: DiarizationResult, elapsed: TimeInterval) {
+        if rttm {
+            let basename = URL(fileURLWithPath: audioFile).deletingPathExtension().lastPathComponent
+            let rttmSegments = toRTTM(segments: result.segments, filename: basename)
+            print(formatRTTM(rttmSegments))
+        } else if json {
+            printDiarizeJSON(result)
+        } else {
+            if result.segments.isEmpty {
+                print("No speech detected.")
+            } else {
+                for seg in result.segments {
+                    let s = String(format: "%.2f", seg.startTime)
+                    let e = String(format: "%.2f", seg.endTime)
+                    let d = String(format: "%.2f", seg.duration)
+                    print("Speaker \(seg.speakerId): [\(s)s - \(e)s] (\(d)s)")
+                }
+                print("\n--- \(result.numSpeakers) speaker(s) ---")
+            }
+            print("Diarization took \(String(format: "%.2f", elapsed))s")
+        }
+    }
+
+    private func scoreDER(result: DiarizationResult, refFile: String) throws {
+        let refContent = try String(contentsOfFile: refFile, encoding: .utf8)
+        let refSegments = parseRTTM(refContent)
+        let derResult = computeDERWithOptimalMapping(
+            reference: refSegments, hypothesis: result.segments
+        )
+        print("\n--- DER Scoring ---")
+        print("Total speech: \(String(format: "%.2f", derResult.totalSpeech))s")
+        print("Missed speech: \(String(format: "%.2f", derResult.missedSpeech))s")
+        print("False alarm: \(String(format: "%.2f", derResult.falseAlarm))s")
+        print("Confusion: \(String(format: "%.2f", derResult.confusion))s")
+        print("DER: \(String(format: "%.1f", derResult.derPercent))%")
     }
 
     private func printDiarizeJSON(_ result: DiarizationResult) {

@@ -80,7 +80,18 @@ class Qwen3ChatWrapper(nn.Module):
 
         new_kv = []
         for i in range(self.num_layers):
-            k, v = new_cache[i]
+            # Support DynamicCache API across transformers versions
+            if hasattr(new_cache, 'layers'):
+                # transformers >= 4.52: DynamicCache.layers[i].keys/.values
+                k = new_cache.layers[i].keys
+                v = new_cache.layers[i].values
+            elif hasattr(new_cache, 'key_cache'):
+                # transformers 4.40-4.51: DynamicCache.key_cache[i]
+                k = new_cache.key_cache[i]
+                v = new_cache.value_cache[i]
+            else:
+                # transformers < 4.40: tuple cache
+                k, v = new_cache[i]
             new_kv.append(k)
             new_kv.append(v)
 

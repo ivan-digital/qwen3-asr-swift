@@ -1,6 +1,7 @@
 import CSpeechCore
 import AudioCommon
 import Foundation
+import os
 
 // MARK: - Pipeline Types
 
@@ -33,8 +34,12 @@ public enum PipelineEvent {
     case responseInterrupted
     case responseAudioDelta(samples: [Float])
     case responseDone
+    case toolCallStarted(name: String)
+    case toolCallCompleted(name: String, result: String)
     case error(String)
 }
+
+// PipelineTool is defined in AudioCommon/PipelineLLM.swift
 
 /// Pipeline configuration.
 public struct PipelineConfig {
@@ -65,24 +70,9 @@ public struct PipelineConfig {
     public init() {}
 }
 
-// MARK: - LLM Protocol
-
-/// Protocol for language model integration with the voice pipeline.
-public protocol PipelineLLM: AnyObject {
-    /// Chat with streaming token output.
-    func chat(messages: [(role: MessageRole, content: String)],
-              onToken: @escaping (String, Bool) -> Void)
-    /// Cancel in-progress generation.
-    func cancel()
-}
-
-/// Message roles matching speech-core's sc_role_t.
-public enum MessageRole: Int {
-    case system = 0
-    case user = 1
-    case assistant = 2
-    case tool = 3
-}
+// PipelineLLM and MessageRole are defined in AudioCommon.
+// Re-exported here for backward compatibility.
+// import AudioCommon to access them directly.
 
 // MARK: - Bridge Classes
 
@@ -94,10 +84,22 @@ private final class STTBridge {
     init(_ model: SpeechRecognitionModel) { self.model = model }
 }
 
+/// Bridges a PipelineTool to the C callback.
+private final class ToolBridge {
+    let tool: PipelineTool
+    var lastResult: [CChar] = []
+
+    init(_ tool: PipelineTool) { self.tool = tool }
+}
+
 /// Bridges a SpeechGenerationModel to the C vtable.
 private final class TTSBridge {
     let model: SpeechGenerationModel
-    var cancelled = false
+    private let _cancelled = OSAllocatedUnfairLock(initialState: false)
+    var cancelled: Bool {
+        get { _cancelled.withLock { $0 } }
+        set { _cancelled.withLock { $0 = newValue } }
+    }
 
     init(_ model: SpeechGenerationModel) { self.model = model }
 }
@@ -235,6 +237,9 @@ public final class VoicePipeline {
             Unmanaged.passUnretained(llmBridge).release()
         }
         Unmanaged.passUnretained(eventBridge).release()
+        for bridge in toolBridges {
+            Unmanaged.passUnretained(bridge).release()
+        }
     }
 
     // MARK: - Public API
@@ -273,6 +278,45 @@ public final class VoicePipeline {
         sc_pipeline_is_running(handle)
     }
 
+    // MARK: - Tool Calling
+
+    private var toolBridges: [ToolBridge] = []
+
+    /// Register tools that the LLM can invoke during conversation.
+    /// Must be called before `start()`.
+    public func setTools(_ tools: [PipelineTool]) {
+        sc_pipeline_clear_tools(handle)
+        toolBridges.removeAll()
+
+        for tool in tools {
+            let bridge = ToolBridge(tool)
+            toolBridges.append(bridge)
+
+            let ctx = Unmanaged.passRetained(bridge).toOpaque()
+            tool.name.withCString { namePtr in
+                tool.description.withCString { descPtr in
+                    var def = sc_tool_definition_t()
+                    def.name = namePtr
+                    def.description = descPtr
+                    def.triggers = nil
+                    def.handler = { namePtr, argsPtr, ctx in
+                        guard let ctx else { return nil }
+                        let bridge = Unmanaged<ToolBridge>.fromOpaque(ctx).takeUnretainedValue()
+                        let args = argsPtr.map { String(cString: $0) } ?? ""
+                        let result = bridge.tool.handler(args)
+                        bridge.lastResult = Array(result.utf8CString)
+                        return bridge.lastResult.withUnsafeBufferPointer { $0.baseAddress }
+                    }
+                    def.handler_context = ctx
+                    def.command = nil
+                    def.timeout = 0
+                    def.cooldown = Int32(tool.cooldown)
+                    sc_pipeline_add_tool(handle, def)
+                }
+            }
+        }
+    }
+
     // MARK: - Event Callback
 
     private static let eventCallback: sc_event_fn = { eventPtr, ctx in
@@ -305,6 +349,16 @@ public final class VoicePipeline {
             event = .responseAudioDelta(samples: pcm16ToFloat32(e.audio_data, count: e.audio_data_length))
         case SC_EVENT_RESPONSE_DONE:
             event = .responseDone
+        case SC_EVENT_TOOL_CALL_STARTED:
+            let name = e.text.map { String(cString: $0) } ?? ""
+            event = .toolCallStarted(name: name)
+        case SC_EVENT_TOOL_CALL_COMPLETED:
+            // text contains "tool_name: result" for completed events
+            let text = e.text.map { String(cString: $0) } ?? ""
+            let parts = text.split(separator: ":", maxSplits: 1)
+            let name = parts.first.map(String.init) ?? ""
+            let result = parts.count > 1 ? String(parts[1]).trimmingCharacters(in: .whitespaces) : ""
+            event = .toolCallCompleted(name: name, result: result)
         case SC_EVENT_ERROR:
             let text = e.text.map { String(cString: $0) } ?? "Unknown error"
             event = .error(text)
@@ -339,14 +393,19 @@ public final class VoicePipeline {
                 return sc_transcription_result_t(
                     text: textPtr,
                     language: langPtr,
-                    confidence: 1.0,
+                    confidence: result.confidence,
                     start_time: 0,
                     end_time: 0)
             },
             input_sample_rate: { ctx in
                 let bridge = Unmanaged<STTBridge>.fromOpaque(ctx!).takeUnretainedValue()
                 return Int32(bridge.model.inputSampleRate)
-            }
+            },
+            begin_stream: nil,
+            push_chunk: nil,
+            flush_stream: nil,
+            end_stream: nil,
+            cancel_stream: nil
         )
     }
 
@@ -357,6 +416,7 @@ public final class VoicePipeline {
         return sc_tts_vtable_t(
             context: ctx,
             synthesize: { ctx, text, language, onChunk, chunkCtx in
+                // Legacy batch synthesis — called when streaming not available
                 let bridge = Unmanaged<TTSBridge>.fromOpaque(ctx!).takeUnretainedValue()
                 bridge.cancelled = false
                 let textStr = String(cString: text!)
@@ -463,7 +523,8 @@ public final class VoicePipeline {
             cancel: { ctx in
                 let bridge = Unmanaged<LLMBridge>.fromOpaque(ctx!).takeUnretainedValue()
                 bridge.model.cancel()
-            }
+            },
+            count_tokens: nil  // Token counting not implemented yet
         )
     }
 

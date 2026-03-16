@@ -9,6 +9,16 @@ enum ConversationState: String {
     case listening
     case processing
     case speaking
+    case fullDuplex
+}
+
+/// Thread-safe bool shared between the main actor and the audio capture thread.
+private final class AgentSpeakingTracker: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = false
+
+    func set(_ speaking: Bool) { lock.withLock { value = speaking } }
+    var isSpeaking: Bool { lock.withLock { value } }
 }
 
 @Observable
@@ -27,6 +37,9 @@ final class PersonaPlexViewModel {
 
     var selectedVoice: PersonaPlexVoice = .NATM0
     var maxSteps: Int = 75
+    var isFullDuplexMode: Bool = false
+    /// Suppress mic input while agent is speaking (for speaker output; disable when using headphones).
+    var echoSuppression: Bool = false
 
     // Combined assistant + focused prompt tokens (SentencePiece):
     // "<system> You are a helpful assistant. Answer questions clearly and concisely.
@@ -49,6 +62,7 @@ final class PersonaPlexViewModel {
     private var spmDecoder: SentencePieceDecoder?
     private var vadModel: SileroVADModel?
     private var conversationTask: Task<Void, Never>?
+    private let agentSpeakingTracker = AgentSpeakingTracker()
 
     // MARK: - Computed
 
@@ -120,7 +134,12 @@ final class PersonaPlexViewModel {
 
     func toggleConversation() {
         if conversationState == .inactive {
-            startListening()
+            if isFullDuplexMode {
+                conversationState = .fullDuplex
+                conversationTask = Task { await startFullDuplex() }
+            } else {
+                startListening()
+            }
         } else {
             stopConversation()
         }
@@ -155,6 +174,97 @@ final class PersonaPlexViewModel {
         player.stop()
         conversationState = .inactive
         debugInfo = ""
+    }
+
+    // MARK: - Full-Duplex
+
+    private func startFullDuplex() async {
+        guard let model else {
+            errorMessage = "Model not loaded."
+            conversationState = .inactive
+            return
+        }
+
+        errorMessage = nil
+        debugInfo = "Full-duplex active..."
+        agentSpeakingTracker.set(false)
+
+        // 5-second ring buffer: enough headroom if inference runs long
+        let ringBuffer = AudioRingBuffer(capacity: 24000 * 5)
+        let tracker = agentSpeakingTracker
+
+        do {
+            let suppressEnabled = echoSuppression
+            try recorder?.startContinuous(buffer: ringBuffer) {
+                suppressEnabled && tracker.isSpeaking
+            }
+        } catch {
+            errorMessage = "Mic error: \(error.localizedDescription)"
+            conversationState = .inactive
+            return
+        }
+
+        do {
+            try player.start(sampleRate: 24000)
+        } catch {
+            _ = recorder?.stopRecording()
+            errorMessage = "Audio output error: \(error.localizedDescription)"
+            conversationState = .inactive
+            return
+        }
+
+        let voice = selectedVoice
+        let promptTokens = systemPromptTokens
+
+        // Capture player ref so the detached task can call scheduleChunk directly
+        // without bouncing to MainActor each frame (AVAudioPlayerNode.scheduleBuffer is thread-safe).
+        let playerRef = player
+
+        // All inference runs on one detached task for MLX thread safety
+        conversationTask = Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self else { return }
+
+            let stream = model.respondRealtime(
+                voice: voice,
+                systemPromptTokens: promptTokens,
+                userAudioBuffer: ringBuffer,
+                verbose: true
+            )
+
+            // Pre-buffer a few frames before playback starts to absorb inference jitter.
+            let prebufferCount = 3  // ~240ms cushion
+            var prebuffer: [[Float]] = []
+            prebuffer.reserveCapacity(prebufferCount)
+
+            do {
+                for try await agentSamples in stream {
+                    // Simple echo suppression: detect if agent is producing audible output
+                    let rms = agentSamples.map { $0 * $0 }.reduce(0, +)
+                        / Float(max(agentSamples.count, 1))
+                    tracker.set(sqrt(rms) > 0.01)
+
+                    if prebuffer.count < prebufferCount {
+                        prebuffer.append(agentSamples)
+                        if prebuffer.count == prebufferCount {
+                            for frame in prebuffer { playerRef.scheduleChunk(frame) }
+                            prebuffer = []
+                        }
+                    } else {
+                        playerRef.scheduleChunk(agentSamples)
+                    }
+                }
+                // Flush any remaining pre-buffered frames
+                for frame in prebuffer { playerRef.scheduleChunk(frame) }
+            } catch {
+                await MainActor.run { [weak self] in
+                    self?.errorMessage = "Full-duplex inference error: \(error.localizedDescription)"
+                }
+            }
+
+            await MainActor.run { [weak self] in
+                self?.stopConversation()
+            }
+        }
     }
 
     // MARK: - Process & Respond
@@ -211,13 +321,8 @@ final class PersonaPlexViewModel {
 
             // Decode model transcript
             var transcript = ""
-            print("[Transcript] textTokens count: \(textTokens.count), spmDecoder: \(spmDec != nil)")
-            if !textTokens.isEmpty {
-                print("[Transcript] tokens: \(textTokens.prefix(20))...")
-            }
             if let dec = spmDec, !textTokens.isEmpty {
                 transcript = dec.decode(textTokens)
-                print("[Transcript] decoded: \(transcript)")
             } else if !textTokens.isEmpty {
                 transcript = "(\(textTokens.count) text tokens)"
             }

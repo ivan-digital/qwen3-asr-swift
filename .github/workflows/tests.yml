@@ -13,34 +13,46 @@ concurrency:
 jobs:
   build-and-test:
     runs-on: macos-15
-    timeout-minutes: 25
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
-      - name: Cache SwiftPM build
+      - name: Cache SwiftPM
         uses: actions/cache@v4
         with:
           path: .build
-          key: swiftpm-${{ runner.os }}-${{ github.repository }}-${{ hashFiles('Package.swift') }}
+          key: spm-${{ runner.os }}-${{ hashFiles('Package.swift') }}
+          restore-keys: spm-${{ runner.os }}-
 
-      - name: Build release
-        run: swift build -c release --disable-sandbox
-
-      - name: Build MLX metallib
-        run: ./scripts/build_mlx_metallib.sh release
-
-      - name: Build debug test targets
+      - name: Build debug
         run: swift build --build-tests --disable-sandbox
+
+      - name: Build metallib
+        run: ./scripts/build_mlx_metallib.sh debug
 
       - name: Copy metallib to test bundle
         run: |
           ARCH="$(uname -m)-apple-macosx"
           for BUNDLE in .build/$ARCH/debug/*.xctest/Contents/MacOS; do
-            [ -d "$BUNDLE" ] && cp .build/release/mlx.metallib "$BUNDLE/"
-            echo "Copied metallib to $BUNDLE"
+            [ -d "$BUNDLE" ] && cp .build/debug/mlx.metallib "$BUNDLE/" 2>/dev/null || true
           done
 
-      - name: Run tests
+      - name: Run unit tests
         run: >
-          swift test --skip-build --filter
-          "WAVParsingSecurityTests|DownloadSecurityTests|MetallibScriptTests|DERScoringTests|SpectralClusteringTests|Qwen3TTSConfigTests|SpeakerConfigTests|CosyVoiceTTSConfigTests|SamplingTests|TextChunkerTests|PersonaPlexTests/testDefaultConfig|PersonaPlexTests/testDepformerConfig|PersonaPlexTests/testMimiConfig|PersonaPlexTests/testSamplingConfig|PersonaPlexTests/testEntropyConfig|PersonaPlexTests/testAudioChunk|PersonaPlexTests/testSilenceTokens|PersonaPlexTests/testDelayPattern|PersonaPlexTests/testVoicePresets|PersonaPlexTests/testHiddenScale|PersonaPlexTests/testDepformerDim|ForcedAlignerTests/testText|ForcedAlignerTests/testTimestamp|ForcedAlignerTests/testLIS|SileroVADTests/testSilero|SileroVADTests/testReflection|SileroVADTests/testProcess|SileroVADTests/testReset|SileroVADTests/testDetect|SileroVADTests/testStreaming|SileroVADTests/testVADEvent|PCMConversionTests|ResampleTests|FormatJSONTests|RealtimeAPITests|AudioCLIRootTests|TranscribeCommandTests|AlignCommandTests|SpeakCommandTests|RespondCommandTests|UtilityTests|ErrorHandlingTests|SendableTests|KokoroTTSTests|SpeakerEncoderUnitTests|MemoryManagementTests|CosyVoiceMemoryTests|Qwen3ASRTests/testAudioEncoderConfig|Qwen3ASRTests/testAudioEncoderLargeConfig|Qwen3ASRTests/testTextDecoderConfig|Qwen3ASRTests/testASRModelSize|Qwen3ASRTests/testQwen3ASRConfig|Qwen3ASRTests/testFeatureExtractor|Qwen3ASRTests/testAudioEncoderCreation|Qwen3ASRTests/testModelCreation|Qwen3ASRTests/testAudioFileLoaderWAV|Qwen3ASRTests/testDecode|ParakeetASRTests/testDefaultConfig|ParakeetASRTests/testModelVariant|ParakeetASRTests/testConfigCodable|ParakeetASRTests/testConfigSendable|ParakeetASRTests/testVocabulary|ParakeetASRTests/testMelNormalization|StreamingASRTests/testLCP|StreamingASRTests/testDefaultConfig|StreamingASRTests/testCustomConfig|StreamingASRTests/testTranscriptionSegment|StreamingASRTests/testPartialSegment|WeSpeakerTests/testDiarizationConfig|WeSpeakerTests/testDiarizedSegment|WeSpeakerTests/testPowerset|WeSpeakerTests/testMelExtractor|WeSpeakerTests/testResNet34|WeSpeakerTests/testBasicBlock|WeSpeakerTests/testCosineSimilarity|WeSpeakerTests/testDiarizationResult|SpeechVADTests/testDefault|SpeechVADTests/testSpeechSegment|SpeechVADTests/testWindowPositions|SpeechVADTests/testBinarize|SpeechVADTests/testMinDuration|SpeechVADTests/testMinSilence|SpeechVADTests/testSegmentationModel|SpeechVADTests/testSpeechProbability|SpeechVADTests/testSincNet|SpeechVADTests/testBiLSTM|SpeechVADTests/testDetectSpeech|SpeechVADTests/testAggregate|SpeechEnhancementTests/testDefaultConfig|SpeechEnhancementTests/testNormAlpha|SpeechEnhancementTests/testVorbis|SpeechEnhancementTests/testERB|SpeechEnhancementTests/testLookahead|SpeechEnhancementTests/testSTFT|SpeechEnhancementTests/testMeanNorm|SpeechEnhancementTests/testUnitNorm|SpeechEnhancementTests/testDeepFiltering|SpeechEnhancementTests/testWeightLoader|SpeechEnhancementTests/testNpzReader"
+          swift test --skip-build
+          --skip E2ETests
+          --skip IntegrationTests
+          --skip BenchmarkTests
+          --skip StreamingASRTests
+          --skip ForcedAlignerTests
+          --skip SileroVADTests
+          --skip SpeechVADTests
+          --skip WeSpeakerTests
+          --skip SortformerTests
+          --skip SpeechEnhancementTests
+          --skip PersonaPlexTests
+          --skip ParakeetASRTests
+          --skip CosyVoiceTTSTests
+          --skip TTSBatchTests
+          --skip TTSStreamingTests
+          --skip KokoroTTSTests

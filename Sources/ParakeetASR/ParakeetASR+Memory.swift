@@ -12,8 +12,8 @@ extension ParakeetASRModel: ModelMemoryManageable {
     }
 
     public var memoryFootprint: Int {
-        // CoreML models don't expose weight memory easily; return 0
         guard _isLoaded else { return 0 }
-        return 0
+        // Parakeet-TDT CoreML INT4: ~315 MB encoder + decoder + joint
+        return 315 * 1024 * 1024
     }
 }

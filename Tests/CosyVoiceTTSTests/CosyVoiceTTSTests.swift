@@ -422,6 +422,54 @@ final class CosyVoiceForwardPassTests: XCTestCase {
     }
 }
 
+// MARK: - CAM++ Mel Extractor Tests (no model download)
+
+final class CamPlusPlusMelExtractorTests: XCTestCase {
+
+    func testMelExtractorOutputShape() {
+        let extractor = CamPlusPlusMelExtractor()
+
+        // 1 second of silence at 16kHz
+        let audio = [Float](repeating: 0, count: 16000)
+        let (melSpec, nFrames) = extractor.extractRaw(audio)
+
+        // nFFT=400, hop=160 with reflect padding → ~100 frames per second
+        XCTAssertGreaterThan(nFrames, 90)
+        XCTAssertLessThan(nFrames, 110)
+        XCTAssertEqual(melSpec.count, nFrames * 80)
+    }
+
+    func testMelExtractorShortAudio() {
+        let extractor = CamPlusPlusMelExtractor()
+
+        // Very short audio (0.1s)
+        let audio = [Float](repeating: 0.5, count: 1600)
+        let (melSpec, nFrames) = extractor.extractRaw(audio)
+
+        XCTAssertGreaterThan(nFrames, 5)
+        XCTAssertEqual(melSpec.count, nFrames * 80)
+    }
+
+    func testMelExtractorNonSilentAudio() {
+        let extractor = CamPlusPlusMelExtractor()
+
+        // Sine wave at 440 Hz
+        let duration: Float = 1.0
+        let sampleRate: Float = 16000
+        let freq: Float = 440
+        let audio = (0..<Int(duration * sampleRate)).map { i in
+            sin(2.0 * Float.pi * freq * Float(i) / sampleRate) * 0.5
+        }
+
+        let (melSpec, nFrames) = extractor.extractRaw(audio)
+
+        XCTAssertGreaterThan(nFrames, 0)
+        // Non-silent audio should have non-zero mel values
+        let maxVal = melSpec.max() ?? 0
+        XCTAssertGreaterThan(maxVal, -100, "Should have reasonable mel values for non-silent audio")
+    }
+}
+
 // MARK: - E2E Tests (require model download)
 
 // These tests download the model (~2 GB) on first run and cache it.
@@ -494,4 +542,94 @@ final class CosyVoiceTTSE2ETests: XCTestCase {
         // Max 500 tokens at 25 Hz = 20s, plus some buffer
         XCTAssertLessThan(duration, 25.0, "Should not exceed safety limit")
     }
+
+    /// Probe: do the pretrained weights respond to speaker embeddings?
+    /// Runs flow model with nil vs random 192-dim embedding on the same tokens.
+    /// If mel outputs differ significantly, speaker conditioning is active.
+    func testSpeakerEmbeddingProbe() async throws {
+        let model = try await CosyVoiceTTSModel.fromPretrained()
+
+        // Use synthetic speech tokens (valid FSQ range 0-6560) to isolate flow behavior.
+        // We skip LLM to avoid randomness in token generation between runs.
+        let speechTokens: [Int32] = (0..<20).map { _ in Int32.random(in: 0...6560) }
+        let tokenArray = MLXArray(speechTokens).expandedDimensions(axis: 0)  // [1, 20]
+
+        // Fix random seed for reproducibility across the 3 flow runs
+        MLXRandom.seed(42)
+
+        // Run flow with no speaker embedding (current behavior)
+        MLXRandom.seed(42)
+        let melNoSpk = model.flow(tokens: tokenArray)
+        eval(melNoSpk)
+
+        // Run flow with a random 192-dim speaker embedding
+        let randomSpk = MLXArray(Array((0..<192).map { _ in Float.random(in: -1...1) }))
+            .expandedDimensions(axis: 0)  // [1, 192]
+        MLXRandom.seed(42)
+        let melWithSpk = model.flow(tokens: tokenArray, spkEmbedding: randomSpk)
+        eval(melWithSpk)
+
+        // Run flow with a different random embedding
+        let randomSpk2 = MLXArray(Array((0..<192).map { _ in Float.random(in: -1...1) }))
+            .expandedDimensions(axis: 0)  // [1, 192]
+        MLXRandom.seed(42)
+        let melWithSpk2 = model.flow(tokens: tokenArray, spkEmbedding: randomSpk2)
+        eval(melWithSpk2)
+
+        // Compare: mean absolute difference between mels
+        let diffNoVsSpk = mean(abs(melNoSpk - melWithSpk)).item(Float.self)
+        let diffSpk1VsSpk2 = mean(abs(melWithSpk - melWithSpk2)).item(Float.self)
+        let melMagnitude = mean(abs(melNoSpk)).item(Float.self)
+
+        print("=== Speaker Embedding Probe ===")
+        print("Mel magnitude (baseline):      \(String(format: "%.4f", melMagnitude))")
+        print("Diff (nil vs random spk):      \(String(format: "%.4f", diffNoVsSpk))")
+        print("Diff (random1 vs random2):     \(String(format: "%.4f", diffSpk1VsSpk2))")
+        print("Relative diff (nil vs spk):    \(String(format: "%.2f%%", diffNoVsSpk / melMagnitude * 100))")
+        print("Relative diff (spk1 vs spk2):  \(String(format: "%.2f%%", diffSpk1VsSpk2 / melMagnitude * 100))")
+
+        // If speaker conditioning is active, we expect meaningful differences
+        // If inactive (weights zero/untrained), diffs will be near zero
+        let isActive = diffNoVsSpk / melMagnitude > 0.01  // >1% relative change
+        print("Speaker conditioning appears \(isActive ? "ACTIVE" : "INACTIVE")")
+
+        // Don't assert pass/fail — this is a diagnostic probe
+        // Just ensure it runs without crashing
+        XCTAssertEqual(melNoSpk.shape, melWithSpk.shape, "Shapes should match")
+        XCTAssertEqual(melNoSpk.shape, melWithSpk2.shape, "Shapes should match")
+    }
+
+    #if canImport(CoreML)
+    /// E2E: extract CAM++ speaker embedding and synthesize with voice cloning.
+    func testVoiceCloningSynthesis() async throws {
+        // Load CosyVoice model
+        let model = try await CosyVoiceTTSModel.fromPretrained()
+
+        // Load CAM++ speaker encoder
+        let speaker = try await CamPlusPlusSpeaker.fromPretrained()
+
+        // Generate a synthetic "voice sample" (sine wave — won't sound like a person
+        // but exercises the full pipeline without requiring an actual voice recording)
+        let sampleRate = 16000
+        let audio = (0..<sampleRate * 3).map { i in  // 3 seconds
+            sin(2.0 * Float.pi * 200 * Float(i) / Float(sampleRate)) * 0.3
+        }
+
+        // Extract 192-dim speaker embedding
+        let embedding = try speaker.embed(audio: audio, sampleRate: sampleRate)
+        XCTAssertEqual(embedding.count, 192, "Should produce 192-dim embedding")
+
+        // Synthesize with speaker embedding
+        let samples = model.synthesize(
+            text: "Hello world",
+            speakerEmbedding: embedding)
+
+        XCTAssertFalse(samples.isEmpty, "Should produce audio with voice cloning")
+        let duration = Double(samples.count) / 24000.0
+        XCTAssertGreaterThan(duration, 0.5, "Should be at least 0.5s")
+
+        let maxAmp = samples.map { abs($0) }.max() ?? 0
+        XCTAssertGreaterThan(maxAmp, 0.01, "Should not be silent")
+    }
+    #endif
 }

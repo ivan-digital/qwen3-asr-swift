@@ -1,4 +1,5 @@
 import MLX
+import MLXCommon
 import MLXFast
 import MLXNN
 

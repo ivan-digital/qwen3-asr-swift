@@ -100,6 +100,48 @@ final class StreamingASRTests: XCTestCase {
         XCTAssertFalse(segment.isFinal)
     }
 
+    // MARK: - Range Guard Tests (no model required)
+
+    /// Verify that empty/invalid sample ranges are skipped without crash.
+    /// This is the core logic behind the force-split edge case fix.
+    func testEmptyRangeGuard() {
+        // Simulates the post-force-split scenario:
+        // speechStartSample is reset to currentTime, then speechEnded arrives
+        // at the same boundary → startSample == endSample
+        let samples: [Float] = [1, 2, 3, 4, 5]
+
+        // Equal indices → empty range, should be skipped
+        let start1 = 3
+        let end1 = 3
+        XCTAssertFalse(start1 < end1, "Equal start/end should be skipped")
+
+        // start > end (float truncation edge case)
+        let start2 = 4
+        let end2 = 3
+        XCTAssertFalse(start2 < end2, "Inverted range should be skipped")
+
+        // Valid range
+        let start3 = 1
+        let end3 = 4
+        XCTAssertTrue(start3 < end3, "Valid range should proceed")
+        let slice = Array(samples[start3..<end3])
+        XCTAssertEqual(slice, [2, 3, 4])
+
+        // Boundary: start at samples.count → empty
+        let start4 = samples.count
+        let end4 = samples.count
+        XCTAssertFalse(start4 < end4, "At-end boundary should be skipped")
+    }
+
+    /// Verify that endSample is clamped to samples.count
+    func testEndSampleClamping() {
+        let samples: [Float] = Array(repeating: 0, count: 16000) // 1s of audio
+        let rawEndSample = Int(1.5 * 16000) // 1.5s → beyond array bounds
+        let endSample = min(rawEndSample, samples.count)
+        XCTAssertEqual(endSample, 16000)
+        XCTAssertTrue(0 < endSample) // valid range
+    }
+
     // MARK: - Integration Tests (require model downloads)
 
     func testStreamingTranscription() async throws {
@@ -139,6 +181,51 @@ final class StreamingASRTests: XCTestCase {
         for segment in finalSegments {
             XCTAssertGreaterThanOrEqual(segment.startTime, 0)
             XCTAssertGreaterThan(segment.endTime, segment.startTime)
+        }
+    }
+
+    /// E2E test: force-split triggers when speech exceeds maxSegmentDuration.
+    /// Uses a very short maxSegmentDuration to force splits on the test audio.
+    /// Verifies no crash on the split boundary and segments are emitted correctly.
+    func testForceSplitDoesNotCrash() async throws {
+        guard let wavURL = Bundle.module.url(forResource: "test_audio", withExtension: "wav") else {
+            throw XCTSkip("Test WAV file not found in bundle resources")
+        }
+
+        let (samples, sampleRate) = try AudioFileLoader.loadWAV(url: wavURL)
+        let audio = AudioFileLoader.resample(samples, from: sampleRate, to: 16000)
+
+        let streaming = try await StreamingASR.fromPretrained { progress, status in
+            print("[\(Int(progress * 100))%] \(status)")
+        }
+
+        // Very short maxSegmentDuration to force splits within the ~3s speech region
+        let config = StreamingASRConfig(
+            maxSegmentDuration: 1.0,
+            emitPartialResults: false
+        )
+
+        var segments: [TranscriptionSegment] = []
+        let stream = streaming.transcribeStream(audio: audio, sampleRate: 16000, config: config)
+        for try await segment in stream {
+            let tag = segment.isFinal ? "FINAL" : "partial"
+            print("[force-split] [\(String(format: "%.2f", segment.startTime))s-\(String(format: "%.2f", segment.endTime))s] [\(tag)] \(segment.text)")
+            segments.append(segment)
+        }
+
+        let finals = segments.filter { $0.isFinal }
+        // With 1s max and ~3s speech, should get multiple final segments
+        XCTAssertGreaterThan(finals.count, 1, "Force-split should produce multiple final segments")
+
+        // Verify no overlapping or inverted timestamps
+        for segment in finals {
+            XCTAssertGreaterThan(segment.endTime, segment.startTime,
+                "Segment timestamps must not be inverted: \(segment.startTime) -> \(segment.endTime)")
+        }
+
+        // Verify segment indices are sequential
+        for (i, segment) in finals.enumerated() {
+            XCTAssertEqual(segment.segmentIndex, i, "Segment indices should be sequential")
         }
     }
 

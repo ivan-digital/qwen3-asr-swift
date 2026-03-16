@@ -12,8 +12,7 @@ final class WeSpeakerTests: XCTestCase {
         XCTAssertEqual(config.onset, 0.5, accuracy: 0.001)
         XCTAssertEqual(config.offset, 0.3, accuracy: 0.001)
         XCTAssertEqual(config.minSpeechDuration, 0.3, accuracy: 0.001)
-        XCTAssertEqual(config.minSpeakers, 0)
-        XCTAssertEqual(config.maxSpeakers, 0)
+        XCTAssertEqual(config.minSilenceDuration, 0.15, accuracy: 0.001)
     }
 
     func testDiarizedSegmentDuration() {
@@ -256,11 +255,8 @@ final class WeSpeakerTests: XCTestCase {
 
         let (samples, sampleRate) = try AudioFileLoader.loadWAV(url: audioURL)
 
-        // Test audio has a single speaker — with maxSpeakers=1, pipeline should detect 1
-        let config = DiarizationConfig(maxSpeakers: 1)
-        let result = pipeline.diarize(audio: samples, sampleRate: sampleRate, config: config)
-        XCTAssertEqual(result.numSpeakers, 1,
-                       "maxSpeakers=1 should force 1 speaker, got \(result.numSpeakers)")
+        // Test audio has a single speaker — pipeline should detect 1
+        let result = pipeline.diarize(audio: samples, sampleRate: sampleRate, config: .default)
 
         // All segments should be speaker 0
         for seg in result.segments {
@@ -412,22 +408,9 @@ final class WeSpeakerTests: XCTestCase {
         let (samples, sampleRate) = try AudioFileLoader.loadWAV(url: audioURL)
 
         // Resample to 16kHz if needed
-        let audio16k: [Float]
-        if sampleRate != 16000 {
-            let ratio = Double(16000) / Double(sampleRate)
-            let outLen = Int(Double(samples.count) * ratio)
-            audio16k = (0..<outLen).map { i in
-                let src = Double(i) / ratio
-                let idx = Int(src)
-                let frac = Float(src - Double(idx))
-                if idx + 1 < samples.count {
-                    return samples[idx] * (1 - frac) + samples[idx + 1] * frac
-                }
-                return idx < samples.count ? samples[idx] : 0
-            }
-        } else {
-            audio16k = samples
-        }
+        let audio16k = sampleRate != 16000
+            ? AudioFileLoader.resample(samples, from: sampleRate, to: 16000)
+            : samples
 
         let extractor = MelFeatureExtractor()
         let mel = extractor.extract(audio16k)
@@ -463,24 +446,17 @@ final class WeSpeakerTests: XCTestCase {
 
         let (samples, sampleRate) = try AudioFileLoader.loadWAV(url: audioURL)
 
-        // Force max 1 speaker
-        let config = DiarizationConfig(maxSpeakers: 1)
+        // Custom thresholds — higher onset = fewer detections
+        let config = DiarizationConfig(onset: 0.7, offset: 0.4)
         let result = pipeline.diarize(audio: samples, sampleRate: sampleRate, config: config)
 
-        XCTAssertEqual(result.numSpeakers, 1,
-                       "maxSpeakers=1 should force single speaker, got \(result.numSpeakers)")
         XCTAssertGreaterThan(result.segments.count, 0)
+        XCTAssertGreaterThanOrEqual(result.numSpeakers, 1)
 
-        // All segments should be speaker 0 when forced to 1 speaker
+        // All segments should have valid speaker IDs
         for seg in result.segments {
-            XCTAssertEqual(seg.speakerId, 0)
+            XCTAssertGreaterThanOrEqual(seg.speakerId, 0)
         }
-
-        // Force max 2 speakers — should produce at most 2
-        let config2 = DiarizationConfig(maxSpeakers: 2)
-        let result2 = pipeline.diarize(audio: samples, sampleRate: sampleRate, config: config2)
-        XCTAssertLessThanOrEqual(result2.numSpeakers, 2,
-                                  "maxSpeakers=2 should produce at most 2 speakers, got \(result2.numSpeakers)")
     }
 
     // MARK: - E2E: CoreML Embedding
@@ -555,25 +531,6 @@ final class WeSpeakerTests: XCTestCase {
             XCTAssertGreaterThanOrEqual(seg.startTime, 0)
             XCTAssertGreaterThan(seg.endTime, seg.startTime)
         }
-    }
-
-    // MARK: - E2E: Min/Max Speakers Constraints
-
-    func testE2EMinSpeakersConstraint() async throws {
-        let pipeline = try await DiarizationPipeline.fromPretrained()
-
-        let audioURL = URL(fileURLWithPath: "Tests/Qwen3ASRTests/Resources/test_audio.wav")
-        guard FileManager.default.fileExists(atPath: audioURL.path) else {
-            throw XCTSkip("Test audio file not found")
-        }
-
-        let (samples, sampleRate) = try AudioFileLoader.loadWAV(url: audioURL)
-
-        // Force at least 2 speakers — GMM-BIC should respect the constraint
-        let config = DiarizationConfig(minSpeakers: 2)
-        let result = pipeline.diarize(audio: samples, sampleRate: sampleRate, config: config)
-        XCTAssertGreaterThanOrEqual(result.numSpeakers, 2,
-                                     "minSpeakers=2 should force at least 2 speakers, got \(result.numSpeakers)")
     }
 
     // MARK: - E2E: Embedding Different Audio Produces Different Embeddings

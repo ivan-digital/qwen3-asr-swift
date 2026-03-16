@@ -2,6 +2,11 @@
 
 AI speech models for Apple Silicon (MLX Swift). ASR, TTS, speech-to-speech, VAD, diarization, speech enhancement.
 
+## Git Conventions
+
+- Never mention Claude, AI, or any AI tool in commit messages, PR descriptions, or co-author tags
+- No `Co-Authored-By` lines in commits
+
 ## Build
 
 ```bash
@@ -37,7 +42,8 @@ The metallib step compiles MLX Metal shaders — without it, inference runs ~5x 
 - `Sources/PersonaPlex/` — Speech-to-speech (PersonaPlex 7B, full-duplex)
 - `Sources/SpeechVAD/` — VAD (Silero + Pyannote), speaker diarization, speaker embedding (WeSpeaker)
 - `Sources/SpeechEnhancement/` — Noise suppression (DeepFilterNet3, CoreML)
-- `Sources/Qwen3Common/` — Shared model components (KV cache, RoPE, quantization)
+- `Sources/Qwen3Chat/` — On-device LLM chat (Qwen3-0.6B, CoreML, INT4)
+- `Sources/MLXCommon/` — Shared MLX utilities (weight loading, quantized layers, memory estimation)
 - `Sources/AudioCommon/` — Audio I/O, protocols, HuggingFace downloader
 - `Sources/AudioCLILib/` — CLI commands
 - `Sources/AudioCLI/` — CLI entry point (`audio` binary)
@@ -66,6 +72,27 @@ Full test suite (requires metallib + model downloads):
 make test
 ```
 
+### Testing requirements for new code
+
+**Every new feature, model, or module MUST include tests:**
+
+- **Unit tests**: Config parsing, data structures, weight loading, math/DSP logic — no GPU or model downloads needed
+- **E2E tests**: Full pipeline with real model weights — verify correct output (e.g., ASR round-trip, correct transcription text)
+- **Regression tests**: When fixing bugs, add a test that would have caught the bug
+
+**Test organization**: Place tests in `Tests/<ModuleName>Tests/`. Follow existing patterns (e.g., `Qwen3ASRTests/`, `SpeechVADTests/`).
+
+**E2E test naming**: Prefix E2E test classes with `E2E` (e.g., `E2ETranscriptionTests`, `E2EDiarizationTests`). CI filters out E2E tests that require model downloads — only unit tests run in the pipeline. E2E tests run locally with `make test` (full suite).
+
+**What to test per category:**
+| Change | Required tests |
+|--------|---------------|
+| New model/module | Unit (config, weight loading) + E2E (inference produces correct output) |
+| New CLI command | Unit (argument parsing) + E2E (end-to-end with real files) |
+| Bug fix | Regression test reproducing the bug |
+| New protocol/type | Unit test for conformance and behavior |
+| DSP/audio processing | Unit test with known input/output pairs |
+
 ## CLI
 
 The `audio` binary is the main entry point:
@@ -74,7 +101,8 @@ The `audio` binary is the main entry point:
 .build/release/audio transcribe recording.wav          # ASR
 .build/release/audio speak "Hello" --output hi.wav     # TTS
 .build/release/audio respond --input q.wav             # Speech-to-speech
-.build/release/audio diarize meeting.wav               # Speaker diarization
+.build/release/audio diarize meeting.wav               # Speaker diarization (pyannote)
+.build/release/audio diarize meeting.wav --engine sortformer  # Sortformer (CoreML, end-to-end)
 .build/release/audio diarize meeting.wav --rttm        # RTTM output
 .build/release/audio vad audio.wav                     # Voice activity detection
 .build/release/audio embed-speaker voice.wav           # Speaker embedding
@@ -82,11 +110,39 @@ The `audio` binary is the main entry point:
 .build/release/audio kokoro "Hello" --voice af_heart   # Kokoro TTS (iOS)
 ```
 
-## Documentation Site
+## Documentation
 
-The documentation is hosted at **https://soniqo.audio** (Firebase Hosting) and lives in a separate private repository: **soniqo-web**.
+### Local docs (`docs/`)
 
-**Whenever code changes are made in this repo, the corresponding documentation must be updated.**
+Architecture and implementation docs live in this repo:
+
+```
+docs/
+  models/                   Model architecture, weights, layers
+    asr-model.md            Qwen3-ASR architecture
+    tts-model.md            Qwen3-TTS architecture
+    cosyvoice-tts.md        CosyVoice3 architecture
+    kokoro-tts.md           Kokoro-82M architecture
+    parakeet-asr.md         Parakeet TDT architecture
+    personaplex.md          PersonaPlex architecture
+  inference/                Pipelines, usage, configs
+    asr-inference.md        ASR inference pipeline
+    qwen3-tts-inference.md  TTS inference pipeline
+    forced-aligner.md       Forced alignment pipeline
+    silero-vad.md           Silero VAD streaming
+    speaker-diarization.md  Speaker diarization pipeline
+    speech-enhancement.md   DeepFilterNet3 pipeline
+  benchmarks/               WER, DER, RTF results
+  shared-protocols.md       Protocol reference (cross-cutting)
+```
+
+**Keep local docs in sync when making code changes.**
+
+### Documentation site (soniqo-web)
+
+The public documentation is hosted at **https://soniqo.audio** (Firebase Hosting) and lives in a separate private repository: **soniqo-web**.
+
+**Whenever code changes are made in this repo, both local docs AND the soniqo-web site must be updated.**
 
 ### What requires a docs update
 
@@ -124,11 +180,11 @@ soniqo-web/public/
 
 ### Mapping: code changes → docs pages
 
-| Code change | Docs page(s) to update |
-|---|---|
-| CLI flag added/changed | `/cli/index.html` + relevant guide page |
-| New model/module | Landing page feature grid + new guide page + architecture |
-| Protocol change | `/api/index.html` |
-| Performance improvement | Landing page perf section + relevant guide |
-| Build/install change | `/getting-started/index.html` |
-| New CLI command | `/cli/index.html` + new guide page + landing page |
+| Code change | Local docs | soniqo-web page(s) |
+|---|---|---|
+| CLI flag added/changed | Relevant inference doc | `/cli/index.html` + relevant guide |
+| New model/module | New model + inference doc | Landing page + new guide + architecture |
+| Protocol change | `shared-protocols.md` | `/api/index.html` |
+| Performance improvement | `benchmarks/` | Landing page perf section + relevant guide |
+| Build/install change | — | `/getting-started/index.html` |
+| New CLI command | Relevant inference doc | `/cli/index.html` + new guide + landing page |

@@ -503,20 +503,9 @@ private func sendRealtimeError(outbound: WebSocketOutboundWriter, message: Strin
     ] as [String: Any])))
 }
 
-/// Simple linear resampling (e.g. 24kHz → 16kHz for ASR)
+/// Resample audio via AVAudioConverter (delegates to AudioFileLoader).
 func resample(_ samples: [Float], from sourceSR: Int, to targetSR: Int) -> [Float] {
-    guard sourceSR != targetSR, !samples.isEmpty else { return samples }
-    let ratio = Double(sourceSR) / Double(targetSR)
-    let outputCount = Int(Double(samples.count) / ratio)
-    var result = [Float](repeating: 0, count: outputCount)
-    for i in 0..<outputCount {
-        let srcIdx = Double(i) * ratio
-        let idx0 = Int(srcIdx)
-        let frac = Float(srcIdx - Double(idx0))
-        let idx1 = min(idx0 + 1, samples.count - 1)
-        result[i] = samples[idx0] * (1 - frac) + samples[idx1] * frac
-    }
-    return result
+    AudioFileLoader.resample(samples, from: sourceSR, to: targetSR)
 }
 
 // MARK: - Request Parsing

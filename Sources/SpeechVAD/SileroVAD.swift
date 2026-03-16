@@ -1,4 +1,5 @@
 import Foundation
+import MLXCommon
 import MLX
 import AudioCommon
 
@@ -171,7 +172,7 @@ public final class SileroVADModel {
     ) -> [SpeechSegment] {
         let samples: [Float]
         if sampleRate != Self.sampleRate {
-            samples = resample(audio, from: sampleRate, to: Self.sampleRate)
+            samples = AudioFileLoader.resample(audio, from: sampleRate, to: Self.sampleRate)
         } else {
             samples = audio
         }
@@ -304,27 +305,6 @@ public final class SileroVADModel {
         }
     }
 
-    /// Simple linear resampling.
-    private func resample(_ audio: [Float], from sourceSR: Int, to targetSR: Int) -> [Float] {
-        guard sourceSR != targetSR else { return audio }
-        let ratio = Double(targetSR) / Double(sourceSR)
-        let outputLen = Int(Double(audio.count) * ratio)
-        var output = [Float](repeating: 0, count: outputLen)
-
-        for i in 0 ..< outputLen {
-            let srcPos = Double(i) / ratio
-            let srcIdx = Int(srcPos)
-            let frac = Float(srcPos - Double(srcIdx))
-
-            if srcIdx + 1 < audio.count {
-                output[i] = audio[srcIdx] * (1 - frac) + audio[srcIdx + 1] * frac
-            } else if srcIdx < audio.count {
-                output[i] = audio[srcIdx]
-            }
-        }
-
-        return output
-    }
 }
 
 // MARK: - VoiceActivityDetectionModel

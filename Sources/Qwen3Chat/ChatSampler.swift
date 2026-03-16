@@ -20,13 +20,6 @@ enum ChatSampler {
     ) -> Int {
         var logits = logits
 
-        // Suppress specified tokens (e.g. <think> to disable thinking mode)
-        for id in config.suppressedTokenIds {
-            if id >= 0 && id < logits.count {
-                logits[id] = -Float.infinity
-            }
-        }
-
         // Repetition penalty
         if config.repetitionPenalty > 1.0 {
             let seen = Set(previousTokens.suffix(64))
@@ -41,8 +34,21 @@ enum ChatSampler {
             }
         }
 
-        // Temperature
-        if config.temperature > 0 && config.temperature != 1.0 {
+        // Greedy (argmax) when temperature is 0
+        if config.temperature <= 0 {
+            var maxIdx = 0
+            var maxVal = logits[0]
+            for i in 1..<logits.count {
+                if logits[i] > maxVal {
+                    maxVal = logits[i]
+                    maxIdx = i
+                }
+            }
+            return maxIdx
+        }
+
+        // Temperature scaling
+        if config.temperature != 1.0 {
             for i in 0..<logits.count {
                 logits[i] /= config.temperature
             }

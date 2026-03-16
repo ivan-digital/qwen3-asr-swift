@@ -1,7 +1,7 @@
 import AVFoundation
 
 /// Streams audio chunks via AVAudioEngine for low-latency playback.
-final class StreamingAudioPlayer {
+final class StreamingAudioPlayer: @unchecked Sendable {
     private var engine: AVAudioEngine?
     private var playerNode: AVAudioPlayerNode?
     private var format: AVAudioFormat?

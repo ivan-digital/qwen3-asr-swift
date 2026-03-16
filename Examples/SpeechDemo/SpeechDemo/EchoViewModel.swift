@@ -155,6 +155,7 @@ final class EchoViewModel {
             appendLog("[STT\(langTag)] \(text)")
         case .responseCreated:
             pipelineState = "speaking..."
+            player.resetGeneration()
         case .responseInterrupted:
             // User interrupted — fade out immediately
             player.fadeOutAndStop()
@@ -170,11 +171,7 @@ final class EchoViewModel {
             }
         case .responseDone:
             appendLog("[Pipeline] Response done")
-            if player.isPlaying {
-                waitingForPlaybackEnd = true
-            } else {
-                resumeAfterResponse()
-            }
+            player.markGenerationComplete()
         case .error(let msg):
             pipelineState = "error"
             appendLog("[ERROR] \(msg)")
@@ -182,12 +179,7 @@ final class EchoViewModel {
         }
     }
 
-    /// Set when responseDone fires; pipeline resumes after playback finishes.
-    private var waitingForPlaybackEnd = false
-
     func playbackDidFinish() {
-        guard waitingForPlaybackEnd else { return }
-        waitingForPlaybackEnd = false
         resumeAfterResponse()
     }
 

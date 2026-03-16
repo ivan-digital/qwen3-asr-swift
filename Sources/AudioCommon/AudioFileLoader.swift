@@ -121,25 +121,60 @@ public enum AudioFileLoader {
         return (samples, Int(sampleRate))
     }
 
-    /// Simple linear resampling
+    /// Resample audio using AVAudioConverter (high-quality sinc interpolation).
+    ///
+    /// - Parameters:
+    ///   - samples: mono PCM Float32 audio
+    ///   - inputRate: source sample rate in Hz
+    ///   - outputRate: target sample rate in Hz
+    /// - Returns: resampled audio at `outputRate`
     public static func resample(_ samples: [Float], from inputRate: Int, to outputRate: Int) -> [Float] {
-        let ratio = Double(outputRate) / Double(inputRate)
-        let outputLength = Int(Double(samples.count) * ratio)
+        guard inputRate != outputRate, !samples.isEmpty else { return samples }
 
-        guard outputLength > 0 else { return [] }
+        let sourceFormat = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: Double(inputRate),
+            channels: 1,
+            interleaved: false)!
+        let targetFormat = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: Double(outputRate),
+            channels: 1,
+            interleaved: false)!
 
-        var output = [Float](repeating: 0, count: outputLength)
-
-        for i in 0..<outputLength {
-            let srcIndex = Double(i) / ratio
-            let srcIndexFloor = Int(srcIndex)
-            let srcIndexCeil = min(srcIndexFloor + 1, samples.count - 1)
-            let fraction = Float(srcIndex - Double(srcIndexFloor))
-
-            output[i] = samples[srcIndexFloor] * (1 - fraction) + samples[srcIndexCeil] * fraction
+        guard let converter = AVAudioConverter(from: sourceFormat, to: targetFormat) else {
+            return samples
         }
 
-        return output
+        let sourceBuffer = AVAudioPCMBuffer(pcmFormat: sourceFormat, frameCapacity: AVAudioFrameCount(samples.count))!
+        sourceBuffer.frameLength = AVAudioFrameCount(samples.count)
+        samples.withUnsafeBufferPointer { src in
+            sourceBuffer.floatChannelData![0].update(from: src.baseAddress!, count: samples.count)
+        }
+
+        let ratio = Double(outputRate) / Double(inputRate)
+        let outputFrameCount = AVAudioFrameCount(Double(samples.count) * ratio)
+        let targetBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: outputFrameCount)!
+
+        var error: NSError?
+        var inputConsumed = false
+        converter.convert(to: targetBuffer, error: &error) { _, outStatus in
+            if inputConsumed {
+                outStatus.pointee = .noDataNow
+                return nil
+            }
+            inputConsumed = true
+            outStatus.pointee = .haveData
+            return sourceBuffer
+        }
+
+        guard error == nil, targetBuffer.frameLength > 0 else {
+            return samples
+        }
+
+        return Array(UnsafeBufferPointer(
+            start: targetBuffer.floatChannelData![0],
+            count: Int(targetBuffer.frameLength)))
     }
 }
 

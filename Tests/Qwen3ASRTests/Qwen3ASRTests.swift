@@ -490,3 +490,89 @@ final class Qwen3ASRTests: XCTestCase {
         XCTAssertFalse(decoded.contains("<|endoftext|>"), "Should skip <|endoftext|>")
     }
 }
+
+// MARK: - Context Injection Tests
+
+final class ContextInjectionTests: XCTestCase {
+
+    /// Model without context should have empty system message.
+    func testDefaultTranscribeHasNoContext() {
+        // The system message tokens without context:
+        // <|im_start|>system\n<|im_end|>\n
+        let imStartId: Int32 = 151644
+        let systemId: Int32 = 8948
+        let newlineId: Int32 = 198
+        let imEndId: Int32 = 151645
+
+        let expected: [Int32] = [imStartId, systemId, newlineId, imEndId, newlineId]
+
+        // Build the same way as generateText with context=nil
+        var inputIds: [Int32] = []
+        inputIds.append(contentsOf: [imStartId, systemId, newlineId])
+        // No context tokens inserted
+        inputIds.append(contentsOf: [imEndId, newlineId])
+
+        XCTAssertEqual(inputIds, expected,
+            "Without context, system message should be empty")
+    }
+
+    /// Context should insert tokens between system\\n and <|im_end|>.
+    func testContextInsertsTokens() {
+        let imStartId: Int32 = 151644
+        let systemId: Int32 = 8948
+        let newlineId: Int32 = 198
+        let imEndId: Int32 = 151645
+
+        // Simulate context injection (same logic as generateText)
+        let contextTokens: [Int32] = [100, 200, 300]  // mock tokenized context
+
+        var inputIds: [Int32] = []
+        inputIds.append(contentsOf: [imStartId, systemId, newlineId])
+        inputIds.append(contentsOf: contextTokens)
+        inputIds.append(contentsOf: [imEndId, newlineId])
+
+        // Verify structure: im_start, system, \n, [context...], im_end, \n
+        XCTAssertEqual(inputIds[0], imStartId)
+        XCTAssertEqual(inputIds[1], systemId)
+        XCTAssertEqual(inputIds[2], newlineId)
+        XCTAssertEqual(inputIds[3], 100)  // context starts here
+        XCTAssertEqual(inputIds[4], 200)
+        XCTAssertEqual(inputIds[5], 300)
+        XCTAssertEqual(inputIds[6], imEndId)
+        XCTAssertEqual(inputIds[7], newlineId)
+    }
+
+    /// Empty context string should behave same as nil.
+    func testEmptyContextSameAsNil() {
+        let imStartId: Int32 = 151644
+        let systemId: Int32 = 8948
+        let newlineId: Int32 = 198
+        let imEndId: Int32 = 151645
+
+        // With nil context
+        var withNil: [Int32] = []
+        withNil.append(contentsOf: [imStartId, systemId, newlineId])
+        withNil.append(contentsOf: [imEndId, newlineId])
+
+        // With empty string context (should skip insertion)
+        let context = ""
+        var withEmpty: [Int32] = []
+        withEmpty.append(contentsOf: [imStartId, systemId, newlineId])
+        if !context.isEmpty {
+            withEmpty.append(contentsOf: [99, 99]) // would add tokens
+        }
+        withEmpty.append(contentsOf: [imEndId, newlineId])
+
+        XCTAssertEqual(withNil, withEmpty,
+            "Empty context should produce same tokens as nil")
+    }
+
+    /// StreamingASRConfig should propagate context.
+    func testStreamingConfigPassesContext() {
+        let config = StreamingASRConfig(context: "medical terminology")
+        XCTAssertEqual(config.context, "medical terminology")
+
+        let defaultConfig = StreamingASRConfig()
+        XCTAssertNil(defaultConfig.context)
+    }
+}

@@ -12,6 +12,7 @@ final class AudioPlayer {
     private var outputFormat: AVAudioFormat?
     private var upsampler: AVAudioConverter?
     private var pendingBuffers = 0
+    private var generationComplete = false
     private let lock = NSLock()
 
     /// Attach to an existing engine. Call once before play().
@@ -89,15 +90,13 @@ final class AudioPlayer {
             guard let self else { return }
             self.lock.lock()
             self.pendingBuffers -= 1
-            let done = self.pendingBuffers <= 0
+            let done = self.pendingBuffers <= 0 && self.generationComplete
             self.lock.unlock()
 
             if done {
                 DispatchQueue.main.async {
-                    // Re-check: new chunks may have been scheduled between the
-                    // completion handler and this main-queue dispatch.
                     self.lock.lock()
-                    let stillDone = self.pendingBuffers <= 0
+                    let stillDone = self.pendingBuffers <= 0 && self.generationComplete
                     self.lock.unlock()
                     guard stillDone else { return }
                     self.isPlaying = false
@@ -107,11 +106,33 @@ final class AudioPlayer {
         }
     }
 
+    /// Signal that TTS generation is complete — no more chunks will arrive.
+    /// Fires onPlaybackFinished immediately if all buffers already drained.
+    func markGenerationComplete() {
+        lock.lock()
+        generationComplete = true
+        let done = pendingBuffers <= 0
+        lock.unlock()
+
+        if done {
+            isPlaying = false
+            onPlaybackFinished?()
+        }
+    }
+
+    /// Reset for a new generation cycle (call before first chunk).
+    func resetGeneration() {
+        lock.lock()
+        generationComplete = false
+        lock.unlock()
+    }
+
     func stop() {
         playerNode?.stop()
         playerNode?.play()  // re-arm for next schedule
         lock.lock()
         pendingBuffers = 0
+        generationComplete = false
         lock.unlock()
         isPlaying = false
     }

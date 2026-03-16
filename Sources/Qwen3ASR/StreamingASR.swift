@@ -29,6 +29,7 @@ public struct StreamingASRConfig: Sendable {
     public var maxTokens: Int
     public var emitPartialResults: Bool
     public var partialResultInterval: Float
+    public var context: String?
 
     public init(
         maxSegmentDuration: Float = 10.0,
@@ -36,7 +37,8 @@ public struct StreamingASRConfig: Sendable {
         language: String? = nil,
         maxTokens: Int = 448,
         emitPartialResults: Bool = false,
-        partialResultInterval: Float = 1.0
+        partialResultInterval: Float = 1.0,
+        context: String? = nil
     ) {
         self.maxSegmentDuration = maxSegmentDuration
         self.vadConfig = vadConfig
@@ -44,6 +46,7 @@ public struct StreamingASRConfig: Sendable {
         self.maxTokens = maxTokens
         self.emitPartialResults = emitPartialResults
         self.partialResultInterval = partialResultInterval
+        self.context = context
     }
 
     public static let `default` = StreamingASRConfig()
@@ -112,10 +115,16 @@ public class StreamingASR {
                         case .speechEnded(let segment):
                             if let startSample = speechStartSample {
                                 let endSample = min(Int(segment.endTime * 16000), samples.count)
+                                // After a force-split, startSample may equal endSample — skip empty spans
+                                guard startSample < endSample else {
+                                    speechStartSample = nil
+                                    continue
+                                }
                                 let segmentAudio = Array(samples[startSample..<endSample])
                                 let text = asrModel.transcribe(
                                     audio: segmentAudio, sampleRate: 16000,
-                                    language: config.language, maxTokens: config.maxTokens)
+                                    language: config.language, maxTokens: config.maxTokens,
+                                    context: config.context)
                                 let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
                                 if !trimmed.isEmpty {
                                     continuation.yield(TranscriptionSegment(
@@ -139,10 +148,15 @@ public class StreamingASR {
 
                         if currentTime - lastPartialTime >= config.partialResultInterval {
                             let endSample = min(Int(currentTime * 16000), samples.count)
+                            guard startSample < endSample else {
+                                lastPartialTime = currentTime
+                                continue
+                            }
                             let segmentAudio = Array(samples[startSample..<endSample])
                             let text = asrModel.transcribe(
                                 audio: segmentAudio, sampleRate: 16000,
-                                language: config.language, maxTokens: config.maxTokens)
+                                language: config.language, maxTokens: config.maxTokens,
+                                context: config.context)
                             let currentWords = text.trimmingCharacters(in: .whitespacesAndNewlines)
                                 .split(separator: " ").map(String.init)
 
@@ -160,10 +174,16 @@ public class StreamingASR {
                         // Force-split if speech exceeds maxSegmentDuration
                         if speechDuration >= config.maxSegmentDuration {
                             let endSample = min(Int(currentTime * 16000), samples.count)
+                            guard startSample < endSample else {
+                                speechStartSample = Int(currentTime * 16000)
+                                lastPartialTime = currentTime
+                                continue
+                            }
                             let segmentAudio = Array(samples[startSample..<endSample])
                             let text = asrModel.transcribe(
                                 audio: segmentAudio, sampleRate: 16000,
-                                language: config.language, maxTokens: config.maxTokens)
+                                language: config.language, maxTokens: config.maxTokens,
+                                context: config.context)
                             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
                             if !trimmed.isEmpty {
                                 continuation.yield(TranscriptionSegment(
@@ -185,10 +205,15 @@ public class StreamingASR {
 
                         if speechDuration >= config.maxSegmentDuration {
                             let endSample = min(Int(currentTime * 16000), samples.count)
+                            guard startSample < endSample else {
+                                speechStartSample = Int(currentTime * 16000)
+                                continue
+                            }
                             let segmentAudio = Array(samples[startSample..<endSample])
                             let text = asrModel.transcribe(
                                 audio: segmentAudio, sampleRate: 16000,
-                                language: config.language, maxTokens: config.maxTokens)
+                                language: config.language, maxTokens: config.maxTokens,
+                                context: config.context)
                             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
                             if !trimmed.isEmpty {
                                 continuation.yield(TranscriptionSegment(
@@ -211,10 +236,12 @@ public class StreamingASR {
                 for event in flushEvents {
                     if case .speechEnded(let segment) = event, let startSample = speechStartSample {
                         let endSample = min(Int(segment.endTime * 16000), samples.count)
+                        guard startSample < endSample else { continue }
                         let segmentAudio = Array(samples[startSample..<endSample])
                         let text = asrModel.transcribe(
                             audio: segmentAudio, sampleRate: 16000,
-                            language: config.language, maxTokens: config.maxTokens)
+                            language: config.language, maxTokens: config.maxTokens,
+                            context: config.context)
                         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
                         if !trimmed.isEmpty {
                             continuation.yield(TranscriptionSegment(
