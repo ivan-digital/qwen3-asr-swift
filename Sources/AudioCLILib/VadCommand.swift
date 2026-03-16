@@ -6,14 +6,17 @@ import AudioCommon
 public struct VadCommand: ParsableCommand {
     public static let configuration = CommandConfiguration(
         commandName: "vad",
-        abstract: "Detect speech segments using pyannote Voice Activity Detection"
+        abstract: "Detect speech segments using Voice Activity Detection"
     )
 
     @Argument(help: "Audio file to analyze (WAV, any sample rate)")
     public var audioFile: String
 
+    @Option(name: .long, help: "VAD engine: pyannote (default) or firered")
+    public var engine: String = "pyannote"
+
     @Option(name: .shortAndLong, help: "Model ID on HuggingFace")
-    public var model: String = PyannoteVADModel.defaultModelId
+    public var model: String?
 
     @Option(name: .long, help: "Onset threshold (speech start)")
     public var onset: Float = VADConfig.default.onset
@@ -40,26 +43,48 @@ public struct VadCommand: ParsableCommand {
             let duration = formatDuration(audio.count, sampleRate: 16000)
             print("  Loaded \(audio.count) samples (\(duration)s)")
 
-            let vadConfig = VADConfig(
-                onset: onset,
-                offset: offset,
-                minSpeechDuration: minSpeech,
-                minSilenceDuration: minSilence,
-                windowDuration: VADConfig.default.windowDuration,
-                stepRatio: VADConfig.default.stepRatio
-            )
+            let segments: [SpeechSegment]
+            let start: Date
+            let elapsed: TimeInterval
 
-            print("Loading VAD model: \(model)")
-            let vad = try await PyannoteVADModel.fromPretrained(
-                modelId: model,
-                vadConfig: vadConfig,
-                progressHandler: reportProgress
-            )
+            if engine.lowercased() == "firered" {
+                let modelId = model ?? FireRedVADModel.defaultModelId
+                print("Loading FireRedVAD model: \(modelId)")
+                let vad = try await FireRedVADModel.fromPretrained(
+                    modelId: modelId,
+                    progressHandler: reportProgress
+                )
+                vad.speechThreshold = onset
+                vad.minSpeechDuration = minSpeech
+                vad.minSilenceDuration = minSilence
 
-            print("Detecting speech segments...")
-            let start = Date()
-            let segments = vad.detectSpeech(audio: audio, sampleRate: 16000)
-            let elapsed = Date().timeIntervalSince(start)
+                print("Detecting speech segments...")
+                start = Date()
+                segments = vad.detectSpeech(audio: audio, sampleRate: 16000)
+                elapsed = Date().timeIntervalSince(start)
+            } else {
+                let modelId = model ?? PyannoteVADModel.defaultModelId
+                let vadConfig = VADConfig(
+                    onset: onset,
+                    offset: offset,
+                    minSpeechDuration: minSpeech,
+                    minSilenceDuration: minSilence,
+                    windowDuration: VADConfig.default.windowDuration,
+                    stepRatio: VADConfig.default.stepRatio
+                )
+
+                print("Loading VAD model: \(modelId)")
+                let vad = try await PyannoteVADModel.fromPretrained(
+                    modelId: modelId,
+                    vadConfig: vadConfig,
+                    progressHandler: reportProgress
+                )
+
+                print("Detecting speech segments...")
+                start = Date()
+                segments = vad.detectSpeech(audio: audio, sampleRate: 16000)
+                elapsed = Date().timeIntervalSince(start)
+            }
 
             if json {
                 printJSON(segments)
