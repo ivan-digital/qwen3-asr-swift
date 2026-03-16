@@ -33,6 +33,9 @@ public struct DiarizeCommand: ParsableCommand {
     @Option(name: .long, help: "Reference RTTM file to score against (computes DER)")
     public var scoreAgainst: String?
 
+    @Option(name: .long, help: "Minimum silence between segments in seconds (default 0.15)")
+    public var minSilence: Float = 0.15
+
     public init() {}
 
     public func run() throws {
@@ -43,7 +46,7 @@ public struct DiarizeCommand: ParsableCommand {
             let duration = formatDuration(audio.count, sampleRate: 16000)
             print("  Loaded \(audio.count) samples (\(duration)s)")
 
-            let config = DiarizationConfig()
+            let config = DiarizationConfig(minSilenceDuration: minSilence)
 
             if engine == "sortformer" {
                 #if canImport(CoreML)

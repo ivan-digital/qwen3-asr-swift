@@ -148,7 +148,8 @@ def run_diarization(cli_path: str, num_files: int = 0, engine: str = "mlx",
 
         try:
             cmd = [cli_path, "diarize", str(wav_path), "--rttm",
-                   "--embedding-engine", engine]
+                   "--embedding-engine", engine,
+                   "--min-silence", "0"]
             if vad_filter:
                 cmd.append("--vad-filter")
             result = subprocess.run(
