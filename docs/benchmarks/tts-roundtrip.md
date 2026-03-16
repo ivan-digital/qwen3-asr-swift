@@ -2,46 +2,60 @@
 
 ## Method
 
-Synthesize text → transcribe audio back → compute WER vs original text. Measures TTS intelligibility end-to-end.
+Synthesize text → transcribe audio back (Qwen3-ASR 0.6B) → compute WER vs original text. Measures TTS intelligibility end-to-end.
 
-## Results
+## Results (30 built-in sentences, conversational English)
 
-| Corpus | Sentences | WER% | TTS RTF | ms/step | Embed | Generate | Decode |
-|--------|-----------|------|---------|---------|-------|----------|--------|
-| Built-in (conversational) | 30 | 2.27 | 0.56 | 38 | 2ms | 2526ms | 211ms |
-| LibriSpeech transcripts | 106/111 | 19.15 | 0.57 | 40 | 2ms | 6353ms | 469ms |
+| TTS Engine | Model | WER% | RTF | ms/step | Embed | Decode |
+|------------|-------|------|-----|---------|-------|--------|
+| CosyVoice3 | default | 3.25 | 0.59 | — | — | — |
+| Qwen3-TTS | 1.7B 4-bit | 3.47 | 0.79 | 54 | 1ms | 382ms |
+| Qwen3-TTS | 1.7B 8-bit | 3.66 | 0.85 | 58 | 1ms | 244ms |
+| Qwen3-TTS | 0.6B 8-bit | 9.74 | 0.76 | 53 | 2ms | 457ms |
+| Qwen3-TTS | 0.6B 4-bit | 15.58 | 0.76 | 52 | 3ms | 360ms |
 
 **Machine**: Apple M2 Max, 64 GB, macOS 14, release build.
 
-**Observations:**
-- Built-in corpus (short, conversational): 2.27% WER — 25/30 perfect round-trip
-- LibriSpeech transcripts (long, literary): 18.55% WER — archaic vocabulary and long sentences increase errors
-- Generation dominates at ~92% of total time (38-40ms/step)
-- RTF ~0.57 (faster than real-time) regardless of input complexity
+## Extended results (111 LibriSpeech sentences, literary English)
 
-## Latency breakdown
+| TTS Engine | Model | WER% | RTF | Sentences |
+|------------|-------|------|-----|-----------|
+| Qwen3-TTS | 0.6B 4-bit | 19.15 | 0.57 | 106/111 |
 
-| Stage | Time | Description |
-|-------|------|-------------|
-| Embed | 2ms | Text embedding preparation |
-| Generate | 2.5-6.4s | Autoregressive codec token generation |
-| Decode | 0.2-0.5s | Codec decoder → waveform |
+Literary/archaic text is harder — higher error rate due to uncommon vocabulary.
 
-Longer sentences produce more tokens → longer generation time, but ms/step is constant (~39ms).
+## Key observations
 
-## Error analysis
+- **CosyVoice3** achieves best intelligibility (3.25% WER) and fastest RTF (0.59)
+- **Qwen3-TTS 1.7B** matches CosyVoice quality (3.47%) but is slower (RTF 0.79)
+- **0.6B → 1.7B** dramatically improves quality (15.58% → 3.47% for 4-bit, 4.5x fewer errors)
+- **4-bit → 8-bit** makes little difference for 1.7B (3.47% → 3.66%) but hurts 0.6B (15.58% → 9.74%)
+- All engines are faster than real-time (RTF < 1.0)
+- Generation dominates latency at ~92% of total time (52-58ms/step)
+- Embed time (1-3ms) is effectively TTFT (time to first token)
 
-Common error types:
+## Latency breakdown (Qwen3-TTS)
+
+| Stage | Time | % of total | Description |
+|-------|------|-----------|-------------|
+| Embed | 1-3ms | <1% | Text embedding (TTFT) |
+| Generate | 2-6s | ~92% | Autoregressive codec tokens |
+| Decode | 244-457ms | ~8% | Codec decoder → waveform |
+
+## Common error types
+
 - **Number compounding**: "twenty three" → "twentythree"
 - **Word drops**: Determiners ("the", "a") occasionally dropped
-- **Archaic words**: "honour" → "honor", "connexion" → "connection"
-- **Truncation**: Very long sentences cut short near max token limit (2 failures in 50)
+- **Spelling variants**: "honour" → "honor", "colour" → "color"
+- **Truncation**: Very long sentences cut short near max token limit
 
 ## Reproduction
 
 ```bash
 make build
-python scripts/benchmark_tts.py                           # Built-in 30 sentences
-python scripts/benchmark_tts.py --input-file corpus.txt   # Custom corpus
-python scripts/benchmark_tts.py --compare                 # All TTS engines
+python scripts/benchmark_tts.py                            # Qwen3-TTS base (30 sentences)
+python scripts/benchmark_tts.py --tts-engine cosyvoice     # CosyVoice3
+python scripts/benchmark_tts.py --tts-model 1.7b           # Qwen3-TTS 1.7B
+python scripts/benchmark_tts.py --compare                  # All engines
+python scripts/benchmark_tts.py --input-file corpus.txt    # Custom corpus
 ```
