@@ -36,6 +36,9 @@ public struct DiarizeCommand: ParsableCommand {
     @Option(name: .long, help: "Minimum silence between segments in seconds (default 0.15)")
     public var minSilence: Float = 0.15
 
+    @Option(name: .long, help: "Cosine similarity threshold for merging speaker clusters (default 1.0 = disabled)")
+    public var clusterThreshold: Float = 1.0
+
     public init() {}
 
     public func run() throws {
@@ -46,7 +49,9 @@ public struct DiarizeCommand: ParsableCommand {
             let duration = formatDuration(audio.count, sampleRate: 16000)
             print("  Loaded \(audio.count) samples (\(duration)s)")
 
-            let config = DiarizationConfig(minSilenceDuration: minSilence)
+            let config = DiarizationConfig(
+                minSilenceDuration: minSilence,
+                clusteringThreshold: clusterThreshold)
 
             if engine == "sortformer" {
                 #if canImport(CoreML)

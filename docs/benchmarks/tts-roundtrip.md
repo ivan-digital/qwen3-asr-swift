@@ -17,13 +17,7 @@ Synthesize text → transcribe audio back (Qwen3-ASR 0.6B) → compute WER vs or
 
 **Machine**: Apple M2 Max, 64 GB, macOS 14, release build.
 
-## Extended results (111 LibriSpeech sentences, literary English, Qwen3-TTS only)
-
-| TTS Engine | Model | WER% | RTF | Sentences |
-|------------|-------|------|-----|-----------|
-| Qwen3-TTS | 0.6B 4-bit | 19.15 | 0.57 | 106/111 |
-
-Literary/archaic text is harder — higher error rate due to uncommon vocabulary.
+On harder literary text (111 LibriSpeech sentences), Qwen3-TTS 0.6B 4-bit scores 19.15% WER — higher due to archaic vocabulary and long sentences.
 
 ## Key observations
 

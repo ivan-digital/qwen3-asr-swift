@@ -17,17 +17,22 @@ public struct DiarizationConfig: Sendable {
     public var minSpeechDuration: Float
     /// Minimum silence duration between segments in seconds
     public var minSilenceDuration: Float
+    /// Cosine similarity threshold for merging speaker clusters (0.0-1.0)
+    /// Higher = fewer merges (more speakers). Default 0.5.
+    public var clusteringThreshold: Float
 
     public init(
         onset: Float = 0.5,
         offset: Float = 0.3,
         minSpeechDuration: Float = 0.3,
-        minSilenceDuration: Float = 0.15
+        minSilenceDuration: Float = 0.15,
+        clusteringThreshold: Float = 1.0  // disabled by default (WeSpeaker similarities too high for conversational audio)
     ) {
         self.onset = onset
         self.offset = offset
         self.minSpeechDuration = minSpeechDuration
         self.minSilenceDuration = minSilenceDuration
+        self.clusteringThreshold = clusteringThreshold
     }
 
     public static let `default` = DiarizationConfig()
@@ -201,7 +206,7 @@ public final class PyannoteDiarizationPipeline {
         let merged = DiarizationHelpers.mergeSegments(
             segments, minSilence: config.minSilenceDuration)
 
-        // Stage 2: Compute per-speaker embeddings from final segments
+        // Stage 2: Compute per-speaker embeddings
         var speakerEmbeddings = [[Float]]()
         for spk in 0..<numSpeakers {
             var spkAudio = [Float]()
@@ -218,10 +223,20 @@ public final class PyannoteDiarizationPipeline {
             }
         }
 
+        // Stage 3: Embedding-based agglomerative clustering
+        // Merge speaker clusters with high cosine similarity to fix
+        // speaker confusion from activity-based chaining.
+        let (refinedSegments, refinedEmbeddings, refinedNumSpeakers) =
+            refineWithEmbeddings(
+                segments: merged,
+                embeddings: speakerEmbeddings,
+                numSpeakers: numSpeakers,
+                threshold: config.clusteringThreshold)
+
         return DiarizationResult(
-            segments: merged,
-            numSpeakers: numSpeakers,
-            speakerEmbeddings: speakerEmbeddings
+            segments: refinedSegments,
+            numSpeakers: refinedNumSpeakers,
+            speakerEmbeddings: refinedEmbeddings
         )
     }
 
@@ -276,6 +291,97 @@ public final class PyannoteDiarizationPipeline {
     /// Run diarization by chaining speakers across windows using activity correlation
     /// in the overlap region (no embedding-based matching).
     ///
+    /// Refine speaker assignments using embedding-based agglomerative clustering.
+    ///
+    /// Activity-based chaining can produce fragmented speaker IDs (same person
+    /// gets different IDs in different windows). This step computes cosine
+    /// similarity between speaker embeddings and merges clusters above threshold.
+    private func refineWithEmbeddings(
+        segments: [DiarizedSegment],
+        embeddings: [[Float]],
+        numSpeakers: Int,
+        threshold: Float
+    ) -> ([DiarizedSegment], [[Float]], Int) {
+        guard numSpeakers > 1 else {
+            return (segments, embeddings, numSpeakers)
+        }
+
+        // Build speaker ID mapping: start with identity
+        var idMap = [Int](0..<numSpeakers)
+
+        // Agglomerative clustering: merge most similar pair until below threshold
+        var active = Set(0..<numSpeakers)
+        // Track merged embeddings (mean of merged clusters)
+        var clusterEmbeddings = embeddings
+
+        while active.count > 1 {
+            // Find most similar pair
+            var bestSim: Float = -1
+            var bestI = -1, bestJ = -1
+
+            let activeList = active.sorted()
+            for ai in 0..<activeList.count {
+                for aj in (ai + 1)..<activeList.count {
+                    let i = activeList[ai], j = activeList[aj]
+                    // Skip zero embeddings (insufficient audio)
+                    let normI = clusterEmbeddings[i].reduce(Float(0)) { $0 + $1 * $1 }
+                    let normJ = clusterEmbeddings[j].reduce(Float(0)) { $0 + $1 * $1 }
+                    guard normI > 0.01 && normJ > 0.01 else { continue }
+
+                    let sim = WeSpeakerModel.cosineSimilarity(
+                        clusterEmbeddings[i], clusterEmbeddings[j])
+                    if sim > bestSim {
+                        bestSim = sim
+                        bestI = i
+                        bestJ = j
+                    }
+                }
+            }
+
+            // Stop if best similarity is below threshold
+            guard bestSim >= threshold && bestI >= 0 else { break }
+
+            // Merge bestJ into bestI
+            // Update embedding: average of the two
+            for d in 0..<clusterEmbeddings[bestI].count {
+                clusterEmbeddings[bestI][d] = (clusterEmbeddings[bestI][d] + clusterEmbeddings[bestJ][d]) / 2.0
+            }
+
+            // Remap all segments with bestJ to bestI
+            for k in 0..<numSpeakers {
+                if idMap[k] == bestJ { idMap[k] = bestI }
+            }
+
+            active.remove(bestJ)
+        }
+
+        // Apply remapping and compact IDs
+        let remapped = segments.map { seg in
+            DiarizedSegment(
+                startTime: seg.startTime,
+                endTime: seg.endTime,
+                speakerId: idMap[seg.speakerId])
+        }
+
+        let compacted = DiarizationHelpers.compactSpeakerIds(remapped)
+        let finalNumSpeakers = Set(compacted.map(\.speakerId)).count
+
+        // Collect final embeddings
+        let finalEmbeddings: [[Float]]
+        if finalNumSpeakers > 0 {
+            var embMap = [[Float]](repeating: [], count: finalNumSpeakers)
+            let uniqueIds = active.sorted()
+            for (newId, oldId) in uniqueIds.enumerated() where newId < finalNumSpeakers {
+                embMap[newId] = clusterEmbeddings[oldId]
+            }
+            finalEmbeddings = embMap
+        } else {
+            finalEmbeddings = []
+        }
+
+        return (compacted, finalEmbeddings, finalNumSpeakers)
+    }
+
     /// With 50% overlapping windows, adjacent windows share a half-window overlap region.
     /// The activity patterns of the 3 local speakers in this overlap are compared via
     /// Pearson correlation to find the best permutation mapping between windows.
