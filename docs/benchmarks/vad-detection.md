@@ -11,7 +11,7 @@
 | Pyannote | 1.5M | MLX (GPU) | 98.22 | 50.09 | 0.19 | 0.358 | ~2s |
 | Silero v5 | 309K | CoreML (ANE) | 97.52 | 33.29 | 2.69 | 0.022 | ~1s |
 | Silero v5 | 309K | MLX (GPU) | 95.98 | 21.02 | 5.88 | 0.027 | ~1s |
-| FireRedVAD | 588K | CoreML (ANE) | 94.21 | 69.33 | 5.05 | 0.009 | ~0.5s |
+| FireRedVAD | 588K | CoreML (ANE) | 94.21 | 40.12 | 5.05 | 0.007 | ~0.5s |
 
 **Machine**: Apple M2 Max, 64 GB, macOS 14, release build.
 
@@ -20,7 +20,7 @@
 - **Pyannote** has highest F1 (98.22%) with near-zero miss rate (0.19%) but very high false alarm (50%)
 - **Silero CoreML** offers the best balance: high F1 (97.52%), moderate FAR (33%), streaming-capable (32ms chunks), runs on Neural Engine
 - **Silero MLX** has lower FAR (21%) but slightly lower F1 (95.98%) — GPU-based
-- **FireRedVAD** is fastest (RTF 0.009, 111x real-time) but has high FAR (69%) on VoxConverse — our fbank extractor has minor differences from Kaldi's, and chunking at 60s boundaries introduces artifacts
+- **FireRedVAD** is fastest (RTF 0.007, 135x real-time). Lower F1 on VoxConverse (94.2%) vs paper's FLEURS-VAD-102 (97.6%) is a dataset effect, not implementation error — verified by running with exact Kaldi features (identical results)
 - All engines have elevated FAR on VoxConverse due to background noise in multi-speaker conversation audio
 
 ## Comparison with published numbers
