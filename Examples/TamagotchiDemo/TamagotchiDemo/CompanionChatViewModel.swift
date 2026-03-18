@@ -38,15 +38,13 @@ final class CompanionChatViewModel {
     var errorMessage: String?
     var speakEnabled = true
 
-    var modelsLoaded: Bool { chatModel != nil && ttsModel != nil && asrModel != nil && vadModel != nil }
+    var modelsLoaded: Bool { chatModel != nil && vadModel != nil }
 
     let diagnostics = DiagnosticsMonitor()
 
     // MARK: - Models
 
     private var chatModel: Qwen3ChatModel?
-    private var ttsModel: KokoroTTSModel?
-    private var asrModel: ParakeetASRModel?
     private var vadModel: SileroVADModel?
 
     // MARK: - Pipeline
@@ -72,83 +70,38 @@ final class CompanionChatViewModel {
         errorMessage = nil
         loadProgress = 0
 
-        // Prewarm pattern (from WhisperKit): load each model to trigger CoreML
-        // compilation caching, then nil it. After prewarm, cached loads are fast
-        // (~0.1-0.3s) with no compilation memory spike.
-        // Peak during prewarm: ~664MB (largest model × 2 during compile).
-        // Resident after all loaded: ~960MB.
+        // Lazy pipeline: only VAD (1MB) + LLM (318MB) loaded at startup = 319MB.
+        // ASR and TTS loaded on-demand by VoicePipeline's lazy bridges.
+        // Peak during pipeline: ~650MB (VAD + LLM + max(ASR, TTS)).
+        // CoreML caches compiled models — second load is ~0.1-0.3s.
         let units = coreMLUnits
 
         do {
-            // 1. VAD (~1 MB) — tiny, just load directly
+            // 1. VAD (~1 MB) — always resident
             loadingStatus = "VAD..."
-            loadProgress = 0.05
+            loadProgress = 0.1
             vadModel = try await Task.detached {
                 try await SileroVADModel.fromPretrained(engine: .coreml) { progress, status in
                     DispatchQueue.main.async { [weak self] in
-                        self?.loadProgress = 0.05 + progress * 0.05
+                        self?.loadProgress = 0.1 + progress * 0.1
                         if !status.isEmpty { self?.loadingStatus = "VAD: \(status)" }
                     }
                 }
             }.value
 
-            // 2. Prewarm ASR → compile → nil (frees ~664MB peak back to ~1MB)
-            loadingStatus = "Preparing ASR..."
-            loadProgress = 0.1
-            var tempASR: ParakeetASRModel? = try await Task.detached {
-                try await ParakeetASRModel.fromPretrained { progress, status in
-                    DispatchQueue.main.async { [weak self] in
-                        self?.loadProgress = 0.1 + progress * 0.15
-                        if !status.isEmpty { self?.loadingStatus = "ASR: \(status)" }
-                    }
-                }
-            }.value
-            tempASR = nil  // Free to reclaim compilation memory
-
-            // 3. Prewarm LLM → compile → nil
-            loadingStatus = "Preparing LLM..."
-            loadProgress = 0.25
-            var tempLLM: Qwen3ChatModel? = try await Task.detached {
+            // 2. LLM (~318 MB) — kept loaded (KV cache, conversation state)
+            loadingStatus = "Qwen3 Chat..."
+            loadProgress = 0.2
+            chatModel = try await Task.detached {
                 try await Qwen3ChatModel.fromPretrained(computeUnits: units) { progress, status in
                     DispatchQueue.main.async { [weak self] in
-                        self?.loadProgress = 0.25 + progress * 0.15
-                        if !status.isEmpty { self?.loadingStatus = "LLM: \(status)" }
+                        self?.loadProgress = 0.2 + progress * 0.7
+                        if !status.isEmpty { self?.loadingStatus = "Qwen3: \(status)" }
                     }
                 }
             }.value
-            tempLLM = nil
 
-            // 4. Prewarm TTS → compile → nil
-            loadingStatus = "Preparing TTS..."
-            loadProgress = 0.4
-            var tempTTS: KokoroTTSModel? = try await Task.detached {
-                try await KokoroTTSModel.fromPretrained { progress, status in
-                    DispatchQueue.main.async { [weak self] in
-                        self?.loadProgress = 0.4 + progress * 0.15
-                        if !status.isEmpty { self?.loadingStatus = "TTS: \(status)" }
-                    }
-                }
-            }.value
-            tempTTS = nil
-
-            // 5. Now load all from CoreML cache (fast, no compilation spike)
-            loadingStatus = "Loading ASR..."
-            loadProgress = 0.55
-            asrModel = try await Task.detached {
-                try await ParakeetASRModel.fromPretrained { _, _ in }
-            }.value
-
-            loadingStatus = "Loading LLM..."
-            loadProgress = 0.7
-            chatModel = try await Task.detached {
-                try await Qwen3ChatModel.fromPretrained(computeUnits: units) { _, _ in }
-            }.value
-
-            loadingStatus = "Loading TTS..."
-            loadProgress = 0.85
-            ttsModel = try await Task.detached {
-                try await KokoroTTSModel.fromPretrained { _, _ in }
-            }.value
+            // ASR + TTS loaded lazily by pipeline on first use
 
             loadProgress = 1.0
             loadingStatus = "Ready"
@@ -163,7 +116,7 @@ final class CompanionChatViewModel {
 
     func startListening() {
         guard !isListening else { return }
-        guard let vad = vadModel, let asr = asrModel, let tts = ttsModel, let chat = chatModel else { return }
+        guard let vad = vadModel, let chat = chatModel else { return }
 
         let sampling = ChatSamplingConfig(
             temperature: 0.3, topK: 20, maxTokens: 15, repetitionPenalty: 1.5)
@@ -189,8 +142,8 @@ final class CompanionChatViewModel {
         config.warmupSTT = true
 
         pipeline = VoicePipeline(
-            stt: asr,
-            tts: tts,
+            sttFactory: { try await ParakeetASRModel.fromPretrained { _, _ in } },
+            ttsFactory: { try await KokoroTTSModel.fromPretrained { _, _ in } },
             vad: vad,
             llm: llm,
             config: config,
@@ -260,6 +213,8 @@ final class CompanionChatViewModel {
             messages.append(ChatBubbleMessage(role: .user, text: trimmed))
             pipelineState = "thinking..."
             isGenerating = true
+            // Free ASR memory (~332MB) before LLM runs
+            pipeline?.unloadSTT()
 
         case .responseCreated:
             pipelineLog.warning("Event: responseCreated")
@@ -323,6 +278,8 @@ final class CompanionChatViewModel {
 
     private func resumeAfterResponse() {
         guard isListening else { return }
+        // Free TTS memory (~310MB) before ASR reloads on next speech
+        pipeline?.unloadTTS()
         pipeline?.resumeListening()
         pipelineState = "listening"
     }

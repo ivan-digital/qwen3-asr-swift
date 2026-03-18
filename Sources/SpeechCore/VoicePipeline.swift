@@ -84,11 +84,46 @@ public struct PipelineConfig {
 // MARK: - Bridge Classes
 
 /// Bridges a SpeechRecognitionModel to the C vtable.
+/// Supports lazy loading: provide a factory closure instead of a preloaded model.
+/// The model is loaded on first vtable callback and can be unloaded to free memory.
 private final class STTBridge {
-    let model: SpeechRecognitionModel
-    var lastText: [CChar] = []  // keeps C string alive between calls
-    var lastLanguage: [CChar] = []  // keeps language C string alive
-    init(_ model: SpeechRecognitionModel) { self.model = model }
+    private var _model: SpeechRecognitionModel?
+    private let factory: (() async throws -> SpeechRecognitionModel)?
+    var lastText: [CChar] = []
+    var lastLanguage: [CChar] = []
+
+    /// Preloaded model (always resident).
+    init(_ model: SpeechRecognitionModel) {
+        self._model = model
+        self.factory = nil
+    }
+
+    /// Lazy model: loaded on first use from factory, can be unloaded.
+    init(factory: @escaping () async throws -> SpeechRecognitionModel) {
+        self._model = nil
+        self.factory = factory
+    }
+
+    var model: SpeechRecognitionModel {
+        if let m = _model { return m }
+        guard let factory else { fatalError("STTBridge: no model and no factory") }
+        let sem = DispatchSemaphore(value: 0)
+        var loaded: SpeechRecognitionModel?
+        Task {
+            loaded = try? await factory()
+            sem.signal()
+        }
+        sem.wait()
+        _model = loaded
+        return _model!
+    }
+
+    func unload() {
+        guard factory != nil else { return }  // Don't unload preloaded models
+        _model = nil
+    }
+
+    var isLoaded: Bool { _model != nil }
 }
 
 /// Bridges a PipelineTool to the C callback.
@@ -100,15 +135,46 @@ private final class ToolBridge {
 }
 
 /// Bridges a SpeechGenerationModel to the C vtable.
+/// Supports lazy loading like STTBridge.
 private final class TTSBridge {
-    let model: SpeechGenerationModel
+    private var _model: SpeechGenerationModel?
+    private let factory: (() async throws -> SpeechGenerationModel)?
     private let _cancelled = OSAllocatedUnfairLock(initialState: false)
     var cancelled: Bool {
         get { _cancelled.withLock { $0 } }
         set { _cancelled.withLock { $0 = newValue } }
     }
 
-    init(_ model: SpeechGenerationModel) { self.model = model }
+    init(_ model: SpeechGenerationModel) {
+        self._model = model
+        self.factory = nil
+    }
+
+    init(factory: @escaping () async throws -> SpeechGenerationModel) {
+        self._model = nil
+        self.factory = factory
+    }
+
+    var model: SpeechGenerationModel {
+        if let m = _model { return m }
+        guard let factory else { fatalError("TTSBridge: no model and no factory") }
+        let sem = DispatchSemaphore(value: 0)
+        var loaded: SpeechGenerationModel?
+        Task {
+            loaded = try? await factory()
+            sem.signal()
+        }
+        sem.wait()
+        _model = loaded
+        return _model!
+    }
+
+    func unload() {
+        guard factory != nil else { return }
+        _model = nil
+    }
+
+    var isLoaded: Bool { _model != nil }
 }
 
 /// Bridges a StreamingVADProvider to the C vtable.
@@ -120,9 +186,39 @@ private final class VADBridge {
 
 /// Bridges a PipelineLLM to the C vtable.
 private final class LLMBridge {
-    let model: PipelineLLM
+    private var _model: PipelineLLM?
+    private let factory: (() async throws -> PipelineLLM)?
 
-    init(_ model: PipelineLLM) { self.model = model }
+    init(_ model: PipelineLLM) {
+        self._model = model
+        self.factory = nil
+    }
+
+    init(factory: @escaping () async throws -> PipelineLLM) {
+        self._model = nil
+        self.factory = factory
+    }
+
+    var model: PipelineLLM {
+        if let m = _model { return m }
+        guard let factory else { fatalError("LLMBridge: no model and no factory") }
+        let sem = DispatchSemaphore(value: 0)
+        var loaded: PipelineLLM?
+        Task {
+            loaded = try? await factory()
+            sem.signal()
+        }
+        sem.wait()
+        _model = loaded
+        return _model!
+    }
+
+    func unload() {
+        guard factory != nil else { return }
+        _model = nil
+    }
+
+    var isLoaded: Bool { _model != nil }
 }
 
 /// Bridges the event callback.
@@ -144,17 +240,25 @@ private final class EventBridge {
 /// audio → VAD → STT → LLM → TTS → audio
 /// ```
 ///
-/// Usage:
+/// Usage (preloaded models):
 /// ```swift
 /// let pipeline = VoicePipeline(
-///     stt: asrModel,
-///     tts: ttsModel,
-///     vad: sileroVAD,
+///     stt: asrModel, tts: ttsModel, vad: sileroVAD,
 ///     config: .init(mode: .echo),
 ///     onEvent: { event in print(event) }
 /// )
-/// pipeline.start()
-/// pipeline.pushAudio(micSamples)
+/// ```
+///
+/// Usage (lazy loading — only VAD preloaded, ASR/TTS/LLM loaded on demand):
+/// ```swift
+/// let pipeline = VoicePipeline(
+///     sttFactory: { try await ParakeetASRModel.fromPretrained() },
+///     ttsFactory: { try await KokoroTTSModel.fromPretrained() },
+///     vad: sileroVAD,
+///     llm: llm,
+///     config: .init(mode: .voicePipeline),
+///     onEvent: { event in print(event) }
+/// )
 /// ```
 public final class VoicePipeline {
 
@@ -231,6 +335,79 @@ public final class VoicePipeline {
             }
         }
     }
+
+    /// Create a voice pipeline with lazy model loading.
+    ///
+    /// Models are loaded on first use (from CoreML cache: ~0.1-0.3s) and can be
+    /// unloaded between phases to free memory. Only VAD must be preloaded.
+    /// Peak memory: largest single model instead of sum of all models.
+    public init(
+        sttFactory: @escaping () async throws -> SpeechRecognitionModel,
+        ttsFactory: @escaping () async throws -> SpeechGenerationModel,
+        vad: StreamingVADProvider,
+        llm: PipelineLLM? = nil,
+        llmFactory: (() async throws -> PipelineLLM)? = nil,
+        config: PipelineConfig = .default,
+        onEvent: @escaping (PipelineEvent) -> Void
+    ) {
+        self.sttBridge = STTBridge(factory: sttFactory)
+        self.ttsBridge = TTSBridge(factory: ttsFactory)
+        self.vadBridge = VADBridge(vad)
+        self.eventBridge = EventBridge(onEvent)
+        self.eventBridge.sttBridge = self.sttBridge
+
+        if let llm {
+            self.llmBridge = LLMBridge(llm)
+        } else if let llmFactory {
+            self.llmBridge = LLMBridge(factory: llmFactory)
+        }
+
+        let sttVtable = Self.makeSTTVtable(sttBridge)
+        let ttsVtable = Self.makeTTSVtable(ttsBridge)
+        let vadVtable = Self.makeVADVtable(vadBridge)
+
+        var cConfig = sc_config_default()
+        cConfig.vad_onset = config.vadOnset
+        cConfig.vad_offset = config.vadOffset
+        cConfig.min_speech_duration = config.minSpeechDuration
+        cConfig.min_silence_duration = config.minSilenceDuration
+        cConfig.allow_interruptions = config.allowInterruptions
+        cConfig.min_interruption_duration = config.minInterruptionDuration
+        cConfig.interruption_recovery_timeout = config.interruptionRecoveryTimeout
+        cConfig.max_utterance_duration = config.maxUtteranceDuration
+        cConfig.pre_speech_buffer_duration = config.preSpeechBufferDuration
+        cConfig.max_response_duration = config.maxResponseDuration
+        cConfig.post_playback_guard = config.postPlaybackGuard
+        cConfig.eager_stt = config.eagerSTT
+        cConfig.eager_stt_delay = config.eagerSTTDelay
+        cConfig.warmup_stt = config.warmupSTT
+        cConfig.mode = sc_mode_t(rawValue: UInt32(config.mode.rawValue))
+
+        let eventCtx = Unmanaged.passRetained(eventBridge).toOpaque()
+
+        if let llmBridge {
+            var llmVtable = Self.makeLLMVtable(llmBridge)
+            config.language.withCString { langPtr in
+                cConfig.language = langPtr
+                handle = sc_pipeline_create(
+                    sttVtable, ttsVtable, &llmVtable, vadVtable,
+                    cConfig, Self.eventCallback, eventCtx)
+            }
+        } else {
+            config.language.withCString { langPtr in
+                cConfig.language = langPtr
+                handle = sc_pipeline_create(
+                    sttVtable, ttsVtable, nil, vadVtable,
+                    cConfig, Self.eventCallback, eventCtx)
+            }
+        }
+    }
+
+    /// Unload a lazy-loaded model to free memory.
+    /// No-op for preloaded models. Model reloads automatically on next use.
+    public func unloadSTT() { sttBridge.unload() }
+    public func unloadTTS() { ttsBridge.unload() }
+    public func unloadLLM() { llmBridge?.unload() }
 
     deinit {
         if handle != nil {
