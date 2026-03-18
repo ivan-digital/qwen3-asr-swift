@@ -38,10 +38,7 @@ final class CompanionChatViewModel {
     var errorMessage: String?
     var speakEnabled = true
 
-    var modelsLoaded: Bool { chatModel != nil && asrModel != nil && vadModel != nil && (ttsModel != nil || useSystemTTS) }
-
-    /// Use AVSpeechSynthesizer instead of Kokoro to save ~310MB RAM on device.
-    private let useSystemTTS = true
+    var modelsLoaded: Bool { chatModel != nil && ttsModel != nil && asrModel != nil && vadModel != nil }
 
     let diagnostics = DiagnosticsMonitor()
 
@@ -66,19 +63,21 @@ final class CompanionChatViewModel {
 
     // MARK: - Load Models
 
-    /// CoreML `.all` lets the framework pick the best backend per model.
-    /// On simulator, GPU/ANE fallback errors are non-fatal — models run on CPU.
+    /// `.cpuAndNeuralEngine` avoids GPU VRAM duplication — saves ~200-400MB on device.
+    /// ANE has its own memory pool that doesn't count against app's RAM budget.
+    #if targetEnvironment(simulator)
     private let coreMLUnits: MLComputeUnits = .all
+    #else
+    private let coreMLUnits: MLComputeUnits = .cpuAndNeuralEngine
+    #endif
 
     func loadModels() async {
         isLoading = true
         errorMessage = nil
         loadProgress = 0
 
-        // Models loaded sequentially with autoreleasepool between each
-        // to free CoreML compilation temporaries before loading next.
-        // Total resident: ~960 MB (VAD 1 + ASR 332 + LLM 318 + TTS 310).
-        // Peak during compilation: ~model_size * 2 (temp copy).
+        // Sequential loading with .cpuAndNeuralEngine to minimize memory.
+        // ANE has its own memory pool — doesn't count against app RAM budget.
         let units = coreMLUnits
 
         do {
@@ -118,19 +117,17 @@ final class CompanionChatViewModel {
                 }
             }.value
 
-            // 4. TTS (~310 MB) — skip if using system TTS to save memory
-            if !useSystemTTS {
-                loadingStatus = "Kokoro TTS..."
-                loadProgress = 0.6
-                ttsModel = try await Task.detached {
-                    try await KokoroTTSModel.fromPretrained { progress, status in
-                        DispatchQueue.main.async { [weak self] in
-                            self?.loadProgress = 0.6 + progress * 0.3
-                            if !status.isEmpty { self?.loadingStatus = "Kokoro: \(status)" }
-                        }
+            // 4. TTS (~310 MB)
+            loadingStatus = "Kokoro TTS..."
+            loadProgress = 0.6
+            ttsModel = try await Task.detached {
+                try await KokoroTTSModel.fromPretrained { progress, status in
+                    DispatchQueue.main.async { [weak self] in
+                        self?.loadProgress = 0.6 + progress * 0.3
+                        if !status.isEmpty { self?.loadingStatus = "Kokoro: \(status)" }
                     }
-                }.value
-            }
+                }
+            }.value
 
             loadProgress = 1.0
             loadingStatus = "Ready"
@@ -145,8 +142,7 @@ final class CompanionChatViewModel {
 
     func startListening() {
         guard !isListening else { return }
-        guard let vad = vadModel, let asr = asrModel, let chat = chatModel else { return }
-        let tts: SpeechGenerationModel = ttsModel ?? DummyTTS()
+        guard let vad = vadModel, let asr = asrModel, let tts = ttsModel, let chat = chatModel else { return }
 
         let sampling = ChatSamplingConfig(
             temperature: 0.3, topK: 20, maxTokens: 15, repetitionPenalty: 1.5)
@@ -265,12 +261,10 @@ final class CompanionChatViewModel {
             pipelineLog.warning("Event: responseAudioDelta \(samples.count) samples")
             pipelineState = "speaking..."
             recordTTSSamples(samples, sampleRate: 24000)
-            if !useSystemTTS {
-                do {
-                    try player.play(samples: samples, sampleRate: 24000)
-                } catch {
-                    pipelineLog.error("Playback error: \(error)")
-                }
+            do {
+                try player.play(samples: samples, sampleRate: 24000)
+            } catch {
+                pipelineLog.error("Playback error: \(error)")
             }
 
         case .responseDone:
@@ -278,25 +272,7 @@ final class CompanionChatViewModel {
             isGenerating = false
             let responseText = currentResponseText
             currentAssistantIdx = nil
-            if useSystemTTS {
-                if speakEnabled, !responseText.isEmpty {
-                    stopMicrophone()
-                    if speechDelegate == nil {
-                        speechDelegate = SpeechFinishedDelegate { [weak self] in
-                            DispatchQueue.main.async {
-                                self?.startMicrophone()
-                                self?.resumeAfterResponse()
-                            }
-                        }
-                    }
-                    speechSynth.delegate = speechDelegate
-                    let utterance = AVSpeechUtterance(string: responseText)
-                    utterance.rate = AVSpeechUtteranceDefaultSpeechRate
-                    speechSynth.speak(utterance)
-                } else {
-                    resumeAfterResponse()
-                }
-            } else if player.isPlaying {
+            if player.isPlaying {
                 waitingForPlaybackEnd = true
             } else {
                 resumeAfterResponse()
