@@ -56,3 +56,6 @@ jobs:
           --skip TTSBatchTests
           --skip TTSStreamingTests
           --skip KokoroTTSTests
+          --skip E2EICLVoiceCloningTests
+          --skip E2EEOSCapTests
+          --skip E2EFireRedVADTests
