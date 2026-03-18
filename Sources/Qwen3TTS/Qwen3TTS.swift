@@ -128,11 +128,16 @@ public class Qwen3TTSModel {
         let t1 = CFAbsoluteTimeGetCurrent()
 
         // Stage 3: Autoregressive generation with per-step code predictor
+        // Cap max tokens based on text length to prevent runaway generation.
+        var cappedSampling = sampling
+        let textTokenCount = tokenizer.encode(text).count
+        cappedSampling.maxTokens = min(sampling.maxTokens, max(75, textTokenCount * 6))
+
         let (allCodebooks, numFrames) = generateWithCodePredictor(
             prefillEmbeds: prefillEmbeds,
             trailingTextHidden: trailingTextHidden,
             ttsPadEmbed: ttsPadEmbed,
-            sampling: sampling)
+            sampling: cappedSampling)
 
         eval(allCodebooks)
         let t2 = CFAbsoluteTimeGetCurrent()
@@ -213,11 +218,18 @@ public class Qwen3TTSModel {
         let t1 = CFAbsoluteTimeGetCurrent()
 
         // Stage 3: Autoregressive generation with per-step code predictor
+        // Cap max tokens based on text length to prevent EOS failure on short texts.
+        // At 12.5 Hz codec rate, ~3-5 codec tokens per text token is typical.
+        // Factor of 6 gives ~50% margin for slow speech / pauses.
+        var cappedSampling = sampling
+        let textTokenCount = tokenizer.encode(text).count
+        cappedSampling.maxTokens = min(sampling.maxTokens, max(75, textTokenCount * 6))
+
         let (allCodebooks, numFrames) = generateWithCodePredictor(
             prefillEmbeds: prefillEmbeds,
             trailingTextHidden: trailingTextHidden,
             ttsPadEmbed: ttsPadEmbed,
-            sampling: sampling)
+            sampling: cappedSampling)
 
         eval(allCodebooks)
         let t2 = CFAbsoluteTimeGetCurrent()
