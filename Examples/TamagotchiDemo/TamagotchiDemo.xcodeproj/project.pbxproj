@@ -22,7 +22,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		1E409FB3AD00B9F0D82DCE3B /* TamagotchiDemo.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = TamagotchiDemo.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		1E409FB3AD00B9F0D82DCE3B /* TamagotchiDemo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TamagotchiDemo.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		1F89CE951B7D9AA634C4F3DF /* DiagnosticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsView.swift; sourceTree = "<group>"; };
 		769A8EFA038D9E247CF0D207 /* CompanionChatViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionChatViewModel.swift; sourceTree = "<group>"; };
 		ADB73789636C5777730EC2F3 /* speech-swift */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "speech-swift"; path = ../..; sourceTree = SOURCE_ROOT; };
@@ -238,6 +238,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = HNTDGD2AB7;
 				INFOPLIST_FILE = TamagotchiDemo/Info.plist;
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Voice input for the companion chat";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -312,6 +313,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = HNTDGD2AB7;
 				INFOPLIST_FILE = TamagotchiDemo/Info.plist;
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Voice input for the companion chat";
 				LD_RUNPATH_SEARCH_PATHS = (

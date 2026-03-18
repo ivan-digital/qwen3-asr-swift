@@ -38,7 +38,10 @@ final class CompanionChatViewModel {
     var errorMessage: String?
     var speakEnabled = true
 
-    var modelsLoaded: Bool { chatModel != nil && ttsModel != nil && asrModel != nil && vadModel != nil }
+    var modelsLoaded: Bool { chatModel != nil && asrModel != nil && vadModel != nil && (ttsModel != nil || useSystemTTS) }
+
+    /// Use AVSpeechSynthesizer instead of Kokoro to save ~310MB RAM on device.
+    private let useSystemTTS = true
 
     let diagnostics = DiagnosticsMonitor()
 
@@ -56,10 +59,8 @@ final class CompanionChatViewModel {
     private var audioEngine: AVAudioEngine?
     private let player = StreamingAudioPlayer()
     private var waitingForPlaybackEnd = false
-    #if targetEnvironment(simulator)
     private let speechSynth = AVSpeechSynthesizer()
     private var speechDelegate: SpeechFinishedDelegate?
-    #endif
 
     private let systemPrompt = "You are Tama. Answer questions helpfully in one short sentence."
 
@@ -117,17 +118,19 @@ final class CompanionChatViewModel {
                 }
             }.value
 
-            // 4. TTS (~310 MB)
-            loadingStatus = "Kokoro TTS..."
-            loadProgress = 0.6
-            ttsModel = try await Task.detached {
-                try await KokoroTTSModel.fromPretrained { progress, status in
-                    DispatchQueue.main.async { [weak self] in
-                        self?.loadProgress = 0.6 + progress * 0.3
-                        if !status.isEmpty { self?.loadingStatus = "Kokoro: \(status)" }
+            // 4. TTS (~310 MB) — skip if using system TTS to save memory
+            if !useSystemTTS {
+                loadingStatus = "Kokoro TTS..."
+                loadProgress = 0.6
+                ttsModel = try await Task.detached {
+                    try await KokoroTTSModel.fromPretrained { progress, status in
+                        DispatchQueue.main.async { [weak self] in
+                            self?.loadProgress = 0.6 + progress * 0.3
+                            if !status.isEmpty { self?.loadingStatus = "Kokoro: \(status)" }
+                        }
                     }
-                }
-            }.value
+                }.value
+            }
 
             loadProgress = 1.0
             loadingStatus = "Ready"
@@ -142,7 +145,8 @@ final class CompanionChatViewModel {
 
     func startListening() {
         guard !isListening else { return }
-        guard let vad = vadModel, let asr = asrModel, let tts = ttsModel, let chat = chatModel else { return }
+        guard let vad = vadModel, let asr = asrModel, let chat = chatModel else { return }
+        let tts: SpeechGenerationModel = ttsModel ?? DummyTTS()
 
         let sampling = ChatSamplingConfig(
             temperature: 0.3, topK: 20, maxTokens: 15, repetitionPenalty: 1.5)
@@ -261,47 +265,42 @@ final class CompanionChatViewModel {
             pipelineLog.warning("Event: responseAudioDelta \(samples.count) samples")
             pipelineState = "speaking..."
             recordTTSSamples(samples, sampleRate: 24000)
-            #if !targetEnvironment(simulator)
-            do {
-                try player.play(samples: samples, sampleRate: 24000)
-            } catch {
-                pipelineLog.error("Playback error: \(error)")
+            if !useSystemTTS {
+                do {
+                    try player.play(samples: samples, sampleRate: 24000)
+                } catch {
+                    pipelineLog.error("Playback error: \(error)")
+                }
             }
-            #endif
 
         case .responseDone:
             pipelineLog.warning("Event: responseDone")
             isGenerating = false
             let responseText = currentResponseText
             currentAssistantIdx = nil
-            #if targetEnvironment(simulator)
-            if speakEnabled, !responseText.isEmpty {
-                // Stop mic to prevent self-listening
-                stopMicrophone()
-
-                if speechDelegate == nil {
-                    speechDelegate = SpeechFinishedDelegate { [weak self] in
-                        DispatchQueue.main.async {
-                            // Restart mic after speech ends
-                            self?.startMicrophone()
-                            self?.resumeAfterResponse()
+            if useSystemTTS {
+                if speakEnabled, !responseText.isEmpty {
+                    stopMicrophone()
+                    if speechDelegate == nil {
+                        speechDelegate = SpeechFinishedDelegate { [weak self] in
+                            DispatchQueue.main.async {
+                                self?.startMicrophone()
+                                self?.resumeAfterResponse()
+                            }
                         }
                     }
+                    speechSynth.delegate = speechDelegate
+                    let utterance = AVSpeechUtterance(string: responseText)
+                    utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+                    speechSynth.speak(utterance)
+                } else {
+                    resumeAfterResponse()
                 }
-                speechSynth.delegate = speechDelegate
-                let utterance = AVSpeechUtterance(string: responseText)
-                utterance.rate = AVSpeechUtteranceDefaultSpeechRate
-                speechSynth.speak(utterance)
-            } else {
-                resumeAfterResponse()
-            }
-            #else
-            if player.isPlaying {
+            } else if player.isPlaying {
                 waitingForPlaybackEnd = true
             } else {
                 resumeAfterResponse()
             }
-            #endif
 
         case .toolCallStarted(let name):
             pipelineLog.info("Tool call: \(name)")
@@ -559,17 +558,21 @@ final class CompanionChatViewModel {
 
 // MARK: - AVSpeechSynthesizer Delegate
 
-#if targetEnvironment(simulator)
 /// Notifies when all queued utterances finish playing.
 private class SpeechFinishedDelegate: NSObject, AVSpeechSynthesizerDelegate {
     let onFinished: () -> Void
     init(onFinished: @escaping () -> Void) { self.onFinished = onFinished }
 
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        // Only resume when no more utterances are queued
         if !synthesizer.isSpeaking {
             onFinished()
         }
     }
 }
-#endif
+
+// MARK: - Dummy TTS (returns silence, used when system TTS handles audio)
+
+private final class DummyTTS: SpeechGenerationModel {
+    let sampleRate = 24000
+    func generate(text: String, language: String?) async throws -> [Float] { [] }
+}
