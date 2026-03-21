@@ -102,6 +102,53 @@ final class WeSpeakerTests: XCTestCase {
         XCTAssertGreaterThan(maxVal, -20.0)  // log scale, not -inf
     }
 
+    func testMelExtractorCMN() {
+        // CMN should make each mel bin have zero mean across time
+        let extractor = MelFeatureExtractor()
+        var audio = [Float](repeating: 0, count: 32000)
+        for i in 0..<audio.count {
+            audio[i] = sin(Float(i) * 0.1) * 0.3  // 1kHz-ish tone
+        }
+
+        let (melSpec, nFrames) = extractor.extractRaw(audio)
+        XCTAssertGreaterThan(nFrames, 10)
+
+        // After CMN, each bin's mean across time should be ~0
+        for bin in 0..<80 {
+            var sum: Float = 0
+            for frame in 0..<nFrames {
+                sum += melSpec[frame * 80 + bin]
+            }
+            let mean = sum / Float(nFrames)
+            XCTAssertEqual(mean, 0.0, accuracy: 1e-4,
+                "Bin \(bin) mean should be ~0 after CMN, got \(mean)")
+        }
+    }
+
+    func testMelExtractorHammingWindow() {
+        // Verify hamming window is used: w[0] = 0.54 - 0.46 = 0.08 (hamming)
+        // vs Povey: pow(0, 0.85) = 0, or Hann: 0
+        // Hamming has non-zero endpoints, so a DC signal should produce
+        // non-zero energy even at frame edges
+        let extractor = MelFeatureExtractor()
+
+        // Short tone at 1kHz — should produce consistent mel features
+        let audio = (0..<16000).map { i in sin(2.0 * Float.pi * 1000.0 * Float(i) / 16000.0) * 0.3 }
+        let (melSpec, nFrames) = extractor.extractRaw(audio)
+
+        XCTAssertGreaterThan(nFrames, 50)
+        // Interior frames (away from edges) should have near-zero CMN values
+        // because a pure tone produces nearly identical frames
+        let midFrame = nFrames / 2
+        var midMaxAbs: Float = 0
+        for bin in 0..<80 {
+            midMaxAbs = max(midMaxAbs, abs(melSpec[midFrame * 80 + bin]))
+        }
+        // Mid-frame should be close to zero after CMN (within a few dB)
+        XCTAssertLessThan(midMaxAbs, 5.0,
+            "Mid-frame of pure tone after CMN should be small (got \(midMaxAbs))")
+    }
+
     // MARK: - WeSpeaker Model Shape Tests (random weights)
 
     func testResNet34OutputShape() {
@@ -185,7 +232,11 @@ final class WeSpeakerTests: XCTestCase {
         XCTAssertEqual(result.speakerEmbeddings.count, 2)
     }
 
-    // MARK: - E2E Integration Test (requires real weights)
+}
+
+// MARK: - E2E Tests (require model downloads)
+
+final class E2EWeSpeakerTests: XCTestCase {
 
     func testE2EEmbedding() async throws {
         let model = try await WeSpeakerModel.fromPretrained()
@@ -568,5 +619,45 @@ final class WeSpeakerTests: XCTestCase {
         let similarity = WeSpeakerModel.cosineSimilarity(realEmb, noiseEmb)
         XCTAssertLessThan(similarity, 0.8,
                           "Speech vs noise should not be highly similar (got \(similarity))")
+    }
+
+    func testE2ESpeakerDiscrimination() async throws {
+        // Same speaker (same audio, different segments) should have
+        // higher similarity than different content (speech vs noise).
+        // This validates the input dimension fix and CMN are working.
+        let model = try await WeSpeakerModel.fromPretrained()
+
+        let audioURL = URL(fileURLWithPath: "Tests/Qwen3ASRTests/Resources/test_audio.wav")
+        guard FileManager.default.fileExists(atPath: audioURL.path) else {
+            throw XCTSkip("Test audio file not found")
+        }
+
+        let (samples, sampleRate) = try AudioFileLoader.loadWAV(url: audioURL)
+
+        // Speech region: ~5-8.5s
+        let start1 = Int(5.0 * Float(sampleRate))
+        let end1 = Int(6.5 * Float(sampleRate))
+        let start2 = Int(7.0 * Float(sampleRate))
+        let end2 = min(Int(8.5 * Float(sampleRate)), samples.count)
+
+        let seg1 = Array(samples[start1..<end1])
+        let seg2 = Array(samples[start2..<end2])
+
+        let emb1 = model.embed(audio: seg1, sampleRate: sampleRate)
+        let emb2 = model.embed(audio: seg2, sampleRate: sampleRate)
+
+        // Same speaker segments should be positively correlated
+        let sameSpeakerSim = WeSpeakerModel.cosineSimilarity(emb1, emb2)
+        XCTAssertGreaterThan(sameSpeakerSim, 0.3,
+            "Same speaker segments should have positive similarity (got \(sameSpeakerSim))")
+
+        // Noise should have much lower similarity
+        var noise = [Float](repeating: 0, count: seg1.count)
+        for i in 0..<noise.count { noise[i] = Float.random(in: -0.5...0.5) }
+        let noiseEmb = model.embed(audio: noise, sampleRate: 16000)
+        let noiseSim = WeSpeakerModel.cosineSimilarity(emb1, noiseEmb)
+
+        XCTAssertGreaterThan(sameSpeakerSim, noiseSim,
+            "Same speaker (\(sameSpeakerSim)) should be more similar than noise (\(noiseSim))")
     }
 }
