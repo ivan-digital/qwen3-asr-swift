@@ -173,16 +173,21 @@ class WeSpeakerCoreML(nn.Module):
         Returns:
             embedding: [1, 256] L2-normalized speaker embedding
         """
-        x = F.relu(self.conv1(mel))
+        # Transpose spatial dims: (T, 80) → (80, T)
+        # WeSpeaker weights are trained with freq as height, time as width.
+        # Original Python: permute(B,T,F) → (B,F,T) → unsqueeze → [B,1,F,T]
+        x = mel.permute(0, 1, 3, 2)  # [1, 1, 80, T]
+
+        x = F.relu(self.conv1(x))
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)
         x = self.layer4(x)
-        # x: [1, 256, T/8, 10]
+        # x: [1, 256, 10, T/8]
 
-        # Reshape for stats pooling: [1, 256 * 10, T/8] = [1, 2560, T/8]
-        B, C, T, F_ = x.shape
-        x = x.reshape(B, C * F_, T)
+        # x: [1, 256, 10, T/8] (after permute: freq=10, time=T/8)
+        # Reshape for stats pooling: [1, 2560, T/8]
+        x = x.reshape(1, 2560, -1)
 
         # Stats pooling: mean + std over time
         mean = x.mean(dim=2)  # [1, 2560]

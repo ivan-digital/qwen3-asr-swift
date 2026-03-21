@@ -25,9 +25,11 @@ extension WeSpeakerModel {
         let targetLength = Self.enumeratedMelLengths.first { $0 >= nFrames }
             ?? Self.enumeratedMelLengths.last!
 
-        // Create input: [1, 1, targetLength, 80] float16
+        // Create input: [1, targetLength, 80] float16
+        // The CoreML model internally permutes (T,80) → (80,T) to match
+        // the trained weight orientation (freq as height, time as width).
         let melArray = try MLMultiArray(
-            shape: [1, 1, targetLength as NSNumber, 80],
+            shape: [1, targetLength as NSNumber, 80],
             dataType: .float16
         )
         let melPtr = melArray.dataPointer.assumingMemoryBound(to: Float16.self)
@@ -60,6 +62,12 @@ extension WeSpeakerModel {
         let embPtr = embArray.dataPointer.assumingMemoryBound(to: Float16.self)
         for i in 0..<256 {
             embedding[i] = Float(embPtr[i])
+        }
+
+        // L2 normalize
+        let norm = sqrt(embedding.reduce(Float(0)) { $0 + $1 * $1 })
+        if norm > 1e-10 {
+            for i in 0..<256 { embedding[i] /= norm }
         }
 
         return embedding
