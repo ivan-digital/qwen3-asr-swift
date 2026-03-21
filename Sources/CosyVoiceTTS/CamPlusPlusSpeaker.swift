@@ -100,8 +100,8 @@ public final class CamPlusPlusSpeaker {
         }
 
         // Fixed input size: 500 frames (~5s at 16kHz).
-        // The CoreML model uses fixed shape to avoid dynamic reshape issues.
-        // Pad short audio with zeros, truncate long audio.
+        // For short audio: tile mel frames to fill 500 (avoids zero-padding dilution).
+        // For long audio: center-crop to 500 frames (keeps most representative segment).
         let targetFrames = 500
 
         // Create input: [1, 500, 80] float16
@@ -111,15 +111,21 @@ public final class CamPlusPlusSpeaker {
         )
         let melPtr = melArray.dataPointer.assumingMemoryBound(to: Float16.self)
 
-        let copyFrames = min(nFrames, targetFrames)
-        let copyCount = copyFrames * 80
-        for i in 0..<copyCount {
-            melPtr[i] = Float16(melSpec[i])
-        }
-        // Zero-pad remaining frames
-        let totalElements = targetFrames * 80
-        for i in copyCount..<totalElements {
-            melPtr[i] = 0
+        if nFrames >= targetFrames {
+            // Center-crop: take the middle 500 frames
+            let offset = (nFrames - targetFrames) / 2
+            for i in 0..<(targetFrames * 80) {
+                let frame = i / 80
+                let bin = i % 80
+                melPtr[i] = Float16(melSpec[(offset + frame) * 80 + bin])
+            }
+        } else {
+            // Tile: repeat mel frames to fill targetFrames
+            for i in 0..<(targetFrames * 80) {
+                let frame = (i / 80) % nFrames
+                let bin = i % 80
+                melPtr[i] = Float16(melSpec[frame * 80 + bin])
+            }
         }
 
         let input = try MLDictionaryFeatureProvider(dictionary: [
