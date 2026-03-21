@@ -127,21 +127,29 @@ class WeSpeakerNetwork: Module {
     /// - Returns: `[B, 256]` L2-normalized speaker embedding
     func callAsFunction(_ mel: MLXArray) -> MLXArray {
         // mel: [B, T, 80, 1]
-        var x = relu(conv1(mel))
+        // Python WeSpeaker permutes input: (B,T,F) -> (B,F,T) -> (B,1,F,T)
+        // In MLX NHWC: (B,1,F,T) maps to [B, F, T, 1]
+        var x = mel.transposed(0, 2, 1, 3)  // [B, 80, T, 1] = [B, F, T, C]
+
+        x = relu(conv1(x))
 
         // ResNet layers
         for block in layer1 { x = block(x) }
         for block in layer2 { x = block(x) }
         for block in layer3 { x = block(x) }
         for block in layer4 { x = block(x) }
-        // x: [B, T/8, 10, 256]
+        // x: [B, F'=10, T'=T/8, 256] (NHWC)
+        // Corresponds to Python's [B, 256, F'=10, T'=T/8] (NCHW)
 
-        // Reshape for statistics pooling: [B, T/8, 10 * 256] = [B, T/8, 2560]
+        // Flatten freq and channels: [B, 10, T/8, 256] → [B, T/8, 10*256]
+        // Match Python: [B, 256, 10, T'] → [B, 256*10, T'] via reshape (C*F order)
+        // MLX: transpose to [B, T/8, 256, 10] then reshape
         let B = x.dim(0)
-        let T = x.dim(1)
-        x = x.reshaped(B, T, -1)
+        let Tp = x.dim(2)  // T/8 (time is dim 2 now)
+        x = x.transposed(0, 2, 3, 1)  // [B, T/8, 256, 10]
+        x = x.reshaped(B, Tp, -1)  // [B, T/8, 2560] in C*F order
 
-        // Statistics pooling: mean + std over time → [B, 5120]
+        // Statistics pooling: mean + std over time (dim=1) → [B, 5120]
         let mean = x.mean(axis: 1)  // [B, 2560]
         let variance = x.variance(axis: 1)  // [B, 2560]
         let std = sqrt(variance + 1e-10)

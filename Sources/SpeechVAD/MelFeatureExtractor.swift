@@ -22,11 +22,11 @@ class MelFeatureExtractor {
     private var melFilterbank: [Float]  // [nMels, nBins]
 
     init() {
-        // Povey window (Kaldi default): pow(0.5 - 0.5*cos(2π*i/(N-1)), 0.85)
+        // Hamming window: matches pyannote/wespeaker inference pipeline
+        // (pyannote uses window_type='hamming', NOT Kaldi default 'povey')
         window = [Float](repeating: 0, count: 400)
         for i in 0..<400 {
-            let hann = 0.5 - 0.5 * cos(2.0 * Float.pi * Float(i) / Float(399))
-            window[i] = pow(hann, 0.85)
+            window[i] = 0.54 - 0.46 * cos(2.0 * Float.pi * Float(i) / Float(399))
         }
 
         guard let setup = vDSP_create_fftsetup(9, FFTRadix(kFFTRadix2)) else {
@@ -200,6 +200,28 @@ class MelFeatureExtractor {
         var epsilon: Float = 1e-10
         vDSP_vclip(melSpec, 1, &epsilon, [Float.greatestFiniteMagnitude], &melSpec, 1, vDSP_Length(count))
         vvlogf(&melSpec, melSpec, &countN)
+
+        // CMN (Cepstral Mean Normalization): subtract per-bin temporal mean.
+        // Matches WeSpeaker Python: feat = feat - torch.mean(feat, dim=0)
+        // Removes channel-specific spectral shape, critical for speaker discrimination.
+        if nFrames > 0 {
+            // Compute per-bin mean
+            var binMeans = [Float](repeating: 0, count: nMels)
+            for frame in 0..<nFrames {
+                let base = frame * nMels
+                for bin in 0..<nMels {
+                    binMeans[bin] += melSpec[base + bin]
+                }
+            }
+            let invFrames = 1.0 / Float(nFrames)
+            vDSP_vsmul(binMeans, 1, [invFrames], &binMeans, 1, vDSP_Length(nMels))
+
+            // Subtract mean from each frame
+            for frame in 0..<nFrames {
+                let base = frame * nMels
+                vDSP_vsub(binMeans, 1, &melSpec + base, 1, &melSpec + base, 1, vDSP_Length(nMels))
+            }
+        }
 
         return (melSpec, nFrames)
     }

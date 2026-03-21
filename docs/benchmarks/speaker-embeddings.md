@@ -14,13 +14,9 @@
 
 | Engine | Dim | Mean | Std | Min |
 |--------|-----|------|-----|-----|
-| WeSpeaker MLX | 256 | 64 ms | 4.3 ms | 55 ms |
-| WeSpeaker CoreML | 256 | 143 ms | 2.7 ms | 140 ms |
-| CAM++ CoreML | 192 | 12 ms | 0.3 ms | 11 ms |
-
-CAM++ is **5x faster** than WeSpeaker MLX and **12x faster** than WeSpeaker CoreML. The 192-dim model runs almost entirely on the Neural Engine with minimal overhead.
-
-WeSpeaker CoreML is slower than MLX because the ResNet34 architecture maps poorly to the Neural Engine — convolutions with statistics pooling favor GPU execution.
+| WeSpeaker MLX | 256 | 65 ms | 3.9 ms | 60 ms |
+| WeSpeaker CoreML | 256 | 148 ms | 10.7 ms | 141 ms |
+| CAM++ CoreML | 192 | 12 ms | 0.6 ms | 11 ms |
 
 ## Embedding Quality (VoxConverse)
 
@@ -30,40 +26,22 @@ Cosine similarity between segment-level embeddings extracted from VoxConverse te
 - **Inter-speaker**: cosine similarity between segments of **different** speakers
 - **Separation**: intra - inter (higher = more discriminative)
 
-| Engine | Intra (mean ± std) | Inter (mean ± std) | Separation |
+| Engine | Intra (mean +/- std) | Inter (mean +/- std) | Separation |
 |--------|-------------------|-------------------|------------|
-| WeSpeaker MLX | 0.929 ± 0.056 | 0.920 ± 0.050 | 0.008 |
-| WeSpeaker CoreML | 0.896 ± 0.057 | 0.892 ± 0.055 | 0.005 |
-| CAM++ CoreML | 0.693 ± 0.162 | 0.436 ± 0.132 | **0.257** |
+| WeSpeaker MLX | 0.726 +/- 0.210 | 0.142 +/- 0.145 | **0.584** |
+| CAM++ CoreML | 0.693 +/- 0.162 | 0.436 +/- 0.132 | 0.257 |
 
-### Key findings
+WeSpeaker MLX produces the most discriminative embeddings on same-channel audio, with 0.584 separation — matching the Python pyannote reference (0.577 on same segments). Cosine similarity of 0.974 between Swift and Python embeddings on identical audio.
 
-- **WeSpeaker has near-zero separation** on conversational audio (0.008). Both same-speaker and different-speaker segments produce very similar embeddings (>0.92 cosine). This explains the poor clustering in diarization (#145) — agglomerative clustering cannot reliably distinguish speakers when embeddings are this similar.
+### Bugs fixed during benchmarking
 
-- **CAM++ has 30x better separation** (0.257 vs 0.008). The inter-speaker mean drops to 0.44, creating clear separation from the intra-speaker mean of 0.69. This makes it viable for speaker clustering.
+The initial benchmark revealed near-zero separation (0.008) for WeSpeaker MLX. Root cause analysis found two implementation bugs:
 
-- **WeSpeaker's high inter-speaker similarity** (0.92) on VoxConverse is an artifact of the evaluation context: all speakers share the same recording environment, microphone, and acoustic conditions. WeSpeaker captures channel characteristics as much as speaker identity. On VoxCeleb (diverse recording conditions), WeSpeaker achieves EER < 1%.
+1. **Input dimension ordering**: Python WeSpeaker permutes `(B,T,F)` → `(B,F,T)` before conv — frequency is the height dimension. Our implementation had time as height, causing the ResNet to process spatial dimensions incorrectly.
 
-- **CAM++ is more robust to channel effects** — its lower absolute similarity values indicate it focuses more on speaker-specific features and less on shared acoustic conditions.
+2. **Feature preprocessing**: Missing CMN (cepstral mean normalization) and wrong window function. pyannote uses hamming window + global mean subtraction over time. We had Povey window and no CMN.
 
-### Implications for diarization
-
-The WeSpeaker separation gap of 0.008 means standard agglomerative clustering (cosine distance threshold) cannot reliably separate speakers in same-channel audio. Options:
-1. **Use CAM++ for diarization clustering** — 30x better separation
-2. **Per-segment embedding extraction** instead of per-window (#145)
-3. **Spectral clustering** which can handle smaller margins
-
-## VoxCeleb1-O Speaker Verification
-
-Standard speaker verification benchmark (37,720 trial pairs from 40 speakers). Requires VoxCeleb1 test audio download.
-
-| Engine | EER% | minDCF (p=0.01) | Positive Mean Sim | Negative Mean Sim |
-|--------|------|-----------------|-------------------|-------------------|
-| WeSpeaker MLX | — | — | — | — |
-
-*Results pending VoxCeleb1 audio download.*
-
-Published WeSpeaker ResNet34-LM numbers: **EER 0.56%** on VoxCeleb1-O (from WeSpeaker paper). Our MLX port should match within quantization tolerance.
+After fixing both issues, Swift embeddings match Python with 0.974 cosine similarity.
 
 ## Reproduction
 
