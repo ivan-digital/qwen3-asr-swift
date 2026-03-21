@@ -18,11 +18,11 @@
 	<string>1.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
-	<key>UILaunchScreen</key>
-	<dict/>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Voice input for the companion chat</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Speech recognition for voice commands</string>
+	<string>On-device speech recognition for the companion chat</string>
+	<key>UILaunchScreen</key>
+	<dict/>
 </dict>
 </plist>

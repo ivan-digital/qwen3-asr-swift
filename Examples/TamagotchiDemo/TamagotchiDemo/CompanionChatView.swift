@@ -85,7 +85,7 @@ struct CompanionChatView: View {
                 Text("On-Device Companion")
                     .font(.title2.bold())
 
-                Text("Parakeet ASR + Silero VAD + Qwen3 Chat + Kokoro TTS")
+                Text("On-device voice pipeline\nASR + VAD + LLM + TTS")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)

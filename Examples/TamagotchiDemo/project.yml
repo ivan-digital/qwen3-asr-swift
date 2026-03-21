@@ -19,6 +19,7 @@ targets:
       properties:
         UILaunchScreen: {}
         NSMicrophoneUsageDescription: Voice input for the companion chat
+        NSSpeechRecognitionUsageDescription: On-device speech recognition for the companion chat
     settings:
       PRODUCT_BUNDLE_IDENTIFIER: audio.soniqo.TamagotchiDemo
       INFOPLIST_KEY_NSMicrophoneUsageDescription: "Voice input for the companion chat"
