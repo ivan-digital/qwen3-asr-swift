@@ -288,7 +288,11 @@ let package = Package(
         .testTarget(
             name: "SpeechCoreTests",
             dependencies: [
-                "SpeechCore"
+                "SpeechCore",
+                "AudioCommon",
+                "SpeechVAD",
+                "KokoroTTS",
+                "ParakeetASR"
             ]
         )
     ]
