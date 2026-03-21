@@ -75,9 +75,9 @@ final class SortformerCoreMLModel {
         let result = try model.prediction(from: input)
 
         // Extract outputs
-        let predsArray = result.featureValue(for: "speaker_preds")!.multiArrayValue!
-        let embsArray = result.featureValue(for: "chunk_pre_encoder_embs")!.multiArrayValue!
-        let embsLenArray = result.featureValue(for: "chunk_pre_encoder_lengths")!.multiArrayValue!
+        let predsArray = result.featureValue(for: "speaker_preds_out")!.multiArrayValue!
+        let embsArray = result.featureValue(for: "chunk_pre_encoder_embs_out")!.multiArrayValue!
+        let embsLenArray = result.featureValue(for: "chunk_pre_encoder_lengths_out")!.multiArrayValue!
 
         let predsShape = (0..<predsArray.shape.count).map { predsArray.shape[$0].intValue }
         let embsShape = (0..<embsArray.shape.count).map { embsArray.shape[$0].intValue }

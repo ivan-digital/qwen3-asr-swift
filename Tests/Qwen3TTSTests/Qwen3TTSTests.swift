@@ -297,7 +297,7 @@ final class SpeakerConfigTests: XCTestCase {
 
 // MARK: - Instruct Token Tests
 
-final class InstructTokenTests: XCTestCase {
+final class E2EInstructTokenTests: XCTestCase {
 
     static let ttsModelId = "aufklarer/Qwen3-TTS-12Hz-0.6B-Base-MLX-4bit"
     private static var _sharedModel: Qwen3TTSModel?
