@@ -14,6 +14,12 @@ final class KokoroTTSTests: XCTestCase {
         XCTAssertNotEqual(KokoroTTSModel.int4iOSModelId, KokoroTTSModel.defaultModelId)
     }
 
+    func testInt8iOSModelId() {
+        XCTAssertEqual(KokoroTTSModel.int8iOSModelId, "aufklarer/Kokoro-82M-CoreML-INT8")
+        XCTAssertNotEqual(KokoroTTSModel.int8iOSModelId, KokoroTTSModel.defaultModelId)
+        XCTAssertNotEqual(KokoroTTSModel.int8iOSModelId, KokoroTTSModel.int4iOSModelId)
+    }
+
     // MARK: - Configuration Tests
 
     func testDefaultConfig() {

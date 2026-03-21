@@ -126,12 +126,12 @@ final class CompanionChatViewModel {
             }
         }
 
-        // TTS factory: Kokoro on standard+, INT4 on constrained, system TTS on minimal
+        // TTS factory: Kokoro FP16 on full, INT8 on standard/constrained, system TTS on minimal
         let ttsFactory: () async throws -> SpeechGenerationModel = {
             if tier.useCoreMLTTS {
-                let modelId = (tier == .constrained)
-                    ? KokoroTTSModel.int4iOSModelId
-                    : KokoroTTSModel.defaultModelId
+                let modelId = (tier == .full)
+                    ? KokoroTTSModel.defaultModelId
+                    : KokoroTTSModel.int8iOSModelId
                 return try await KokoroTTSModel.fromPretrained(modelId: modelId) { _, _ in }
             } else {
                 return SystemTTS()
