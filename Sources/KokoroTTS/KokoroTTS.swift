@@ -186,6 +186,7 @@ public final class KokoroTTSModel {
         modelId: String = defaultModelId,
         voice: String = defaultVoice,
         maxBuckets: Int = 1,
+        computeUnits: MLComputeUnits = .all,
         progressHandler: ((Double, String) -> Void)? = nil
     ) async throws -> KokoroTTSModel {
         AudioLog.modelLoading.info("Loading Kokoro model: \(modelId)")
@@ -279,7 +280,7 @@ public final class KokoroTTSModel {
         progressHandler?(0.85, "Loading CoreML models...")
         let network: KokoroNetwork
         do {
-            network = try KokoroNetwork(directory: cacheDir, maxBuckets: maxBuckets)
+            network = try KokoroNetwork(directory: cacheDir, computeUnits: computeUnits, maxBuckets: maxBuckets)
             AudioLog.modelLoading.debug("Loaded buckets: \(network.availableBuckets.map { $0.modelName })")
         } catch {
             throw AudioModelError.modelLoadFailed(

@@ -111,17 +111,19 @@ final class CompanionChatViewModel {
         pipeline = VoicePipeline(
             sttFactory: {
                 try await ParakeetASRModel.fromPretrained(
-                    modelId: ParakeetASRModel.int8iOSModelId) { _, _ in }
+                    modelId: ParakeetASRModel.int8iOSModelId,
+                    computeUnits: .cpuAndNeuralEngine  // Skip GPU plan compilation — saves memory + startup
+                ) { _, _ in }
             },
             ttsFactory: {
                 try await KokoroTTSModel.fromPretrained(
                     modelId: KokoroTTSModel.int8iOSModelId,
-                    maxBuckets: 1  // Only load smallest (5s) — pipeline responses are short
+                    computeUnits: .cpuAndNeuralEngine  // Skip GPU plan — saves memory
                 ) { _, _ in }
             },
             vad: vad,
             llmFactory: { [weak self] in
-                let chat = try await Qwen3ChatModel.fromPretrained(computeUnits: .all) { _, _ in }
+                let chat = try await Qwen3ChatModel.fromPretrained(computeUnits: .cpuAndNeuralEngine) { _, _ in }
                 let llm = Qwen3PipelineLLM(model: chat, systemPrompt: sysPrompt, sampling: sampling)
                 llm.onToken = { token in
                     DispatchQueue.main.async { self?.appendToken(token) }

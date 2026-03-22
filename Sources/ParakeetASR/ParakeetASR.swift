@@ -179,6 +179,7 @@ public class ParakeetASRModel {
     /// - Returns: Initialized model ready for transcription
     public static func fromPretrained(
         modelId: String = defaultModelId,
+        computeUnits: MLComputeUnits = .all,
         progressHandler: ((Double, String) -> Void)? = nil
     ) async throws -> ParakeetASRModel {
         AudioLog.modelLoading.info("Loading Parakeet model: \(modelId)")
@@ -241,7 +242,7 @@ public class ParakeetASRModel {
         // Step 5: Load CoreML models (encoder, decoder, joint — no preprocessor)
         progressHandler?(0.80, "Loading CoreML models...")
         let encoder = try loadCoreMLModel(
-            name: "encoder", from: cacheDir, computeUnits: .all)
+            name: "encoder", from: cacheDir, computeUnits: computeUnits)
         progressHandler?(0.90, "Loading decoder...")
         let decoder = try loadCoreMLModel(
             name: "decoder", from: cacheDir, computeUnits: .cpuAndNeuralEngine)
