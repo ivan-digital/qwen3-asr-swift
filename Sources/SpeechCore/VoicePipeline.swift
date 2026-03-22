@@ -125,6 +125,8 @@ private final class STTBridge {
     var model: SpeechRecognitionModel {
         if let m = _model { return m }
         guard let factory else { fatalError("STTBridge: no model and no factory") }
+        let before = memoryMB()
+        pipeLog("[MEM] STT loading... (\(before)MB)")
         let sem = DispatchSemaphore(value: 0)
         var loaded: SpeechRecognitionModel?
         Task {
@@ -133,12 +135,15 @@ private final class STTBridge {
         }
         sem.wait()
         _model = loaded
+        pipeLog("[MEM] STT loaded: \(before)MB → \(memoryMB())MB (+\(memoryMB() - before)MB)")
         return _model!
     }
 
     func unload() {
-        guard factory != nil else { return }  // Don't unload preloaded models
+        guard factory != nil else { return }
+        let before = memoryMB()
         _model = nil
+        pipeLog("[MEM] STT unloaded: \(before)MB → \(memoryMB())MB")
     }
 
     var isLoaded: Bool { _model != nil }
@@ -176,6 +181,8 @@ private final class TTSBridge {
     var model: SpeechGenerationModel {
         if let m = _model { return m }
         guard let factory else { fatalError("TTSBridge: no model and no factory") }
+        let before = memoryMB()
+        pipeLog("[MEM] TTS loading... (\(before)MB)")
         let sem = DispatchSemaphore(value: 0)
         var loaded: SpeechGenerationModel?
         Task {
@@ -184,12 +191,15 @@ private final class TTSBridge {
         }
         sem.wait()
         _model = loaded
+        pipeLog("[MEM] TTS loaded: \(before)MB → \(memoryMB())MB (+\(memoryMB() - before)MB)")
         return _model!
     }
 
     func unload() {
         guard factory != nil else { return }
+        let before = memoryMB()
         _model = nil
+        pipeLog("[MEM] TTS unloaded: \(before)MB → \(memoryMB())MB")
     }
 
     var isLoaded: Bool { _model != nil }
@@ -220,6 +230,8 @@ private final class LLMBridge {
     var model: PipelineLLM {
         if let m = _model { return m }
         guard let factory else { fatalError("LLMBridge: no model and no factory") }
+        let before = memoryMB()
+        pipeLog("[MEM] LLM loading... (\(before)MB)")
         let sem = DispatchSemaphore(value: 0)
         var loaded: PipelineLLM?
         Task {
@@ -228,13 +240,16 @@ private final class LLMBridge {
         }
         sem.wait()
         _model = loaded
+        pipeLog("[MEM] LLM loaded: \(before)MB → \(memoryMB())MB (+\(memoryMB() - before)MB)")
         return _model!
     }
 
     func unload() {
         guard factory != nil else { return }
+        let before = memoryMB()
         _model?.cancel()
         _model = nil
+        pipeLog("[MEM] LLM unloaded: \(before)MB → \(memoryMB())MB")
     }
 
     func cancel() {
@@ -553,7 +568,7 @@ public final class VoicePipeline {
             pipeLog("[EVT] sessionCreated [MEM: \(memoryMB())MB]")
             event = .sessionCreated
         case SC_EVENT_SPEECH_STARTED:
-            pipeLog("[EVT] speechStarted")
+            pipeLog("[EVT] speechStarted [MEM: \(memoryMB())MB]")
             event = .speechStarted
         case SC_EVENT_SPEECH_ENDED:
             pipeLog("[EVT] speechEnded")
@@ -588,7 +603,7 @@ public final class VoicePipeline {
         case SC_EVENT_RESPONSE_AUDIO_DELTA:
             event = .responseAudioDelta(samples: pcm16ToFloat32(e.audio_data, count: e.audio_data_length))
         case SC_EVENT_RESPONSE_DONE:
-            pipeLog("[EVT] responseDone")
+            pipeLog("[EVT] responseDone [MEM: \(memoryMB())MB]")
             // Auto-unload TTS after playback — free memory before next STT
             if bridge.autoUnload {
                 pipeLog("[MEM] before TTS unload: \(memoryMB())MB")
