@@ -590,12 +590,7 @@ public final class VoicePipeline {
             event = .transcriptionCompleted(text: text, language: lang, confidence: e.confidence)
         case SC_EVENT_RESPONSE_CREATED:
             pipeLog("[EVT] responseCreated")
-            // Auto-unload LLM before TTS loads — free memory for TTS compilation
-            if bridge.autoUnload {
-                pipeLog("[MEM] before LLM unload: \(memoryMB())MB")
-                bridge.llmBridge?.unload()
-                pipeLog("[MEM] after LLM unload: \(memoryMB())MB")
-            }
+            // LLM stays loaded — keep system prompt cache warm for fast next turn
             event = .responseCreated
         case SC_EVENT_RESPONSE_INTERRUPTED:
             pipeLog("[EVT] responseInterrupted")
@@ -604,8 +599,8 @@ public final class VoicePipeline {
             event = .responseAudioDelta(samples: pcm16ToFloat32(e.audio_data, count: e.audio_data_length))
         case SC_EVENT_RESPONSE_DONE:
             pipeLog("[EVT] responseDone [MEM: \(memoryMB())MB]")
-            // Auto-unload TTS after playback — free memory before next STT
-            if bridge.autoUnload {
+            // TTS stays loaded — Kokoro is small (~29MB) and recompilation is slow
+            if false {  // Disabled: only STT auto-unloads (biggest model)
                 pipeLog("[MEM] before TTS unload: \(memoryMB())MB")
                 bridge.ttsBridge?.unload()
                 pipeLog("[MEM] after TTS unload: \(memoryMB())MB")

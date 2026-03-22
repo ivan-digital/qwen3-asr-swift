@@ -106,7 +106,9 @@ final class CompanionChatViewModel {
         config.maxResponseDuration = 10.0
         config.warmupSTT = true
         config.preSpeechBufferDuration = 1.5  // Keep 1.5s before VAD trigger to capture phrase start
-        config.autoUnloadModels = false
+        // Auto-unload STT after transcription to free ~463MB before LLM.
+        // LLM and TTS stay resident (small, need fast response).
+        config.autoUnloadModels = true
 
         pipeline = VoicePipeline(
             sttFactory: {
