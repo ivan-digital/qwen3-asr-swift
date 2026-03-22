@@ -106,9 +106,8 @@ final class CompanionChatViewModel {
         config.maxResponseDuration = 10.0
         config.warmupSTT = true
         config.preSpeechBufferDuration = 1.5  // Keep 1.5s before VAD trigger to capture phrase start
-        // Auto-unload STT after transcription to free ~463MB before LLM.
-        // LLM and TTS stay resident (small, need fast response).
-        config.autoUnloadModels = true
+        // Manual STT unload in event handler (autoUnload unloads everything).
+        config.autoUnloadModels = false
 
         pipeline = VoicePipeline(
             sttFactory: {
@@ -190,6 +189,8 @@ final class CompanionChatViewModel {
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
             pipelineLog.warning("[EVT] transcription: '\(trimmed)' lang=\(lang ?? "-") conf=\(conf)")
             guard !trimmed.isEmpty else { return }
+            // Unload STT to free ~463MB before LLM loads
+            pipeline?.unloadSTT()
             messages.append(ChatBubbleMessage(role: .user, text: trimmed))
             pipelineState = "thinking..."
             isGenerating = true
