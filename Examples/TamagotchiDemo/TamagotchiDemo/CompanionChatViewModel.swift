@@ -57,6 +57,7 @@ final class CompanionChatViewModel {
     private var isSpeaking = false
     private var currentResponseText = ""
     private var currentAssistantIdx: Int?
+    private var micRecordBuffer: [Float] = []
 
     private let systemPrompt = "You are Tama. Answer questions helpfully in one short sentence."
     /// Echo suppression threshold. On device with speaker echo, 0.06 works.
@@ -204,6 +205,40 @@ final class CompanionChatViewModel {
         isSpeaking = false
         audioLevel = 0
         pipelineState = "idle"
+        saveDebugRecording()
+    }
+
+    private func saveDebugRecording() {
+        guard !micRecordBuffer.isEmpty else { return }
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let dir = docs.appendingPathComponent("debug_audio")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appendingPathComponent("mic_debug.wav")
+
+        var data = Data()
+        let numSamples = micRecordBuffer.count
+        let dataSize = numSamples * 2
+        // WAV header
+        data.append(contentsOf: "RIFF".utf8)
+        var fileSize = UInt32(36 + dataSize); data.append(Data(bytes: &fileSize, count: 4))
+        data.append(contentsOf: "WAVE".utf8)
+        data.append(contentsOf: "fmt ".utf8)
+        var fmtSize: UInt32 = 16; data.append(Data(bytes: &fmtSize, count: 4))
+        var fmt: UInt16 = 1; data.append(Data(bytes: &fmt, count: 2))
+        var ch: UInt16 = 1; data.append(Data(bytes: &ch, count: 2))
+        var sr = UInt32(16000); data.append(Data(bytes: &sr, count: 4))
+        var byteRate = UInt32(32000); data.append(Data(bytes: &byteRate, count: 4))
+        var blockAlign: UInt16 = 2; data.append(Data(bytes: &blockAlign, count: 2))
+        var bps: UInt16 = 16; data.append(Data(bytes: &bps, count: 2))
+        data.append(contentsOf: "data".utf8)
+        var dSize = UInt32(dataSize); data.append(Data(bytes: &dSize, count: 4))
+        for s in micRecordBuffer {
+            var pcm = Int16(max(-1, min(1, s)) * 32767)
+            data.append(Data(bytes: &pcm, count: 2))
+        }
+        try? data.write(to: url)
+        pipelineLog.warning("Saved mic recording: \(url.path) (\(numSamples / 16)ms)")
+        micRecordBuffer.removeAll()
     }
 
     // MARK: - Pipeline Events
@@ -379,6 +414,9 @@ final class CompanionChatViewModel {
                 self.audioLevel = rms
                 self.diagnostics.updateVAD(rms)
             }
+
+            // Debug: record mic audio
+            self.micRecordBuffer.append(contentsOf: samples)
 
             self.pipeline?.pushAudio(samples)
         }
