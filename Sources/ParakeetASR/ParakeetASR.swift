@@ -52,6 +52,7 @@ public class ParakeetASRModel {
         self.decoder = decoder
         self.joint = joint
         self.vocabulary = vocabulary
+        detectSupportedMelLengths()
     }
 
     // MARK: - Warmup
@@ -123,19 +124,44 @@ public class ParakeetASRModel {
 
     // MARK: - CoreML Inference Helpers
 
-    /// Enumerated mel frame lengths supported by the encoder CoreML model.
-    private static let enumeratedMelLengths = [100, 200, 300, 400, 500, 750, 1000, 1500, 2000, 3000]
+    /// Mel frame lengths supported by the encoder CoreML model.
+    /// Detected from model description at load time; falls back to standard set.
+    private var supportedMelLengths: [Int] = []
 
-    /// Pad mel spectrogram to the nearest enumerated shape.
-    /// The encoder uses EnumeratedShapes to avoid a BNNS crash with dynamic shapes.
+    /// Default enumerated shapes for models that don't report constraints.
+    private static let defaultMelLengths = [100, 200, 300, 400, 500, 750, 1000, 1500, 2000, 3000]
+
+    /// Detect supported mel lengths from the encoder model's input constraints.
+    private func detectSupportedMelLengths() {
+        guard let enc = encoder else { return }
+        let desc = enc.modelDescription
+        if let melInput = desc.inputDescriptionsByName["mel"],
+           let constraint = melInput.multiArrayConstraint {
+            let shapeConstraint = constraint.shapeConstraint
+            if shapeConstraint.type == .enumerated {
+                supportedMelLengths = shapeConstraint.enumeratedShapes.map { $0[2].intValue }.sorted()
+            } else {
+                // Single fixed shape or range — use the constraint's shape
+                supportedMelLengths = [constraint.shape[2].intValue]
+            }
+        }
+        if supportedMelLengths.isEmpty {
+            supportedMelLengths = Self.defaultMelLengths
+        }
+        AudioLog.inference.debug("Parakeet: supported mel lengths: \(self.supportedMelLengths)")
+    }
+
+    /// Pad mel spectrogram to the nearest supported shape.
     private func padMelToEnumeratedShape(mel: MLMultiArray, actualLength: Int) throws -> MLMultiArray {
         let melFrames = mel.shape[2].intValue
 
-        // Find the smallest enumerated length >= melFrames
-        guard let targetLength = Self.enumeratedMelLengths.first(where: { $0 >= melFrames }) else {
+        // Find the smallest supported length >= melFrames (or largest if none fits)
+        let targetLength = supportedMelLengths.first(where: { $0 >= melFrames })
+            ?? supportedMelLengths.last!
+        guard melFrames <= targetLength else {
             throw AudioModelError.inferenceFailed(
                 operation: "mel padding",
-                reason: "Audio too long: \(melFrames) mel frames exceeds max \(Self.enumeratedMelLengths.last!) (30s)")
+                reason: "Audio too long: \(melFrames) mel frames exceeds max \(targetLength)")
         }
 
         if targetLength == melFrames {
