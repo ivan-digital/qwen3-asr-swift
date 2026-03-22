@@ -103,22 +103,12 @@ final class CompanionChatViewModel {
 
         pipeline = VoicePipeline(
             sttFactory: {
-                #if targetEnvironment(simulator)
-                let asrModelId = ParakeetASRModel.defaultModelId
-                #else
-                let asrModelId = ParakeetASRModel.int8iOSModelId
-                #endif
-                return try await ParakeetASRModel.fromPretrained(
-                    modelId: asrModelId) { _, _ in }
+                try await ParakeetASRModel.fromPretrained(
+                    modelId: ParakeetASRModel.int8iOSModelId) { _, _ in }
             },
             ttsFactory: {
-                #if targetEnvironment(simulator)
-                let ttsModelId = KokoroTTSModel.defaultModelId
-                #else
-                let ttsModelId = KokoroTTSModel.int8iOSModelId
-                #endif
-                return try await KokoroTTSModel.fromPretrained(
-                    modelId: ttsModelId) { _, _ in }
+                try await KokoroTTSModel.fromPretrained(
+                    modelId: KokoroTTSModel.int8iOSModelId) { _, _ in }
             },
             vad: vad,
             llmFactory: { [weak self] in
