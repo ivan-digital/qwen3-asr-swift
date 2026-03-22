@@ -36,59 +36,46 @@ final class CompanionChatViewModel {
     var loadProgress: Double = 0
     var loadingStatus = ""
     var errorMessage: String?
-    var speakEnabled = true
 
     var modelsLoaded: Bool { vadModel != nil }
 
     let diagnostics = DiagnosticsMonitor()
 
-    // MARK: - Models
+    // MARK: - Private State
 
     private var vadModel: SileroVADModel?
-
-    // MARK: - Pipeline
-
     private var pipeline: VoicePipeline?
-    // LLM is now lazy-loaded inside the pipeline bridge
     private var audioEngine: AVAudioEngine?
     private let player = StreamingAudioPlayer()
     private var waitingForPlaybackEnd = false
-    /// True while TTS audio is playing through the speaker.
-    /// Used to raise VAD energy threshold so pipeline ignores echo
-    /// but still detects real speech (user speaking over TTS).
+    /// True while TTS is playing — used for echo suppression.
     private var isSpeaking = false
-    private let speechSynth = AVSpeechSynthesizer()
-    private var speechDelegate: SpeechFinishedDelegate?
+    private var currentResponseText = ""
+    private var currentAssistantIdx: Int?
 
     private let systemPrompt = "You are Tama. Answer questions helpfully in one short sentence."
+    private let echoThreshold: Float = 0.06
 
     // MARK: - Load Models
-
-    private let coreMLUnits: MLComputeUnits = .all
-    private(set) var memoryTier: MemoryTier = .full
 
     func loadModels() async {
         isLoading = true
         errorMessage = nil
         loadProgress = 0
 
-        memoryTier = MemoryTier.detect()
-        pipelineLog.warning("Memory tier: \(self.memoryTier.description)")
-
         do {
-            loadingStatus = "VAD..."
+            loadingStatus = "Loading VAD..."
             loadProgress = 0.3
             vadModel = try await Task.detached {
                 try await SileroVADModel.fromPretrained(engine: .coreml) { progress, status in
                     DispatchQueue.main.async { [weak self] in
                         self?.loadProgress = 0.3 + progress * 0.6
-                        if !status.isEmpty { self?.loadingStatus = "VAD: \(status)" }
+                        if !status.isEmpty { self?.loadingStatus = status }
                     }
                 }
             }.value
-
             loadProgress = 1.0
-            loadingStatus = "Ready (\(memoryTier.rawValue))"
+            loadingStatus = "Ready"
         } catch {
             errorMessage = "Load failed: \(error.localizedDescription)"
         }
@@ -99,14 +86,11 @@ final class CompanionChatViewModel {
     // MARK: - Pipeline Start/Stop
 
     func startListening() {
-        guard !isListening else { return }
-        guard let vad = vadModel else { return }
+        guard !isListening, let vad = vadModel else { return }
 
         let sampling = ChatSamplingConfig(
             temperature: 0.3, topK: 20, maxTokens: 15, repetitionPenalty: 1.5)
         let sysPrompt = systemPrompt
-        let units = coreMLUnits
-        let tier = memoryTier
 
         var config = PipelineConfig()
         config.mode = .voicePipeline
@@ -115,54 +99,34 @@ final class CompanionChatViewModel {
         config.minSilenceDuration = 0.8
         config.maxResponseDuration = 10.0
         config.warmupSTT = true
-        config.autoUnloadModels = true  // Always auto-unload — only one model at a time
-
-        pipelineLog.warning("Starting pipeline: tier=\(tier.rawValue)")
-
-        // Always use CoreML models with lazy loading + auto-unload.
-        // Peak memory = largest single model, not sum of all.
-        // iOS-optimized variants (INT8, reduced shapes) keep each model small.
-
-        let sttFactory: () async throws -> SpeechRecognitionModel = {
-            try await ParakeetASRModel.fromPretrained(
-                modelId: ParakeetASRModel.int8iOSModelId
-            ) { _, _ in }
-        }
-
-        let ttsFactory: () async throws -> SpeechGenerationModel = {
-            try await KokoroTTSModel.fromPretrained(
-                modelId: KokoroTTSModel.int8iOSModelId
-            ) { _, _ in }
-        }
-
-        let llmFactory: (() async throws -> PipelineLLM)? = { [weak self] in
-            let chat = try await Qwen3ChatModel.fromPretrained(computeUnits: units) { _, _ in }
-            let llm = Qwen3PipelineLLM(model: chat, systemPrompt: sysPrompt, sampling: sampling)
-            llm.onToken = { token in
-                DispatchQueue.main.async {
-                    self?.appendToken(token)
-                }
-            }
-            return llm
-        }
+        config.autoUnloadModels = true
 
         pipeline = VoicePipeline(
-            sttFactory: sttFactory,
-            ttsFactory: ttsFactory,
+            sttFactory: {
+                try await ParakeetASRModel.fromPretrained(
+                    modelId: ParakeetASRModel.int8iOSModelId) { _, _ in }
+            },
+            ttsFactory: {
+                try await KokoroTTSModel.fromPretrained(
+                    modelId: KokoroTTSModel.int8iOSModelId) { _, _ in }
+            },
             vad: vad,
-            llmFactory: llmFactory,
+            llmFactory: { [weak self] in
+                let chat = try await Qwen3ChatModel.fromPretrained(computeUnits: .all) { _, _ in }
+                let llm = Qwen3PipelineLLM(model: chat, systemPrompt: sysPrompt, sampling: sampling)
+                llm.onToken = { token in
+                    DispatchQueue.main.async { self?.appendToken(token) }
+                }
+                return llm
+            },
             config: config,
             onEvent: { [weak self] event in
-                DispatchQueue.main.async {
-                    self?.handleEvent(event)
-                }
+                DispatchQueue.main.async { self?.handleEvent(event) }
             }
         )
 
         player.onPlaybackFinished = { [weak self] in
-            DispatchQueue.main.async {
-                self?.playbackDidFinish()
-            }
+            DispatchQueue.main.async { self?.playbackDidFinish() }
         }
 
         pipeline?.start()
@@ -181,15 +145,12 @@ final class CompanionChatViewModel {
         isListening = false
         isGenerating = false
         isSpeechDetected = false
+        isSpeaking = false
         audioLevel = 0
         pipelineState = "idle"
-        saveDebugRecordings()
     }
 
     // MARK: - Pipeline Events
-
-    private var currentResponseText = ""
-    private var currentAssistantIdx: Int?
 
     private func handleEvent(_ event: PipelineEvent) {
         switch event {
@@ -199,12 +160,7 @@ final class CompanionChatViewModel {
         case .speechStarted:
             isSpeechDetected = true
             pipelineState = "speech detected"
-            // If LLM is generating (thinking), cancel it so the pipeline
-            // can process new speech. The pending phrase mechanism will
-            // combine interrupted + new phrases on the next LLM call.
-            if isGenerating {
-                pipeline?.unloadLLM()
-            }
+            if isGenerating { pipeline?.unloadLLM() }
 
         case .speechEnded:
             isSpeechDetected = false
@@ -212,15 +168,12 @@ final class CompanionChatViewModel {
 
         case .transcriptionCompleted(let text, _, _):
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            pipelineLog.warning("Transcription: '\(trimmed)'")
             guard !trimmed.isEmpty else { return }
             messages.append(ChatBubbleMessage(role: .user, text: trimmed))
             pipelineState = "thinking..."
             isGenerating = true
 
         case .responseCreated:
-            pipelineLog.warning("Event: responseCreated")
-            // Assistant message may already exist from first LLM token.
             if currentAssistantIdx == nil {
                 currentResponseText = ""
                 currentAssistantIdx = messages.count
@@ -231,26 +184,19 @@ final class CompanionChatViewModel {
         case .responseInterrupted:
             player.fadeOutAndStop()
             isSpeaking = false
-            pipeline?.unloadLLM()  // Cancel LLM to unblock worker thread
+            pipeline?.unloadLLM()
             isGenerating = false
             currentAssistantIdx = nil
             pipelineState = "interrupted"
 
         case .responseAudioDelta(let samples):
-            pipelineLog.warning("Event: responseAudioDelta \(samples.count) samples")
             pipelineState = "speaking..."
             isSpeaking = true
-            recordTTSSamples(samples, sampleRate: 24000)
-            do {
-                try player.play(samples: samples, sampleRate: 24000)
-            } catch {
-                pipelineLog.error("Playback error: \(error)")
-            }
+            do { try player.play(samples: samples, sampleRate: 24000) }
+            catch { pipelineLog.error("Playback error: \(error)") }
 
         case .responseDone:
-            pipelineLog.warning("Event: responseDone")
             isGenerating = false
-            let responseText = currentResponseText
             currentAssistantIdx = nil
             if player.isPlaying {
                 waitingForPlaybackEnd = true
@@ -258,15 +204,10 @@ final class CompanionChatViewModel {
                 resumeAfterResponse()
             }
 
-        case .toolCallStarted(let name):
-            pipelineLog.info("Tool call: \(name)")
-            pipelineState = "calling \(name)..."
-
-        case .toolCallCompleted(let name, _):
-            pipelineLog.info("Tool done: \(name)")
+        case .toolCallStarted, .toolCallCompleted:
+            break
 
         case .error(let msg):
-            pipelineLog.error("Event: error '\(msg)'")
             errorMessage = msg
             pipelineState = "error"
             isGenerating = false
@@ -287,13 +228,14 @@ final class CompanionChatViewModel {
         pipelineState = "listening"
     }
 
-    // MARK: - Microphone (AVAudioConverter resampling)
+    // MARK: - Microphone
 
     private func startMicrophone() {
         #if os(iOS)
         let session = AVAudioSession.sharedInstance()
         do {
-            try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetooth])
+            try session.setCategory(.playAndRecord, mode: .default,
+                                    options: [.defaultToSpeaker, .allowBluetooth])
             try session.setActive(true)
         } catch {
             errorMessage = "Mic access failed: \(error.localizedDescription)"
@@ -305,20 +247,14 @@ final class CompanionChatViewModel {
         let inputNode = engine.inputNode
         let hwFormat = inputNode.outputFormat(forBus: 0)
 
-        // 16kHz mono target for VAD/ASR (Apple AVAudioConverter resampling)
         guard let targetFormat = AVAudioFormat(
-            commonFormat: .pcmFormatFloat32,
-            sampleRate: 16000,
-            channels: 1,
-            interleaved: false
+            commonFormat: .pcmFormatFloat32, sampleRate: 16000,
+            channels: 1, interleaved: false
         ) else { return }
 
-        // Mono intermediate at hardware rate
         guard let monoFormat = AVAudioFormat(
-            commonFormat: .pcmFormatFloat32,
-            sampleRate: hwFormat.sampleRate,
-            channels: 1,
-            interleaved: false
+            commonFormat: .pcmFormatFloat32, sampleRate: hwFormat.sampleRate,
+            channels: 1, interleaved: false
         ) else { return }
 
         guard let resampler = AVAudioConverter(from: monoFormat, to: targetFormat) else { return }
@@ -329,30 +265,26 @@ final class CompanionChatViewModel {
             let frameLen = Int(buffer.frameLength)
             guard frameLen > 0 else { return }
 
-            // During TTS playback, suppress echo by zeroing low-energy audio.
-            // Real speech into the mic is much louder than speaker echo.
+            // Echo suppression: drop low-energy frames during TTS playback.
+            // Speaker echo is quiet (RMS < 0.06), real speech is louder.
             if self.isSpeaking {
                 var sum: Float = 0
                 let ptr = srcData[0]
                 for i in 0..<frameLen { sum += ptr[i] * ptr[i] }
                 let rms = sqrt(sum / Float(frameLen))
-                // Echo threshold: typical speaker echo is RMS < 0.05,
-                // direct speech into mic is RMS > 0.08
-                if rms < 0.06 {
-                    return  // Drop echo frames, don't feed to pipeline
-                }
-                // Loud enough to be real speech — allow through as interruption
+                if rms < self.echoThreshold { return }
             }
 
-            // Extract channel 0 into mono buffer
-            guard let monoBuffer = AVAudioPCMBuffer(pcmFormat: monoFormat, frameCapacity: buffer.frameCapacity) else { return }
+            // Resample to 16kHz mono
+            guard let monoBuffer = AVAudioPCMBuffer(pcmFormat: monoFormat,
+                                                     frameCapacity: buffer.frameCapacity) else { return }
             monoBuffer.frameLength = buffer.frameLength
             memcpy(monoBuffer.floatChannelData![0], srcData[0], frameLen * MemoryLayout<Float>.size)
 
-            // Resample to 16kHz using AVAudioConverter
             let outFrameCount = AVAudioFrameCount(Double(frameLen) * 16000.0 / hwFormat.sampleRate)
             guard outFrameCount > 0,
-                  let outBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: outFrameCount) else { return }
+                  let outBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat,
+                                                    frameCapacity: outFrameCount) else { return }
 
             var error: NSError?
             resampler.convert(to: outBuffer, error: &error) { _, outStatus in
@@ -370,28 +302,18 @@ final class CompanionChatViewModel {
             var sum: Float = 0
             for s in samples { sum += s * s }
             let rms = sqrt(sum / max(Float(count), 1))
-
             DispatchQueue.main.async {
                 self.audioLevel = rms
                 self.diagnostics.updateVAD(rms)
             }
 
-            // Debug: record all mic audio continuously
-            DispatchQueue.main.async {
-                self.recordMicSamples(samples)
-            }
-
-            // Feed resampled audio to pipeline
             self.pipeline?.pushAudio(samples)
         }
 
-        // Attach TTS player at 24kHz (Kokoro TTS native rate) BEFORE starting engine.
-        // AVAudioEngine handles the 24kHz→hardware rate conversion internally.
+        // Attach TTS player at 24kHz before starting engine
         guard let playerFormat = AVAudioFormat(
-            commonFormat: .pcmFormatFloat32,
-            sampleRate: 24000,
-            channels: 1,
-            interleaved: false
+            commonFormat: .pcmFormatFloat32, sampleRate: 24000,
+            channels: 1, interleaved: false
         ) else { return }
         player.attach(to: engine, format: playerFormat)
 
@@ -413,32 +335,25 @@ final class CompanionChatViewModel {
         audioEngine = nil
     }
 
-    // MARK: - Text Input (fallback, bypasses STT)
+    // MARK: - Text Input
 
     func send(_ text: String) {
         inputText = ""
         guard isListening else {
-            // If pipeline not running, just show message
             messages.append(ChatBubbleMessage(role: .user, text: text))
             return
         }
         pipeline?.pushText(text)
     }
 
-    // MARK: - Actions
-
     func clearChat() {
         messages = []
-        // LLM conversation resets on next lazy load (fresh model)
         pipeline?.unloadLLM()
     }
 
-    // MARK: - LLM token streaming → UI
+    // MARK: - LLM Token Streaming
 
-    /// Called from pipeline events to update the assistant message bubble.
     func appendToken(_ token: String) {
-        // Create assistant message on first token (before responseCreated,
-        // which only fires when TTS starts after LLM is done).
         if currentAssistantIdx == nil {
             currentResponseText = ""
             currentAssistantIdx = messages.count
@@ -450,102 +365,4 @@ final class CompanionChatViewModel {
         currentResponseText += token
         messages[idx].text = currentResponseText
     }
-
-    // MARK: - Debug Audio Recording
-    //
-    // One continuous mic recording (like EchoDemo) — saved on stop to debug lost speech.
-
-    private var micRecordBuffer: [Float] = []
-    private var ttsRecordBuffer: [Float] = []
-
-    private func recordMicSamples(_ samples: [Float]) {
-        micRecordBuffer.append(contentsOf: samples)
-    }
-
-    private func recordTTSSamples(_ samples: [Float], sampleRate: Int) {
-        ttsRecordBuffer.append(contentsOf: samples)
-    }
-
-    /// Save all debug recordings (called on stopListening).
-    private func saveDebugRecordings() {
-        if !micRecordBuffer.isEmpty {
-            let url = debugAudioURL("mic_full.wav")
-            writeWAV(samples: micRecordBuffer, sampleRate: 16000, to: url)
-            let durMs = micRecordBuffer.count * 1000 / 16000
-            pipelineLog.warning("Saved full mic recording: \(url.path) (\(durMs)ms)")
-            micRecordBuffer.removeAll()
-        }
-        if !ttsRecordBuffer.isEmpty {
-            let url = debugAudioURL("tts_full.wav")
-            writeWAV(samples: ttsRecordBuffer, sampleRate: 24000, to: url)
-            let durMs = ttsRecordBuffer.count * 1000 / 24000
-            pipelineLog.warning("Saved full TTS recording: \(url.path) (\(durMs)ms)")
-            ttsRecordBuffer.removeAll()
-        }
-    }
-
-    private func debugAudioURL(_ name: String) -> URL {
-        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        let dir = docs.appendingPathComponent("debug_audio")
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent(name)
-    }
-
-    private func writeWAV(samples: [Float], sampleRate: Int, to url: URL) {
-        let numSamples = samples.count
-        let dataSize = numSamples * 2  // 16-bit PCM
-        var data = Data()
-        // RIFF header
-        data.append(contentsOf: "RIFF".utf8)
-        var fileSize = UInt32(36 + dataSize)
-        data.append(Data(bytes: &fileSize, count: 4))
-        data.append(contentsOf: "WAVE".utf8)
-        // fmt chunk
-        data.append(contentsOf: "fmt ".utf8)
-        var fmtSize: UInt32 = 16
-        data.append(Data(bytes: &fmtSize, count: 4))
-        var audioFormat: UInt16 = 1  // PCM
-        data.append(Data(bytes: &audioFormat, count: 2))
-        var channels: UInt16 = 1
-        data.append(Data(bytes: &channels, count: 2))
-        var sr = UInt32(sampleRate)
-        data.append(Data(bytes: &sr, count: 4))
-        var byteRate = UInt32(sampleRate * 2)
-        data.append(Data(bytes: &byteRate, count: 4))
-        var blockAlign: UInt16 = 2
-        data.append(Data(bytes: &blockAlign, count: 2))
-        var bitsPerSample: UInt16 = 16
-        data.append(Data(bytes: &bitsPerSample, count: 2))
-        // data chunk
-        data.append(contentsOf: "data".utf8)
-        var dataChunkSize = UInt32(dataSize)
-        data.append(Data(bytes: &dataChunkSize, count: 4))
-        for s in samples {
-            let clamped = max(-1.0, min(1.0, s))
-            var pcm = Int16(clamped * 32767)
-            data.append(Data(bytes: &pcm, count: 2))
-        }
-        try? data.write(to: url)
-    }
-}
-
-// MARK: - AVSpeechSynthesizer Delegate
-
-/// Notifies when all queued utterances finish playing.
-private class SpeechFinishedDelegate: NSObject, AVSpeechSynthesizerDelegate {
-    let onFinished: () -> Void
-    init(onFinished: @escaping () -> Void) { self.onFinished = onFinished }
-
-    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        if !synthesizer.isSpeaking {
-            onFinished()
-        }
-    }
-}
-
-// MARK: - DummyTTS (placeholder, not used when Kokoro is loaded)
-
-private final class DummyTTS: SpeechGenerationModel {
-    let sampleRate = 24000
-    func generate(text: String, language: String?) async throws -> [Float] { [] }
 }

@@ -19,16 +19,12 @@
 		BC9448E8C4266049803B79DF /* TamagotchiDemoApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = D05C44D63D0CEDA642EE8949 /* TamagotchiDemoApp.swift */; };
 		C6165AAB81ADF7719A4436D6 /* CompanionChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC8F634461EF57900A431467 /* CompanionChatView.swift */; };
 		C624A102C111BE92AFD93429 /* ParakeetASR in Frameworks */ = {isa = PBXBuildFile; productRef = 106E5E52CEE5DF5282EA0DDA /* ParakeetASR */; };
-		C79EDF64DCCC7B9521AC8E4A /* SystemTTS.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C37BAEF923492FBDA21D239 /* SystemTTS.swift */; };
-		D17F533C32AD5D582921D153 /* AppleSpeechASR.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4E068ADEEBF7FD9B1DE17D1 /* AppleSpeechASR.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		1E409FB3AD00B9F0D82DCE3B /* TamagotchiDemo.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = TamagotchiDemo.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		1F89CE951B7D9AA634C4F3DF /* DiagnosticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsView.swift; sourceTree = "<group>"; };
-		2C37BAEF923492FBDA21D239 /* SystemTTS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemTTS.swift; sourceTree = "<group>"; };
 		769A8EFA038D9E247CF0D207 /* CompanionChatViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionChatViewModel.swift; sourceTree = "<group>"; };
-		A4E068ADEEBF7FD9B1DE17D1 /* AppleSpeechASR.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleSpeechASR.swift; sourceTree = "<group>"; };
 		ADB73789636C5777730EC2F3 /* speech-swift */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "speech-swift"; path = ../..; sourceTree = SOURCE_ROOT; };
 		B697D09D2DAB1546B407426D /* ChatBubble.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatBubble.swift; sourceTree = "<group>"; };
 		BC8F634461EF57900A431467 /* CompanionChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionChatView.swift; sourceTree = "<group>"; };
@@ -75,13 +71,11 @@
 		9554F169F8C40F279474A43A /* TamagotchiDemo */ = {
 			isa = PBXGroup;
 			children = (
-				A4E068ADEEBF7FD9B1DE17D1 /* AppleSpeechASR.swift */,
 				B697D09D2DAB1546B407426D /* ChatBubble.swift */,
 				BC8F634461EF57900A431467 /* CompanionChatView.swift */,
 				769A8EFA038D9E247CF0D207 /* CompanionChatViewModel.swift */,
 				1F89CE951B7D9AA634C4F3DF /* DiagnosticsView.swift */,
 				E0ECD34752A9C76ADAE55D35 /* Info.plist */,
-				2C37BAEF923492FBDA21D239 /* SystemTTS.swift */,
 				EA4CC305268A679D694F9067 /* TamagotchiDemo.entitlements */,
 				D05C44D63D0CEDA642EE8949 /* TamagotchiDemoApp.swift */,
 				E7ACF5E20B409D8AF8A442ED /* VoiceLevelBar.swift */,
@@ -165,12 +159,10 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				D17F533C32AD5D582921D153 /* AppleSpeechASR.swift in Sources */,
 				29B028341A346342699AF383 /* ChatBubble.swift in Sources */,
 				C6165AAB81ADF7719A4436D6 /* CompanionChatView.swift in Sources */,
 				5E7A0838A8913B4EA373C5E5 /* CompanionChatViewModel.swift in Sources */,
 				0752CB8B419B6E9C4517A28F /* DiagnosticsView.swift in Sources */,
-				C79EDF64DCCC7B9521AC8E4A /* SystemTTS.swift in Sources */,
 				BC9448E8C4266049803B79DF /* TamagotchiDemoApp.swift in Sources */,
 				7102F8748F80696DDED0982D /* VoiceLevelBar.swift in Sources */,
 			);

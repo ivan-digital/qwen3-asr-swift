@@ -48,7 +48,6 @@ struct CompanionChatView: View {
                     if vm.modelsLoaded {
                         Menu {
                             Button("Clear Chat") { vm.clearChat() }
-                            Toggle("Speak Responses", isOn: $vm.speakEnabled)
                             Divider()
                             if vm.isListening {
                                 Button("Stop Listening") { vm.stopListening() }
