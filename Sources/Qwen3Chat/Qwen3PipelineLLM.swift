@@ -80,6 +80,7 @@ public final class Qwen3PipelineLLM: PipelineLLM {
 
         // Block until stream completes (pipeline calls from background thread)
         let sem = DispatchSemaphore(value: 0)
+        cancelSem = sem
         var fullResponse = ""
         llmDebug("start: '\(combinedInput)' maxTokens=\(sampling.maxTokens)")
         let task = Task {
@@ -140,6 +141,7 @@ public final class Qwen3PipelineLLM: PipelineLLM {
         consumeTask = task
         sem.wait()
         consumeTask = nil
+        cancelSem = nil
 
         // If cancelled, save phrase for next call
         if cancelled {
@@ -152,5 +154,10 @@ public final class Qwen3PipelineLLM: PipelineLLM {
         cancelled = true
         consumeTask?.cancel()
         model.cancelGeneration()
+        // Signal semaphore to unblock the pipeline worker thread immediately.
+        // The Task's defer block will signal again but DispatchSemaphore handles that.
+        cancelSem?.signal()
     }
+
+    private var cancelSem: DispatchSemaphore?
 }
