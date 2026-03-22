@@ -114,36 +114,28 @@ final class CompanionChatViewModel {
         config.minInterruptionDuration = 1.0
         config.minSilenceDuration = 0.8
         config.maxResponseDuration = 10.0
-        config.warmupSTT = tier.useCoreMLASR  // Only warmup if using CoreML ASR
-        config.autoUnloadModels = tier.autoUnload
+        config.warmupSTT = true
+        config.autoUnloadModels = true  // Always auto-unload — only one model at a time
 
-        pipelineLog.warning("Starting pipeline: tier=\(tier.rawValue) coremlASR=\(tier.useCoreMLASR) coremlTTS=\(tier.useCoreMLTTS) llm=\(tier.useLLM) autoUnload=\(tier.autoUnload)")
+        pipelineLog.warning("Starting pipeline: tier=\(tier.rawValue)")
 
-        // STT factory: CoreML Parakeet on standard+, Apple Speech on constrained
+        // Always use CoreML models with lazy loading + auto-unload.
+        // Peak memory = largest single model, not sum of all.
+        // iOS-optimized variants (INT8, reduced shapes) keep each model small.
+
         let sttFactory: () async throws -> SpeechRecognitionModel = {
-            if tier.useCoreMLASR {
-                return try await ParakeetASRModel.fromPretrained(
-                    modelId: ParakeetASRModel.int8iOSModelId
-                ) { _, _ in }
-            } else {
-                return AppleSpeechASR()
-            }
+            try await ParakeetASRModel.fromPretrained(
+                modelId: ParakeetASRModel.int8iOSModelId
+            ) { _, _ in }
         }
 
-        // TTS factory: Kokoro FP16 on full, INT8 on standard/constrained, system TTS on minimal
         let ttsFactory: () async throws -> SpeechGenerationModel = {
-            if tier.useCoreMLTTS {
-                let modelId = (tier == .full)
-                    ? KokoroTTSModel.defaultModelId
-                    : KokoroTTSModel.int8iOSModelId
-                return try await KokoroTTSModel.fromPretrained(modelId: modelId) { _, _ in }
-            } else {
-                return SystemTTS()
-            }
+            try await KokoroTTSModel.fromPretrained(
+                modelId: KokoroTTSModel.int8iOSModelId
+            ) { _, _ in }
         }
 
-        // LLM factory: Qwen3Chat on standard+, nil on minimal
-        let llmFactory: (() async throws -> PipelineLLM)? = tier.useLLM ? { [weak self] in
+        let llmFactory: (() async throws -> PipelineLLM)? = { [weak self] in
             let chat = try await Qwen3ChatModel.fromPretrained(computeUnits: units) { _, _ in }
             let llm = Qwen3PipelineLLM(model: chat, systemPrompt: sysPrompt, sampling: sampling)
             llm.onToken = { token in
@@ -152,10 +144,6 @@ final class CompanionChatViewModel {
                 }
             }
             return llm
-        } : nil
-
-        if !tier.useLLM {
-            config.mode = .echo  // No LLM → echo mode (STT → TTS)
         }
 
         pipeline = VoicePipeline(
