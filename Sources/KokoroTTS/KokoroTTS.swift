@@ -182,11 +182,15 @@ public final class KokoroTTSModel {
     /// Default voice preset.
     public static let defaultVoice = "af_heart"
 
+    /// - Parameters:
+    ///   - loadG2P: Load neural G2P models for OOV words (~80MB extra memory).
+    ///     Set to `false` for voice pipelines where responses use common words.
     public static func fromPretrained(
         modelId: String = defaultModelId,
         voice: String = defaultVoice,
         maxBuckets: Int = 1,
         computeUnits: MLComputeUnits = .all,
+        loadG2P: Bool = true,
         progressHandler: ((Double, String) -> Void)? = nil
     ) async throws -> KokoroTTSModel {
         AudioLog.modelLoading.info("Loading Kokoro model: \(modelId)")
@@ -246,19 +250,23 @@ public final class KokoroTTSModel {
         progressHandler?(0.74, "Loading pronunciation dictionaries...")
         try phonemizer.loadDictionaries(from: cacheDir)
 
-        // Load G2P models (separate encoder + decoder)
-        progressHandler?(0.76, "Loading G2P models...")
-        let g2pEncoderURL = cacheDir.appendingPathComponent("G2PEncoder.mlmodelc", isDirectory: true)
-        let g2pDecoderURL = cacheDir.appendingPathComponent("G2PDecoder.mlmodelc", isDirectory: true)
-        let g2pVocabURL = cacheDir.appendingPathComponent("g2p_vocab.json")
-        if FileManager.default.fileExists(atPath: g2pEncoderURL.path) &&
-           FileManager.default.fileExists(atPath: g2pDecoderURL.path) {
-            try phonemizer.loadG2PModels(
-                encoderURL: g2pEncoderURL,
-                decoderURL: g2pDecoderURL,
-                vocabURL: g2pVocabURL
-            )
-            AudioLog.modelLoading.debug("Loaded CoreML G2P encoder + decoder")
+        // Load G2P models (separate encoder + decoder) — optional, ~80MB extra
+        if loadG2P {
+            progressHandler?(0.76, "Loading G2P models...")
+            let g2pEncoderURL = cacheDir.appendingPathComponent("G2PEncoder.mlmodelc", isDirectory: true)
+            let g2pDecoderURL = cacheDir.appendingPathComponent("G2PDecoder.mlmodelc", isDirectory: true)
+            let g2pVocabURL = cacheDir.appendingPathComponent("g2p_vocab.json")
+            if FileManager.default.fileExists(atPath: g2pEncoderURL.path) &&
+               FileManager.default.fileExists(atPath: g2pDecoderURL.path) {
+                try phonemizer.loadG2PModels(
+                    encoderURL: g2pEncoderURL,
+                    decoderURL: g2pDecoderURL,
+                    vocabURL: g2pVocabURL
+                )
+                AudioLog.modelLoading.debug("Loaded CoreML G2P encoder + decoder")
+            }
+        } else {
+            AudioLog.modelLoading.debug("Skipped G2P models (loadG2P=false)")
         }
 
         // Load voice embeddings from per-voice JSON files

@@ -118,7 +118,8 @@ final class CompanionChatViewModel {
             ttsFactory: {
                 try await KokoroTTSModel.fromPretrained(
                     modelId: KokoroTTSModel.int8iOSModelId,
-                    computeUnits: .cpuAndNeuralEngine  // Skip GPU plan — saves memory
+                    computeUnits: .cpuAndNeuralEngine,
+                    loadG2P: false  // Skip G2P neural models (~80MB) — dictionary handles common words
                 ) { _, _ in }
             },
             vad: vad,
