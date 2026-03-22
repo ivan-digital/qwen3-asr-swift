@@ -44,6 +44,9 @@ final class CompanionChatViewModel {
     // MARK: - Private State
 
     private var vadModel: SileroVADModel?
+    private var sttModel: ParakeetASRModel?
+    private var llmModel: Qwen3PipelineLLM?
+    private var ttsModel: KokoroTTSModel?
     private var pipeline: VoicePipeline?
     private var audioEngine: AVAudioEngine?
     private let player = StreamingAudioPlayer()
@@ -70,58 +73,75 @@ final class CompanionChatViewModel {
         loadProgress = 0
 
         do {
-            // Download all models during loading screen — not lazily on first speech.
-            // Models are loaded into memory later by the pipeline factories.
+            // Load all models upfront with warmup — no delays during conversation.
 
-            loadingStatus = "Downloading VAD..."
-            loadProgress = 0.1
+            loadingStatus = "Loading VAD..."
+            loadProgress = 0.05
             vadModel = try await Task.detached {
                 try await SileroVADModel.fromPretrained(engine: .coreml) { progress, status in
                     DispatchQueue.main.async { [weak self] in
-                        self?.loadProgress = 0.1 + progress * 0.15
+                        self?.loadProgress = 0.05 + progress * 0.1
                         if !status.isEmpty { self?.loadingStatus = "VAD: \(status)" }
                     }
                 }
             }.value
 
-            loadingStatus = "Downloading ASR..."
-            loadProgress = 0.3
-            // Download only — the factory will load from cache later
-            _ = try await Task.detached {
+            loadingStatus = "Loading ASR..."
+            loadProgress = 0.15
+            let asr = try await Task.detached {
                 try await ParakeetASRModel.fromPretrained(
                     modelId: ParakeetASRModel.int8iOS5sModelId
                 ) { progress, status in
                     DispatchQueue.main.async { [weak self] in
-                        self?.loadProgress = 0.3 + progress * 0.2
+                        self?.loadProgress = 0.15 + progress * 0.2
                         if !status.isEmpty { self?.loadingStatus = "ASR: \(status)" }
                     }
                 }
             }.value
+            // Warmup: trigger CoreML compilation with dummy audio
+            loadingStatus = "Warming up ASR..."
+            loadProgress = 0.38
+            _ = asr.transcribe(audio: [Float](repeating: 0, count: 8000), sampleRate: 16000)
+            sttModel = asr
 
-            loadingStatus = "Downloading LLM..."
-            loadProgress = 0.55
-            _ = try await Task.detached {
-                try await Qwen3ChatModel.fromPretrained(computeUnits: .all) { progress, status in
+            loadingStatus = "Loading LLM..."
+            loadProgress = 0.42
+            #if targetEnvironment(simulator)
+            let llmUnits: MLComputeUnits = .all
+            #else
+            let llmUnits: MLComputeUnits = .cpuAndNeuralEngine
+            #endif
+            let chat = try await Task.detached {
+                try await Qwen3ChatModel.fromPretrained(computeUnits: llmUnits) { progress, status in
                     DispatchQueue.main.async { [weak self] in
-                        self?.loadProgress = 0.55 + progress * 0.2
+                        self?.loadProgress = 0.42 + progress * 0.2
                         if !status.isEmpty { self?.loadingStatus = "LLM: \(status)" }
                     }
                 }
             }.value
+            let sampling = ChatSamplingConfig(
+                temperature: 0.3, topK: 20, maxTokens: 15, repetitionPenalty: 1.5)
+            let llm = Qwen3PipelineLLM(model: chat, systemPrompt: systemPrompt, sampling: sampling)
+            llm.onToken = { [weak self] token in
+                DispatchQueue.main.async { self?.appendToken(token) }
+            }
+            llmModel = llm
 
-            loadingStatus = "Downloading TTS..."
-            loadProgress = 0.8
-            _ = try await Task.detached {
+            loadingStatus = "Loading TTS..."
+            loadProgress = 0.7
+            let tts = try await Task.detached {
                 try await KokoroTTSModel.fromPretrained(
                     modelId: KokoroTTSModel.int8iOSModelId,
+                    computeUnits: .cpuAndNeuralEngine,
                     loadG2P: false
                 ) { progress, status in
                     DispatchQueue.main.async { [weak self] in
-                        self?.loadProgress = 0.8 + progress * 0.15
+                        self?.loadProgress = 0.7 + progress * 0.2
                         if !status.isEmpty { self?.loadingStatus = "TTS: \(status)" }
                     }
                 }
             }.value
+            ttsModel = tts
 
             loadProgress = 1.0
             loadingStatus = "Ready"
@@ -135,11 +155,8 @@ final class CompanionChatViewModel {
     // MARK: - Pipeline Start/Stop
 
     func startListening() {
-        guard !isListening, let vad = vadModel else { return }
-
-        let sampling = ChatSamplingConfig(
-            temperature: 0.3, topK: 20, maxTokens: 15, repetitionPenalty: 1.5)
-        let sysPrompt = systemPrompt
+        guard !isListening, let vad = vadModel,
+              let stt = sttModel, let llm = llmModel, let tts = ttsModel else { return }
 
         var config = PipelineConfig()
         config.mode = .voicePipeline
@@ -147,38 +164,13 @@ final class CompanionChatViewModel {
         config.minInterruptionDuration = 1.0
         config.minSilenceDuration = 0.8
         config.maxResponseDuration = 10.0
-        config.warmupSTT = true
-        config.preSpeechBufferDuration = 1.5  // Keep 1.5s before VAD trigger to capture phrase start
-        // Manual STT unload in event handler (autoUnload unloads everything).
+        config.warmupSTT = false  // Already warmed up during loadModels
+        config.preSpeechBufferDuration = 1.5
         config.autoUnloadModels = false
 
+        // All models preloaded + warmed up — no lazy loading, no downloads
         pipeline = VoicePipeline(
-            sttFactory: {
-                try await ParakeetASRModel.fromPretrained(
-                    modelId: ParakeetASRModel.int8iOS5sModelId  // Single 5s shape — minimum memory
-                ) { _, _ in }
-            },
-            ttsFactory: {
-                try await KokoroTTSModel.fromPretrained(
-                    modelId: KokoroTTSModel.int8iOSModelId,
-                    computeUnits: .cpuAndNeuralEngine,
-                    loadG2P: false  // Skip G2P neural models (~80MB) — dictionary handles common words
-                ) { _, _ in }
-            },
-            vad: vad,
-            llmFactory: { [weak self] in
-                #if targetEnvironment(simulator)
-                let llmUnits: MLComputeUnits = .all  // Simulator: no ANE, INT4 needs GPU
-                #else
-                let llmUnits: MLComputeUnits = .cpuAndNeuralEngine
-                #endif
-                let chat = try await Qwen3ChatModel.fromPretrained(computeUnits: llmUnits) { _, _ in }
-                let llm = Qwen3PipelineLLM(model: chat, systemPrompt: sysPrompt, sampling: sampling)
-                llm.onToken = { token in
-                    DispatchQueue.main.async { self?.appendToken(token) }
-                }
-                return llm
-            },
+            stt: stt, tts: tts, vad: vad, llm: llm,
             config: config,
             onEvent: { [weak self] event in
                 DispatchQueue.main.async { self?.handleEvent(event) }
