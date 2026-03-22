@@ -233,7 +233,12 @@ private final class LLMBridge {
 
     func unload() {
         guard factory != nil else { return }
+        _model?.cancel()
         _model = nil
+    }
+
+    func cancel() {
+        _model?.cancel()
     }
 
     var isLoaded: Bool { _model != nil }
@@ -435,6 +440,10 @@ public final class VoicePipeline {
     public func unloadSTT() { sttBridge.unload() }
     public func unloadTTS() { ttsBridge.unload() }
     public func unloadLLM() { llmBridge?.unload() }
+
+    /// Cancel LLM generation without unloading the model.
+    /// Keeps model warm (system prompt cached) for fast next turn.
+    public func cancelLLM() { llmBridge?.cancel() }
 
     deinit {
         if handle != nil {

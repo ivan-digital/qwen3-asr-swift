@@ -162,9 +162,9 @@ final class CompanionChatViewModel {
             pipelineLog.warning("[EVT] speechStarted (isGenerating=\(self.isGenerating))")
             isSpeechDetected = true
             pipelineState = "speech detected"
-            // Cancel LLM generation but don't unload — keep model warm for next turn
             if isGenerating {
-                // TODO: cancel without unload when pipeline supports it
+                pipeline?.cancelLLM()  // Cancel generation, keep model warm
+                player.fadeOutAndStop()
             }
 
         case .speechEnded:
