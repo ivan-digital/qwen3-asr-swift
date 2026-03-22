@@ -13,7 +13,11 @@ final class AudioPlayer {
     private var upsampler: AVAudioConverter?
     private var pendingBuffers = 0
     private var generationComplete = false
+    private var isFirstBuffer = true
     private let lock = NSLock()
+
+    /// Engine owned by this player (standalone mode).
+    private var ownedEngine: AVAudioEngine?
 
     /// Attach to an existing engine. Call once before play().
     /// - Parameters:
@@ -28,9 +32,37 @@ final class AudioPlayer {
         node.play()
     }
 
+    /// Create a standalone engine for playback (no mic, no AEC).
+    /// Used by Speak tab where no shared engine exists.
+    func ensureStandaloneEngine() {
+        guard playerNode == nil else { return }
+        let engine = AVAudioEngine()
+        let node = AVAudioPlayerNode()
+        let mixerFormat = engine.mainMixerNode.outputFormat(forBus: 0)
+        guard let monoFormat = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: mixerFormat.sampleRate,
+            channels: 1,
+            interleaved: false
+        ) else { return }
+
+        engine.attach(node)
+        engine.connect(node, to: engine.mainMixerNode, format: monoFormat)
+
+        do {
+            try engine.start()
+            node.play()
+            self.ownedEngine = engine
+            self.playerNode = node
+            self.outputFormat = monoFormat
+        } catch {
+            // Engine failed to start — playback won't work
+        }
+    }
+
     /// Schedule TTS audio samples for playback. Resamples if needed.
     func play(samples: [Float], sampleRate: Int = 24000) throws {
-        guard let playerNode, let outputFormat else { return }
+        guard playerNode != nil, let outputFormat else { return }
 
         let outputRate = outputFormat.sampleRate
         let inputRate = Double(sampleRate)
@@ -77,16 +109,40 @@ final class AudioPlayer {
 
     private func scheduleBuffer(_ samples: [Float], format: AVAudioFormat) {
         guard let playerNode else { return }
-        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(samples.count)) else { return }
-        buffer.frameLength = AVAudioFrameCount(samples.count)
-        memcpy(buffer.floatChannelData![0], samples, samples.count * MemoryLayout<Float>.size)
+
+        var output = samples
+
+        // Drop near-silent warmup chunks at the start of a generation cycle.
+        // TTS codec decoders emit multiple low-energy chunks before real speech.
+        if isFirstBuffer && !samples.isEmpty {
+            var sumSq: Float = 0
+            for s in samples { sumSq += s * s }
+            let rms = sqrt(sumSq / Float(samples.count))
+            if rms < 0.03 {
+                return  // Still warmup — drop and keep isFirstBuffer=true
+            }
+
+            // First real audio chunk — apply fade-in to prevent pop
+            isFirstBuffer = false
+            let fadeFrames = min(samples.count, Int(format.sampleRate * 0.005))  // 5ms
+            for i in 0..<fadeFrames {
+                output[i] *= Float(i) / Float(fadeFrames)
+            }
+        }
+
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(output.count)) else { return }
+        buffer.frameLength = AVAudioFrameCount(output.count)
+        memcpy(buffer.floatChannelData![0], output, output.count * MemoryLayout<Float>.size)
 
         lock.lock()
         pendingBuffers += 1
         isPlaying = true
         lock.unlock()
 
-        playerNode.scheduleBuffer(buffer) { [weak self] in
+        // Use .dataPlayedBack to ensure the callback fires only after the audio
+        // has actually been output through the speakers, not just consumed by the
+        // render thread. This prevents cutting off the last buffer.
+        playerNode.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
             guard let self else { return }
             self.lock.lock()
             self.pendingBuffers -= 1
@@ -107,7 +163,7 @@ final class AudioPlayer {
     }
 
     /// Signal that TTS generation is complete — no more chunks will arrive.
-    /// Fires onPlaybackFinished immediately if all buffers already drained.
+    /// Fires onPlaybackFinished if all buffers already drained.
     func markGenerationComplete() {
         lock.lock()
         generationComplete = true
@@ -115,8 +171,14 @@ final class AudioPlayer {
         lock.unlock()
 
         if done {
-            isPlaying = false
-            onPlaybackFinished?()
+            DispatchQueue.main.async {
+                self.lock.lock()
+                let stillDone = self.pendingBuffers <= 0 && self.generationComplete
+                self.lock.unlock()
+                guard stillDone else { return }
+                self.isPlaying = false
+                self.onPlaybackFinished?()
+            }
         }
     }
 
@@ -124,6 +186,7 @@ final class AudioPlayer {
     func resetGeneration() {
         lock.lock()
         generationComplete = false
+        isFirstBuffer = true
         lock.unlock()
     }
 
@@ -133,12 +196,9 @@ final class AudioPlayer {
         lock.lock()
         pendingBuffers = 0
         generationComplete = false
+        isFirstBuffer = true
         lock.unlock()
         isPlaying = false
-    }
-
-    func fadeOutAndStop() {
-        stop()
     }
 
     /// Detach from engine (call on pipeline stop).
@@ -151,6 +211,8 @@ final class AudioPlayer {
         playerNode = nil
         outputFormat = nil
         upsampler = nil
+        ownedEngine?.stop()
+        ownedEngine = nil
         lock.lock()
         pendingBuffers = 0
         lock.unlock()

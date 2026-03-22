@@ -75,8 +75,9 @@ final class EchoViewModel {
         var config = PipelineConfig()
         config.mode = .echo
         config.allowInterruptions = true
-        config.minSilenceDuration = 0.6
-        config.maxResponseDuration = 5.0
+        config.minSilenceDuration = 1.2       // Wait longer before ending speech (avoids mid-sentence cuts)
+        config.eagerSTT = false               // Wait for confirmed end-of-speech before transcribing
+        config.maxResponseDuration = 15.0
 
         pipeline = VoicePipeline(
             stt: asr,
@@ -158,7 +159,7 @@ final class EchoViewModel {
             player.resetGeneration()
         case .responseInterrupted:
             // User interrupted — fade out immediately
-            player.fadeOutAndStop()
+            player.stop()
             pipelineState = "interrupted → listening"
             appendLog("[Interrupted] Stopping playback")
         case .responseAudioDelta(let samples):
@@ -172,6 +173,10 @@ final class EchoViewModel {
         case .responseDone:
             appendLog("[Pipeline] Response done")
             player.markGenerationComplete()
+        case .toolCallStarted(let name):
+            appendLog("[Tool] \(name) started")
+        case .toolCallCompleted(let name, let result):
+            appendLog("[Tool] \(name) → \(result.prefix(100))")
         case .error(let msg):
             pipelineState = "error"
             appendLog("[ERROR] \(msg)")
@@ -276,11 +281,12 @@ final class EchoViewModel {
             guard count > 0 else { return }
             let samples = Array(UnsafeBufferPointer(start: outData[0], count: count))
 
-            sampleCounter += 1
-            if sampleCounter <= 3 {
+            let bufNum = sampleCounter + 1
+            sampleCounter = bufNum
+            if bufNum <= 3 {
                 let rms = sqrt(samples.map { $0 * $0 }.reduce(0, +) / Float(count))
                 DispatchQueue.main.async {
-                    self.appendLog("[Mic] Buffer #\(sampleCounter): \(count) samples, RMS=\(String(format: "%.6f", rms))")
+                    self.appendLog("[Mic] Buffer #\(bufNum): \(count) samples, RMS=\(String(format: "%.6f", rms))")
                 }
             }
 

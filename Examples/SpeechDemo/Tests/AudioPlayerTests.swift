@@ -7,15 +7,15 @@ final class AudioPlayerTests: XCTestCase {
 
     // MARK: - State machine tests (no audio hardware needed)
 
-    /// markGenerationComplete with zero pending buffers fires callback immediately.
+    /// markGenerationComplete with zero pending buffers fires callback (via main queue).
     func testMarkGenerationCompleteFiresWhenNoPendingBuffers() {
         let player = AudioPlayer()
 
-        var finished = false
-        player.onPlaybackFinished = { finished = true }
+        let exp = expectation(description: "playback finished")
+        player.onPlaybackFinished = { exp.fulfill() }
 
         player.markGenerationComplete()
-        XCTAssertTrue(finished, "Should fire immediately when pendingBuffers == 0")
+        wait(for: [exp], timeout: 1.0)
     }
 
     /// Without markGenerationComplete, callback never fires (even with no buffers).
@@ -26,7 +26,7 @@ final class AudioPlayerTests: XCTestCase {
         player.onPlaybackFinished = { finished = true }
 
         // Don't call markGenerationComplete
-        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
         XCTAssertFalse(finished, "Should not fire without markGenerationComplete")
     }
 
@@ -35,17 +35,23 @@ final class AudioPlayerTests: XCTestCase {
         let player = AudioPlayer()
 
         var finishCount = 0
-        player.onPlaybackFinished = { finishCount += 1 }
+        let exp = expectation(description: "two finishes")
+        exp.expectedFulfillmentCount = 2
+        player.onPlaybackFinished = {
+            finishCount += 1
+            exp.fulfill()
+        }
 
         // First cycle: mark complete
         player.markGenerationComplete()
-        XCTAssertEqual(finishCount, 1)
 
         // Reset for new cycle
         player.resetGeneration()
 
         // markGenerationComplete again — should fire (new cycle)
         player.markGenerationComplete()
+
+        wait(for: [exp], timeout: 1.0)
         XCTAssertEqual(finishCount, 2)
     }
 
@@ -54,29 +60,28 @@ final class AudioPlayerTests: XCTestCase {
         let player = AudioPlayer()
 
         var finishCount = 0
-        player.onPlaybackFinished = { finishCount += 1 }
+        let exp = expectation(description: "two finishes")
+        exp.expectedFulfillmentCount = 2
+        player.onPlaybackFinished = {
+            finishCount += 1
+            exp.fulfill()
+        }
 
         player.markGenerationComplete()
-        XCTAssertEqual(finishCount, 1)
+        // Let first callback fire
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
 
         player.stop()
 
         // New cycle after stop
         player.markGenerationComplete()
+
+        wait(for: [exp], timeout: 1.0)
         XCTAssertEqual(finishCount, 2)
     }
 
-    /// Simulates the real timeline: chunks arrive → responseDone → last buffer completes.
-    /// Without the fix, pendingBuffers hitting 0 between chunks would fire early.
+    /// Without markGenerationComplete, play() alone never triggers callback.
     func testRaceConditionPrevented() throws {
-        // This test verifies the fix conceptually:
-        // 1. Player has no engine (play() returns early, so pendingBuffers stays 0)
-        // 2. markGenerationComplete fires callback since pendingBuffers == 0
-        // 3. The key invariant: without markGenerationComplete, callback NEVER fires
-        //
-        // The full race condition requires real audio scheduling (buffer completion handlers).
-        // That requires audio hardware — tested manually via the Echo tab.
-
         let player = AudioPlayer()
 
         var callbackFired = false
@@ -88,12 +93,14 @@ final class AudioPlayerTests: XCTestCase {
 
         // Without engine, playerNode is nil → pendingBuffers stays 0
         // But callback still shouldn't fire without markGenerationComplete
-        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
         XCTAssertFalse(callbackFired, "Callback must not fire without markGenerationComplete")
 
         // Signal done
+        let exp = expectation(description: "callback fires")
+        player.onPlaybackFinished = { exp.fulfill() }
         player.markGenerationComplete()
-        XCTAssertTrue(callbackFired, "Callback fires after markGenerationComplete")
+        wait(for: [exp], timeout: 1.0)
     }
 
     /// Two full cycles back-to-back (simulates two Echo responses).
@@ -106,15 +113,17 @@ final class AudioPlayerTests: XCTestCase {
         // Cycle 1: responseCreated → chunks → responseDone
         player.resetGeneration()
         player.markGenerationComplete()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
         XCTAssertEqual(finishCount, 1)
 
         // Cycle 2: responseCreated → chunks → responseDone
         player.resetGeneration()
         // Verify no premature fire
-        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
         XCTAssertEqual(finishCount, 1, "Must not fire after reset")
 
         player.markGenerationComplete()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
         XCTAssertEqual(finishCount, 2)
     }
 
@@ -129,12 +138,14 @@ final class AudioPlayerTests: XCTestCase {
         player.resetGeneration()
         player.stop()  // User interrupted
 
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
         // No callback from interrupted cycle
         XCTAssertEqual(finishCount, 0)
 
         // New cycle after interrupt
         player.resetGeneration()
         player.markGenerationComplete()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
         XCTAssertEqual(finishCount, 1)
     }
 }
