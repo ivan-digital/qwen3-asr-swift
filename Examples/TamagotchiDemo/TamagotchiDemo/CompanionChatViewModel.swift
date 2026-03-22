@@ -101,7 +101,7 @@ final class CompanionChatViewModel {
             // Warmup: trigger CoreML compilation with dummy audio
             loadingStatus = "Warming up ASR..."
             loadProgress = 0.38
-            _ = asr.transcribe(audio: [Float](repeating: 0, count: 8000), sampleRate: 16000)
+            _ = asr.transcribe(audio: [Float](repeating: 0, count: 8000), sampleRate: 16000, language: nil)
             sttModel = asr
 
             loadingStatus = "Loading LLM..."
