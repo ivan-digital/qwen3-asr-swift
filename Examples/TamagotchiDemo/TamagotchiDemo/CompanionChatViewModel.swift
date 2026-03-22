@@ -53,8 +53,10 @@ final class CompanionChatViewModel {
     private var audioEngine: AVAudioEngine?
     private let player = StreamingAudioPlayer()
     private var waitingForPlaybackEnd = false
-    /// Mute mic feed to pipeline during TTS playback to prevent echo loop.
-    private var muteAudioFeed = false
+    /// True while TTS audio is playing through the speaker.
+    /// Used to raise VAD energy threshold so pipeline ignores echo
+    /// but still detects real speech (user speaking over TTS).
+    private var isSpeaking = false
     private let speechSynth = AVSpeechSynthesizer()
     private var speechDelegate: SpeechFinishedDelegate?
 
@@ -240,7 +242,7 @@ final class CompanionChatViewModel {
 
         case .responseInterrupted:
             player.fadeOutAndStop()
-            muteAudioFeed = false  // Resume mic on interruption
+            isSpeaking = false
             pipeline?.unloadLLM()  // Cancel LLM to unblock worker thread
             isGenerating = false
             currentAssistantIdx = nil
@@ -249,7 +251,7 @@ final class CompanionChatViewModel {
         case .responseAudioDelta(let samples):
             pipelineLog.warning("Event: responseAudioDelta \(samples.count) samples")
             pipelineState = "speaking..."
-            muteAudioFeed = true  // Stop feeding mic to pipeline during playback
+            isSpeaking = true
             recordTTSSamples(samples, sampleRate: 24000)
             do {
                 try player.play(samples: samples, sampleRate: 24000)
@@ -292,7 +294,7 @@ final class CompanionChatViewModel {
 
     private func resumeAfterResponse() {
         guard isListening else { return }
-        muteAudioFeed = false  // Resume mic feed after playback
+        isSpeaking = false
         pipeline?.resumeListening()
         pipelineState = "listening"
     }
@@ -335,10 +337,24 @@ final class CompanionChatViewModel {
 
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: hwFormat) { [weak self] buffer, _ in
             guard let self else { return }
-            guard !self.muteAudioFeed else { return }  // Muted during TTS playback
             guard let srcData = buffer.floatChannelData else { return }
             let frameLen = Int(buffer.frameLength)
             guard frameLen > 0 else { return }
+
+            // During TTS playback, suppress echo by zeroing low-energy audio.
+            // Real speech into the mic is much louder than speaker echo.
+            if self.isSpeaking {
+                var sum: Float = 0
+                let ptr = srcData[0]
+                for i in 0..<frameLen { sum += ptr[i] * ptr[i] }
+                let rms = sqrt(sum / Float(frameLen))
+                // Echo threshold: typical speaker echo is RMS < 0.05,
+                // direct speech into mic is RMS > 0.08
+                if rms < 0.06 {
+                    return  // Drop echo frames, don't feed to pipeline
+                }
+                // Loud enough to be real speech — allow through as interruption
+            }
 
             // Extract channel 0 into mono buffer
             guard let monoBuffer = AVAudioPCMBuffer(pcmFormat: monoFormat, frameCapacity: buffer.frameCapacity) else { return }
