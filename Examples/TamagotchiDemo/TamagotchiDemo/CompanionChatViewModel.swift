@@ -111,8 +111,7 @@ final class CompanionChatViewModel {
         pipeline = VoicePipeline(
             sttFactory: {
                 try await ParakeetASRModel.fromPretrained(
-                    modelId: ParakeetASRModel.int8iOSModelId,
-                    computeUnits: .cpuAndNeuralEngine  // Skip GPU plan compilation — saves memory + startup
+                    modelId: ParakeetASRModel.int8iOSModelId
                 ) { _, _ in }
             },
             ttsFactory: {
