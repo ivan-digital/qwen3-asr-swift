@@ -3,6 +3,20 @@ import Accelerate
 import MLX
 import AudioCommon
 
+/// MLX-free container for mel spectrogram data.
+/// Layout: `data` is a flat [Float] in row-major [melBins, timeFrames] order.
+public struct MelFeatures {
+    public let data: [Float]
+    public let melBins: Int
+    public let timeFrames: Int
+
+    public init(data: [Float], melBins: Int, timeFrames: Int) {
+        self.data = data
+        self.melBins = melBins
+        self.timeFrames = timeFrames
+    }
+}
+
 /// Whisper-style feature extractor for Qwen3-ASR
 /// Converts raw audio to mel spectrograms
 /// Parameters from HuggingFace preprocessor_config.json
@@ -320,5 +334,158 @@ public class WhisperFeatureExtractor {
 
         // Extract features
         return extractFeatures(processedAudio)
+    }
+
+    // MARK: - MLX-free variants (for CoreML-only path)
+
+    /// Extract mel spectrogram features without MLXArray dependency.
+    /// Produces identical output to `extractFeatures(_:)` but returns a plain `MelFeatures`
+    /// struct with layout `[melBins, timeFrames]` (transposed, same as the MLXArray version).
+    ///
+    /// All mel computation uses the same Accelerate/vDSP pipeline; only the final
+    /// transpose is done with a pure-Swift loop instead of `MLXArray.transposed`.
+    public func extractFeaturesRaw(_ audio: [Float]) -> MelFeatures {
+        let nBins = paddedFFT / 2 + 1  // 257 bins for 512-point FFT
+        let halfPadded = paddedFFT / 2  // 256
+
+        // Pad audio with reflect padding (like Whisper/librosa)
+        let padLength = nFFT / 2
+        var paddedAudio = [Float](repeating: 0, count: padLength + audio.count + padLength)
+
+        // Reflect pad left side
+        for i in 0..<padLength {
+            let srcIdx = min(padLength - i, audio.count - 1)
+            paddedAudio[i] = audio[max(0, srcIdx)]
+        }
+
+        // Copy original audio
+        for i in 0..<audio.count {
+            paddedAudio[padLength + i] = audio[i]
+        }
+
+        // Reflect pad right side
+        for i in 0..<padLength {
+            let srcIdx = audio.count - 2 - i
+            paddedAudio[padLength + audio.count + i] = audio[max(0, srcIdx)]
+        }
+
+        // Calculate number of frames
+        let nFrames = (paddedAudio.count - nFFT) / hopLength + 1
+
+        // --- Accelerate FFT-based STFT using vDSP_fft_zrip ---
+        var splitReal = [Float](repeating: 0, count: halfPadded)
+        var splitImag = [Float](repeating: 0, count: halfPadded)
+        var paddedFrame = [Float](repeating: 0, count: paddedFFT)
+
+        var magnitude = [Float](repeating: 0, count: nFrames * nBins)
+
+        for frame in 0..<nFrames {
+            let start = frame * hopLength
+
+            paddedAudio.withUnsafeBufferPointer { buf in
+                vDSP_vmul(buf.baseAddress! + start, 1, hannWindow, 1, &paddedFrame, 1, vDSP_Length(nFFT))
+            }
+            for i in nFFT..<paddedFFT {
+                paddedFrame[i] = 0
+            }
+
+            for i in 0..<halfPadded {
+                splitReal[i] = paddedFrame[2 * i]
+                splitImag[i] = paddedFrame[2 * i + 1]
+            }
+
+            splitReal.withUnsafeMutableBufferPointer { realBuf in
+                splitImag.withUnsafeMutableBufferPointer { imagBuf in
+                    var splitComplex = DSPSplitComplex(
+                        realp: realBuf.baseAddress!,
+                        imagp: imagBuf.baseAddress!)
+                    vDSP_fft_zrip(fftSetup, &splitComplex, 1, log2PaddedFFT, FFTDirection(kFFTDirection_Forward))
+                }
+            }
+
+            let baseIdx = frame * nBins
+            magnitude[baseIdx] = splitReal[0] * splitReal[0]
+            magnitude[baseIdx + halfPadded] = splitImag[0] * splitImag[0]
+            for k in 1..<halfPadded {
+                magnitude[baseIdx + k] = splitReal[k] * splitReal[k] + splitImag[k] * splitImag[k]
+            }
+        }
+
+        // --- BLAS sgemm for mel filterbank ---
+        guard let filterbank = melFilterbank else {
+            fatalError("Mel filterbank not initialized")
+        }
+
+        var melSpec = [Float](repeating: 0, count: nFrames * nMels)
+
+        var filterbankT = [Float](repeating: 0, count: nBins * nMels)
+        vDSP_mtrans(filterbank, 1, &filterbankT, 1, vDSP_Length(nBins), vDSP_Length(nMels))
+
+        vDSP_mmul(magnitude, 1, filterbankT, 1, &melSpec, 1,
+                  vDSP_Length(nFrames), vDSP_Length(nMels), vDSP_Length(nBins))
+
+        // --- Vectorized log10, clamp, normalize ---
+        let count = melSpec.count
+        var countN = Int32(count)
+
+        var epsilon: Float = 1e-10
+        vDSP_vclip(melSpec, 1, &epsilon, [Float.greatestFiniteMagnitude], &melSpec, 1, vDSP_Length(count))
+
+        vvlog10f(&melSpec, melSpec, &countN)
+
+        var maxVal: Float = -Float.infinity
+        vDSP_maxv(melSpec, 1, &maxVal, vDSP_Length(count))
+
+        var minClamp = maxVal - 8.0
+        var maxClamp = Float.greatestFiniteMagnitude
+        vDSP_vclip(melSpec, 1, &minClamp, &maxClamp, &melSpec, 1, vDSP_Length(count))
+
+        var scale: Float = 0.25
+        var offset: Float = 1.0
+        vDSP_vsmsa(melSpec, 1, &scale, &offset, &melSpec, 1, vDSP_Length(count))
+
+        // CRITICAL: HuggingFace WhisperFeatureExtractor removes the last frame
+        let trimmedFrames = nFrames - 1
+        let trimmedMelSpec = Array(melSpec.prefix(trimmedFrames * nMels))
+
+        let maxFrames = 1200 * sampleRate / hopLength  // 120000 frames
+        let finalFrames: Int
+        let finalMelSpec: [Float]
+        if trimmedFrames > maxFrames {
+            finalFrames = maxFrames
+            finalMelSpec = Array(trimmedMelSpec.prefix(maxFrames * nMels))
+        } else {
+            finalFrames = trimmedFrames
+            finalMelSpec = trimmedMelSpec
+        }
+
+        // Transpose [timeFrames, melBins] -> [melBins, timeFrames] in pure Swift
+        var transposed = [Float](repeating: 0, count: finalFrames * nMels)
+        for t in 0..<finalFrames {
+            for m in 0..<nMels {
+                transposed[m * finalFrames + t] = finalMelSpec[t * nMels + m]
+            }
+        }
+        return MelFeatures(data: transposed, melBins: nMels, timeFrames: finalFrames)
+    }
+
+    /// Process audio for Qwen3-ASR without MLXArray dependency.
+    /// MLX-free equivalent of `process(_:sampleRate:)`.
+    /// - Parameter audio: Raw audio samples (any sample rate)
+    /// - Parameter inputSampleRate: Sample rate of input audio
+    /// - Returns: `MelFeatures` with layout `[melBins, timeFrames]`
+    public func processRaw(_ audio: [Float], sampleRate inputSampleRate: Int) -> MelFeatures {
+        var processedAudio = audio
+
+        // Resample if needed
+        if inputSampleRate != sampleRate {
+            processedAudio = AudioFileLoader.resample(audio, from: inputSampleRate, to: sampleRate)
+        }
+
+        // NOTE: HuggingFace WhisperFeatureExtractor does NOT normalize audio amplitude
+        // The model expects raw audio values (typically in [-1, 1] range from int16 conversion)
+        // Do NOT divide by max absolute value!
+
+        return extractFeaturesRaw(processedAudio)
     }
 }
