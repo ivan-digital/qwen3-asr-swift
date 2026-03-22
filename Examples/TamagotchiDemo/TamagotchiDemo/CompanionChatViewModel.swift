@@ -123,7 +123,12 @@ final class CompanionChatViewModel {
             },
             vad: vad,
             llmFactory: { [weak self] in
-                let chat = try await Qwen3ChatModel.fromPretrained(computeUnits: .cpuAndNeuralEngine) { _, _ in }
+                #if targetEnvironment(simulator)
+                let llmUnits: MLComputeUnits = .all  // Simulator: no ANE, INT4 needs GPU
+                #else
+                let llmUnits: MLComputeUnits = .cpuAndNeuralEngine
+                #endif
+                let chat = try await Qwen3ChatModel.fromPretrained(computeUnits: llmUnits) { _, _ in }
                 let llm = Qwen3PipelineLLM(model: chat, systemPrompt: sysPrompt, sampling: sampling)
                 llm.onToken = { token in
                     DispatchQueue.main.async { self?.appendToken(token) }
