@@ -38,17 +38,19 @@ No speaker embeddings are produced — `--target-speaker` and `--embedding-engin
 ### Pyannote Pipeline
 
 ```
-Audio → [Segmentation + Activity Chaining] → [Post-hoc Embedding] → Diarized Segments
+Audio → [Segmentation] → [Per-Window Embedding] → [Constrained Clustering] → Diarized Segments
 ```
 
-**Stage 1 — Segmentation + Speaker Chaining**: Pyannote processes 10s sliding windows with 50% overlap. The `PowersetDecoder` extracts per-speaker probabilities from the 7-class powerset output:
+**Stage 1 — Segmentation**: Pyannote processes 10s sliding windows with 50% overlap. The `PowersetDecoder` extracts per-speaker probabilities from the 7-class powerset output:
 - spk1 = P(class 1) + P(class 4) + P(class 5)
 - spk2 = P(class 2) + P(class 4) + P(class 6)
 - spk3 = P(class 3) + P(class 5) + P(class 6)
 
-Adjacent windows share a 5-second overlap region. Speaker identity is propagated across windows by computing **Pearson correlation** between speaker probability tracks in the overlap zone, then applying greedy exclusive matching to assign consistent global speaker IDs. Tracks with mean probability < 5% are treated as inactive. Hysteresis binarization (onset/offset) produces final segments, clipped to each window's center zone.
+Hysteresis binarization (onset/offset) produces per-speaker speech segments within each window.
 
-**Stage 2 — Post-hoc Embedding**: After diarization is complete, WeSpeaker ResNet34-LM extracts a 256-dim centroid embedding per speaker (concatenating all their audio). These embeddings are used for target speaker extraction (`--target-speaker`) and returned in `DiarizationResult.speakerEmbeddings`. Embeddings do not drive the speaker assignment.
+**Stage 2 — Per-Window Embedding**: For each local speaker in each window, non-overlapping speech frames (where only this speaker is active) are extracted and passed through WeSpeaker ResNet34-LM to produce a 256-dim embedding. Speakers with < 0.5s of non-overlapping speech are skipped.
+
+**Stage 3 — Constrained Agglomerative Clustering**: Embeddings are clustered using centroid linkage with cosine distance. A **same-window constraint** ensures that speakers from the same window are never merged (they are known to be different). Merging stops when the minimum cosine distance between unconstrained pairs exceeds the threshold (default 0.715). Cluster IDs are mapped back to segments, clipped to center zones, and merged.
 
 ### WeSpeaker ResNet34-LM
 
@@ -214,7 +216,8 @@ Sources/SpeechVAD/
 ├── WeSpeaker.swift                    Public API: embed(), fromPretrained(), engine selection
 ├── CoreMLWeSpeakerInference.swift     CoreML inference (EnumeratedShapes, float16)
 ├── PowersetDecoder.swift              7-class powerset → per-speaker probs
-├── DiarizationPipeline.swift          Pyannote pipeline (activity chaining + speaker extraction)
+├── DiarizationHelpers.swift            Merge segments, compact IDs, constrained clustering
+├── DiarizationPipeline.swift          Pyannote pipeline (embedding clustering + speaker extraction)
 ├── SortformerConfig.swift             Sortformer model configuration
 ├── SortformerMelExtractor.swift       128-dim log-mel for Sortformer (Hann window)
 ├── SortformerModel.swift              CoreML wrapper for Sortformer inference

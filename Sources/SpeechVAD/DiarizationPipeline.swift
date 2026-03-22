@@ -17,8 +17,8 @@ public struct DiarizationConfig: Sendable {
     public var minSpeechDuration: Float
     /// Minimum silence duration between segments in seconds
     public var minSilenceDuration: Float
-    /// Cosine similarity threshold for merging speaker clusters (0.0-1.0)
-    /// Higher = fewer merges (more speakers). Default 0.5.
+    /// Cosine distance threshold for merging speaker clusters (0.0-2.0).
+    /// Lower = more merges (fewer speakers). Default 0.715.
     public var clusteringThreshold: Float
 
     public init(
@@ -26,7 +26,7 @@ public struct DiarizationConfig: Sendable {
         offset: Float = 0.3,
         minSpeechDuration: Float = 0.3,
         minSilenceDuration: Float = 0.15,
-        clusteringThreshold: Float = 1.0  // disabled by default (WeSpeaker similarities too high for conversational audio)
+        clusteringThreshold: Float = 0.715
     ) {
         self.onset = onset
         self.offset = offset
@@ -58,16 +58,15 @@ public struct DiarizationResult: Sendable {
 
 // MARK: - Pipeline
 
-/// Pyannote-based speaker diarization: segmentation + activity-based speaker chaining.
+/// Pyannote-based speaker diarization: segmentation + per-window embedding + constrained clustering.
 ///
 /// - Warning: This class is not thread-safe. Create separate instances for concurrent use.
 ///
 /// Pipeline (with optional VAD pre-filter):
 /// 0. **VAD Pre-filter** (optional): Silero VAD masks non-speech regions → reduces false alarms
-/// 1. **Segmentation + Speaker Chaining**: Pyannote on 10s sliding windows (50% overlap) →
-///    per-speaker probability tracks → Pearson correlation in overlap zones → greedy exclusive
-///    matching → global speaker IDs
-/// 2. **Post-hoc Embedding**: WeSpeaker 256-dim centroid per speaker (for target speaker extraction)
+/// 1. **Segmentation**: Pyannote on 10s sliding windows (50% overlap) → per-speaker probability tracks
+/// 2. **Per-window Embedding**: WeSpeaker 256-dim embedding per local speaker from non-overlapping speech
+/// 3. **Constrained Clustering**: Agglomerative clustering with same-window constraint → global speaker IDs
 ///
 /// ```swift
 /// let pipeline = try await PyannoteDiarizationPipeline.fromPretrained(useVADFilter: true)
@@ -195,49 +194,9 @@ public final class PyannoteDiarizationPipeline {
             return DiarizationResult(segments: [], numSpeakers: 0, speakerEmbeddings: [])
         }
 
-        // Stage 1: Per-window segmentation with probability-based speaker chaining
-        let (segments, numSpeakers) = runActivityChainedDiarization(
+        // Run embedding-clustered diarization pipeline
+        return runEmbeddingClusteredDiarization(
             samples: samples, config: config, speechMask: speechMask)
-
-        guard !segments.isEmpty else {
-            return DiarizationResult(segments: [], numSpeakers: 0, speakerEmbeddings: [])
-        }
-
-        let merged = DiarizationHelpers.mergeSegments(
-            segments, minSilence: config.minSilenceDuration)
-
-        // Stage 2: Compute per-speaker embeddings
-        var speakerEmbeddings = [[Float]]()
-        for spk in 0..<numSpeakers {
-            var spkAudio = [Float]()
-            for seg in merged where seg.speakerId == spk {
-                let s = max(0, Int(seg.startTime * Float(segConfig.sampleRate)))
-                let e = min(samples.count, Int(seg.endTime * Float(segConfig.sampleRate)))
-                if e > s { spkAudio.append(contentsOf: samples[s..<e]) }
-            }
-            if spkAudio.count >= segConfig.sampleRate / 4 {
-                speakerEmbeddings.append(embeddingModel.embed(
-                    audio: spkAudio, sampleRate: segConfig.sampleRate))
-            } else {
-                speakerEmbeddings.append([Float](repeating: 0, count: 256))
-            }
-        }
-
-        // Stage 3: Embedding-based agglomerative clustering
-        // Merge speaker clusters with high cosine similarity to fix
-        // speaker confusion from activity-based chaining.
-        let (refinedSegments, refinedEmbeddings, refinedNumSpeakers) =
-            refineWithEmbeddings(
-                segments: merged,
-                embeddings: speakerEmbeddings,
-                numSpeakers: numSpeakers,
-                threshold: config.clusteringThreshold)
-
-        return DiarizationResult(
-            segments: refinedSegments,
-            numSpeakers: refinedNumSpeakers,
-            speakerEmbeddings: refinedEmbeddings
-        )
     }
 
     /// Extract segments of a target speaker from audio.
@@ -278,7 +237,7 @@ public final class PyannoteDiarizationPipeline {
             .map { SpeechSegment(startTime: $0.startTime, endTime: $0.endTime) }
     }
 
-    // MARK: - Activity-Based Speaker Chaining
+    // MARK: - Embedding-Clustered Diarization
 
     /// Per-window raw probability tracks (3 speakers × nFrames).
     private struct WindowProbs {
@@ -288,118 +247,35 @@ public final class PyannoteDiarizationPipeline {
         let tracks: [[Float]]
     }
 
-    /// Run diarization by chaining speakers across windows using activity correlation
-    /// in the overlap region (no embedding-based matching).
-    ///
-    /// Refine speaker assignments using embedding-based agglomerative clustering.
-    ///
-    /// Activity-based chaining can produce fragmented speaker IDs (same person
-    /// gets different IDs in different windows). This step computes cosine
-    /// similarity between speaker embeddings and merges clusters above threshold.
-    private func refineWithEmbeddings(
-        segments: [DiarizedSegment],
-        embeddings: [[Float]],
-        numSpeakers: Int,
-        threshold: Float
-    ) -> ([DiarizedSegment], [[Float]], Int) {
-        guard numSpeakers > 1 else {
-            return (segments, embeddings, numSpeakers)
-        }
-
-        // Build speaker ID mapping: start with identity
-        var idMap = [Int](0..<numSpeakers)
-
-        // Agglomerative clustering: merge most similar pair until below threshold
-        var active = Set(0..<numSpeakers)
-        // Track merged embeddings (mean of merged clusters)
-        var clusterEmbeddings = embeddings
-
-        while active.count > 1 {
-            // Find most similar pair
-            var bestSim: Float = -1
-            var bestI = -1, bestJ = -1
-
-            let activeList = active.sorted()
-            for ai in 0..<activeList.count {
-                for aj in (ai + 1)..<activeList.count {
-                    let i = activeList[ai], j = activeList[aj]
-                    // Skip zero embeddings (insufficient audio)
-                    let normI = clusterEmbeddings[i].reduce(Float(0)) { $0 + $1 * $1 }
-                    let normJ = clusterEmbeddings[j].reduce(Float(0)) { $0 + $1 * $1 }
-                    guard normI > 0.01 && normJ > 0.01 else { continue }
-
-                    let sim = WeSpeakerModel.cosineSimilarity(
-                        clusterEmbeddings[i], clusterEmbeddings[j])
-                    if sim > bestSim {
-                        bestSim = sim
-                        bestI = i
-                        bestJ = j
-                    }
-                }
-            }
-
-            // Stop if best similarity is below threshold
-            guard bestSim >= threshold && bestI >= 0 else { break }
-
-            // Merge bestJ into bestI
-            // Update embedding: average of the two
-            for d in 0..<clusterEmbeddings[bestI].count {
-                clusterEmbeddings[bestI][d] = (clusterEmbeddings[bestI][d] + clusterEmbeddings[bestJ][d]) / 2.0
-            }
-
-            // Remap all segments with bestJ to bestI
-            for k in 0..<numSpeakers {
-                if idMap[k] == bestJ { idMap[k] = bestI }
-            }
-
-            active.remove(bestJ)
-        }
-
-        // Apply remapping and compact IDs
-        let remapped = segments.map { seg in
-            DiarizedSegment(
-                startTime: seg.startTime,
-                endTime: seg.endTime,
-                speakerId: idMap[seg.speakerId])
-        }
-
-        let compacted = DiarizationHelpers.compactSpeakerIds(remapped)
-        let finalNumSpeakers = Set(compacted.map(\.speakerId)).count
-
-        // Collect final embeddings
-        let finalEmbeddings: [[Float]]
-        if finalNumSpeakers > 0 {
-            var embMap = [[Float]](repeating: [], count: finalNumSpeakers)
-            let uniqueIds = active.sorted()
-            for (newId, oldId) in uniqueIds.enumerated() where newId < finalNumSpeakers {
-                embMap[newId] = clusterEmbeddings[oldId]
-            }
-            finalEmbeddings = embMap
-        } else {
-            finalEmbeddings = []
-        }
-
-        return (compacted, finalEmbeddings, finalNumSpeakers)
+    /// Per-window per-speaker embedding for clustering.
+    private struct WindowSpeakerEmbedding {
+        let windowIndex: Int
+        let localSpeakerId: Int
+        let embedding: [Float]
     }
 
-    /// With 50% overlapping windows, adjacent windows share a half-window overlap region.
-    /// The activity patterns of the 3 local speakers in this overlap are compared via
-    /// Pearson correlation to find the best permutation mapping between windows.
-    private func runActivityChainedDiarization(
+    /// Run diarization using per-window speaker embeddings + constrained agglomerative clustering.
+    ///
+    /// 1. Segment all windows → per-speaker probability tracks
+    /// 2. Extract per-window per-speaker embeddings from non-overlapping speech
+    /// 3. Constrained clustering (same-window items never merge) → global speaker IDs
+    /// 4. Map cluster IDs back to binarized segments
+    private func runEmbeddingClusteredDiarization(
         samples: [Float],
         config: DiarizationConfig,
         speechMask: [SpeechSegment]?
-    ) -> (segments: [DiarizedSegment], numSpeakers: Int) {
+    ) -> DiarizationResult {
         let windowDuration: Float = 10.0
         let sampleRate = segConfig.sampleRate
         let windowSamples = Int(windowDuration * Float(sampleRate))
         let framesPerChunk = 589
         let frameDuration = windowDuration / Float(framesPerChunk)
         let stepSamples = windowSamples / 2  // 50% overlap
-        let halfFrames = framesPerChunk / 2  // ~294 frames in overlap
 
         let numSamples = samples.count
-        guard numSamples > 0 else { return ([], 0) }
+        guard numSamples > 0 else {
+            return DiarizationResult(segments: [], numSpeakers: 0, speakerEmbeddings: [])
+        }
 
         // Generate window positions with 50% overlap
         var positions = [(start: Int, end: Int)]()
@@ -419,7 +295,7 @@ public final class PyannoteDiarizationPipeline {
         // Step 1: Run segmentation on all windows, collect probability tracks
         var windowProbs = [WindowProbs]()
 
-        for (_, (start, end)) in positions.enumerated() {
+        for (start, end) in positions {
             var window = Array(samples[start..<end])
             if window.count < windowSamples {
                 window.append(contentsOf: [Float](repeating: 0, count: windowSamples - window.count))
@@ -437,107 +313,96 @@ public final class PyannoteDiarizationPipeline {
             windowProbs.append(WindowProbs(startSample: start, endSample: end, tracks: tracks))
         }
 
-        guard !windowProbs.isEmpty else { return ([], 0) }
+        guard !windowProbs.isEmpty else {
+            return DiarizationResult(segments: [], numSpeakers: 0, speakerEmbeddings: [])
+        }
 
-        // Step 2: Chain speakers across adjacent windows using overlap correlation
-        // globalPermutation[w][localSpk] = global speaker ID for window w, local speaker localSpk
-        var globalPermutation = [[Int]](repeating: [0, 1, 2], count: windowProbs.count)
-        var maxGlobalSpk = 2  // max global speaker ID used so far
+        // Step 2: Extract per-window per-speaker embeddings from non-overlapping speech
+        let minEmbeddingSamples = sampleRate / 2  // 0.5s minimum for embedding
+        var windowEmbeddings = [WindowSpeakerEmbedding]()
 
-        for w in 1..<windowProbs.count {
-            let prev = windowProbs[w - 1]
-            let curr = windowProbs[w]
+        for (wIdx, wp) in windowProbs.enumerated() {
+            let windowStartSample = wp.startSample
 
-            // The overlap region: second half of prev == first half of curr
-            // prev frames [halfFrames...589) overlap with curr frames [0...halfFrames)
-            let overlapFrames = min(halfFrames, prev.tracks[0].count - halfFrames,
-                                     curr.tracks[0].count)
-            guard overlapFrames > 10 else {
-                // No meaningful overlap — assign new IDs
-                globalPermutation[w] = [maxGlobalSpk + 1, maxGlobalSpk + 2, maxGlobalSpk + 3]
-                maxGlobalSpk += 3
-                continue
-            }
+            for localSpk in 0..<3 {
+                let probs = wp.tracks[localSpk]
 
-            // Determine which tracks are "active" (have meaningful speech) in the overlap
-            let activityThreshold: Float = 0.05  // mean prob > 5% → active
-            var prevActive = [Int]()
-            var currActive = [Int]()
-            var prevSlices = [[Float]](repeating: [], count: 3)
-            var currSlices = [[Float]](repeating: [], count: 3)
+                // Binarize this speaker's track
+                let binarySegments = PowersetDecoder.binarize(
+                    probs: probs, onset: config.onset,
+                    offset: config.offset, frameDuration: frameDuration)
 
-            for p in 0..<3 {
-                let slice = Array(prev.tracks[p][halfFrames..<(halfFrames + overlapFrames)])
-                prevSlices[p] = slice
-                let mean = slice.reduce(0, +) / Float(overlapFrames)
-                if mean > activityThreshold { prevActive.append(p) }
-            }
-            for c in 0..<3 {
-                let slice = Array(curr.tracks[c][0..<overlapFrames])
-                currSlices[c] = slice
-                let mean = slice.reduce(0, +) / Float(overlapFrames)
-                if mean > activityThreshold { currActive.append(c) }
-            }
+                guard !binarySegments.isEmpty else { continue }
 
-            let prevMapping = globalPermutation[w - 1]
-            var currMapping = [Int](repeating: -1, count: 3)
+                // Collect audio from frames where ONLY this speaker is active (non-overlapping)
+                var spkAudio = [Float]()
 
-            if prevActive.isEmpty || currActive.isEmpty {
-                // No active speakers in overlap — preserve order from previous window
-                currMapping = prevMapping
-            } else {
-                // Compute correlation matrix only for active tracks
-                // Then use greedy exclusive matching
-                var pairs = [(corr: Float, prevLocal: Int, currLocal: Int)]()
-                for p in prevActive {
-                    for c in currActive {
-                        let corr = activityCorrelation(prevSlices[p], currSlices[c])
-                        pairs.append((corr, p, c))
-                    }
-                }
-                pairs.sort { $0.corr > $1.corr }
+                for seg in binarySegments {
+                    let segStartFrame = Int(seg.startTime / frameDuration)
+                    let segEndFrame = min(Int(seg.endTime / frameDuration), probs.count)
 
-                var usedPrev = Set<Int>()
-                var usedCurr = Set<Int>()
-                for (_, p, c) in pairs {
-                    if usedPrev.contains(p) || usedCurr.contains(c) { continue }
-                    currMapping[c] = prevMapping[p]
-                    usedPrev.insert(p)
-                    usedCurr.insert(c)
-                }
+                    for frame in segStartFrame..<segEndFrame {
+                        // Check if other speakers are below offset at this frame
+                        var otherActive = false
+                        for otherSpk in 0..<3 where otherSpk != localSpk {
+                            if wp.tracks[otherSpk][frame] >= config.offset {
+                                otherActive = true
+                                break
+                            }
+                        }
+                        if otherActive { continue }
 
-                // Inactive curr tracks: assign to unmatched prev globals (by order)
-                var unmatchedPrevGlobals = [Int]()
-                for p in 0..<3 {
-                    if !usedPrev.contains(p) {
-                        unmatchedPrevGlobals.append(prevMapping[p])
-                    }
-                }
-                var unmatchedIdx = 0
-                for c in 0..<3 {
-                    if currMapping[c] < 0 {
-                        if unmatchedIdx < unmatchedPrevGlobals.count {
-                            currMapping[c] = unmatchedPrevGlobals[unmatchedIdx]
-                            unmatchedIdx += 1
-                        } else {
-                            maxGlobalSpk += 1
-                            currMapping[c] = maxGlobalSpk
+                        // Extract audio samples for this frame
+                        let frameStartSample = windowStartSample + Int(Float(frame) * frameDuration * Float(sampleRate))
+                        let frameEndSample = min(
+                            windowStartSample + Int(Float(frame + 1) * frameDuration * Float(sampleRate)),
+                            samples.count
+                        )
+                        if frameEndSample > frameStartSample {
+                            spkAudio.append(contentsOf: samples[frameStartSample..<frameEndSample])
                         }
                     }
                 }
-            }
 
-            globalPermutation[w] = currMapping
+                // Need minimum 0.5s of audio for a reliable embedding
+                guard spkAudio.count >= minEmbeddingSamples else { continue }
+
+                let embedding = embeddingModel.embed(audio: spkAudio, sampleRate: sampleRate)
+                windowEmbeddings.append(WindowSpeakerEmbedding(
+                    windowIndex: wIdx, localSpeakerId: localSpk, embedding: embedding))
+            }
         }
 
-        // Step 3: Binarize and build segments with global speaker IDs
+        // Handle edge case: no embeddings could be extracted
+        guard !windowEmbeddings.isEmpty else {
+            return DiarizationResult(segments: [], numSpeakers: 0, speakerEmbeddings: [])
+        }
+
+        // Step 3: Constrained agglomerative clustering
+        let clusterItems = windowEmbeddings.map {
+            DiarizationHelpers.ClusterItem(
+                windowIndex: $0.windowIndex,
+                localSpeakerId: $0.localSpeakerId,
+                embedding: $0.embedding)
+        }
+
+        let (clusterAssignment, centroids) = DiarizationHelpers.constrainedAgglomerativeClustering(
+            items: clusterItems, threshold: config.clusteringThreshold)
+
+        // Build mapping: (windowIndex, localSpeakerId) → global cluster ID
+        var localToGlobal = [Int: [Int: Int]]()  // windowIndex → (localSpeakerId → globalId)
+        for (i, we) in windowEmbeddings.enumerated() {
+            localToGlobal[we.windowIndex, default: [:]][we.localSpeakerId] = clusterAssignment[i]
+        }
+
+        // Step 4: Build segments with global speaker IDs
         var diarizedSegments = [DiarizedSegment]()
 
         for (w, wp) in windowProbs.enumerated() {
             let windowStartTime = Float(wp.startSample) / Float(sampleRate)
             let windowEndTime = Float(wp.endSample) / Float(sampleRate)
 
-            // Center zone ownership
+            // Center zone ownership (same as before)
             let prevEnd = w > 0 ?
                 Float(positions[w - 1].end) / Float(sampleRate) : 0
             let nextStart = w + 1 < positions.count ?
@@ -547,7 +412,10 @@ public final class PyannoteDiarizationPipeline {
                 (windowEndTime + nextStart) / 2 : Float(numSamples) / Float(sampleRate)
 
             for localSpk in 0..<3 {
-                let globalSpk = globalPermutation[w][localSpk]
+                guard let globalSpk = localToGlobal[w]?[localSpk] else {
+                    continue  // No embedding for this speaker — skip (insufficient audio)
+                }
+
                 let probs = wp.tracks[localSpk]
                 let segments = PowersetDecoder.binarize(
                     probs: probs, onset: config.onset,
@@ -588,37 +456,31 @@ public final class PyannoteDiarizationPipeline {
 
         diarizedSegments.sort { $0.startTime < $1.startTime }
 
-        // Compact speaker IDs (remove gaps)
+        // Compact speaker IDs and merge
         diarizedSegments = DiarizationHelpers.compactSpeakerIds(diarizedSegments)
-        let numCompacted = Set(diarizedSegments.map(\.speakerId)).count
+        let merged = DiarizationHelpers.mergeSegments(
+            diarizedSegments, minSilence: config.minSilenceDuration)
+        let numSpeakers = Set(merged.map(\.speakerId)).count
 
-        return (diarizedSegments, numCompacted)
-    }
-
-    /// Correlation between two activity probability vectors.
-    /// Returns value in [-1, 1]; high correlation means similar activity patterns.
-    private func activityCorrelation(_ a: [Float], _ b: [Float]) -> Float {
-        let n = min(a.count, b.count)
-        guard n > 1 else { return 0 }
-
-        var sumA: Float = 0, sumB: Float = 0
-        for i in 0..<n { sumA += a[i]; sumB += b[i] }
-        let meanA = sumA / Float(n)
-        let meanB = sumB / Float(n)
-
-        var cov: Float = 0, varA: Float = 0, varB: Float = 0
-        for i in 0..<n {
-            let da = a[i] - meanA
-            let db = b[i] - meanB
-            cov += da * db
-            varA += da * da
-            varB += db * db
+        // Re-compact centroids to match compacted speaker IDs
+        let finalCentroids: [[Float]]
+        if numSpeakers <= centroids.count {
+            finalCentroids = Array(centroids.prefix(numSpeakers))
+        } else {
+            // Pad with zero embeddings for speakers that had no embedding
+            var padded = centroids
+            while padded.count < numSpeakers {
+                padded.append([Float](repeating: 0, count: 256))
+            }
+            finalCentroids = padded
         }
 
-        let denom = sqrt(varA * varB)
-        return denom > 1e-10 ? cov / denom : 0
+        return DiarizationResult(
+            segments: merged,
+            numSpeakers: numSpeakers,
+            speakerEmbeddings: finalCentroids
+        )
     }
-
 
     /// Trim a segment to intersect with speech regions.
     private func trimToSpeechMask(

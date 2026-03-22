@@ -36,8 +36,8 @@ public struct DiarizeCommand: ParsableCommand {
     @Option(name: .long, help: "Minimum silence between segments in seconds (default 0.15)")
     public var minSilence: Float = 0.15
 
-    @Option(name: .long, help: "Cosine similarity threshold for merging speaker clusters (default 1.0 = disabled)")
-    public var clusterThreshold: Float = 1.0
+    @Option(name: .long, help: "Cosine distance threshold for speaker clustering (default 0.715, lower = fewer speakers)")
+    public var clusterThreshold: Float = 0.715
 
     public init() {}
 

@@ -13,6 +13,7 @@ final class WeSpeakerTests: XCTestCase {
         XCTAssertEqual(config.offset, 0.3, accuracy: 0.001)
         XCTAssertEqual(config.minSpeechDuration, 0.3, accuracy: 0.001)
         XCTAssertEqual(config.minSilenceDuration, 0.15, accuracy: 0.001)
+        XCTAssertEqual(config.clusteringThreshold, 0.715, accuracy: 0.001)
     }
 
     func testDiarizedSegmentDuration() {
@@ -275,22 +276,36 @@ final class E2EWeSpeakerTests: XCTestCase {
         let (samples, sampleRate) = try AudioFileLoader.loadWAV(url: audioURL)
         let result = pipeline.diarize(audio: samples, sampleRate: sampleRate, config: .default)
 
-        // Should detect at least one speaker segment
+        // Single-speaker test audio → exactly 1 speaker
+        XCTAssertEqual(result.numSpeakers, 1,
+                       "Test audio has 1 speaker (got \(result.numSpeakers))")
         XCTAssertGreaterThan(result.segments.count, 0)
-        XCTAssertGreaterThanOrEqual(result.numSpeakers, 1)
 
-        // All segments should have valid times
+        // All segments should have valid times within audio bounds
+        let audioDuration = Float(samples.count) / Float(sampleRate)
         for seg in result.segments {
             XCTAssertGreaterThanOrEqual(seg.startTime, 0)
             XCTAssertGreaterThan(seg.endTime, seg.startTime)
+            XCTAssertLessThanOrEqual(seg.endTime, audioDuration + 0.1)
             XCTAssertGreaterThanOrEqual(seg.speakerId, 0)
             XCTAssertLessThan(seg.speakerId, result.numSpeakers)
         }
+
+        // Speech region should be roughly 5-8.5s
+        let totalSpeech = result.segments.reduce(Float(0)) { $0 + $1.duration }
+        XCTAssertGreaterThan(totalSpeech, 2.0,
+                             "Should detect at least 2s of speech (got \(totalSpeech)s)")
+        XCTAssertLessThan(totalSpeech, 6.0,
+                          "Should not detect more than 6s of speech (got \(totalSpeech)s)")
 
         // Should have centroid for each speaker
         XCTAssertEqual(result.speakerEmbeddings.count, result.numSpeakers)
         for emb in result.speakerEmbeddings {
             XCTAssertEqual(emb.count, 256)
+            // Centroid should be L2-normalized (not a zero vector)
+            let norm = sqrt(emb.reduce(Float(0)) { $0 + $1 * $1 })
+            XCTAssertEqual(norm, 1.0, accuracy: 0.05,
+                           "Centroid should be L2-normalized (got norm \(norm))")
         }
     }
 
@@ -306,16 +321,24 @@ final class E2EWeSpeakerTests: XCTestCase {
 
         let (samples, sampleRate) = try AudioFileLoader.loadWAV(url: audioURL)
 
-        // Test audio has a single speaker — pipeline should detect 1
+        // Test audio has a single speaker — pipeline should detect exactly 1
         let result = pipeline.diarize(audio: samples, sampleRate: sampleRate, config: .default)
+
+        XCTAssertEqual(result.numSpeakers, 1, "Single-speaker audio should produce 1 speaker (got \(result.numSpeakers))")
 
         // All segments should be speaker 0
         for seg in result.segments {
             XCTAssertEqual(seg.speakerId, 0)
         }
 
-        // Segments should cover the speech region
+        // Speech region is ~5.1-8.5s — segments should cover it
         XCTAssertGreaterThan(result.segments.count, 0)
+        let firstStart = result.segments.first!.startTime
+        let lastEnd = result.segments.last!.endTime
+        XCTAssertEqual(firstStart, 5.0, accuracy: 0.5,
+                       "Speech should start around 5s (got \(firstStart)s)")
+        XCTAssertEqual(lastEnd, 8.5, accuracy: 0.5,
+                       "Speech should end around 8.5s (got \(lastEnd)s)")
     }
 
     // MARK: - E2E: Speaker Extraction
@@ -343,12 +366,17 @@ final class E2EWeSpeakerTests: XCTestCase {
         XCTAssertGreaterThan(extracted.count, 0,
                              "Should extract segments matching the target speaker")
 
-        // Extracted segments should be in the speech region (~5-8.5s)
-        for seg in extracted {
-            XCTAssertGreaterThanOrEqual(seg.startTime, 0)
-            XCTAssertGreaterThan(seg.endTime, seg.startTime)
-            XCTAssertGreaterThan(seg.duration, 0.1)
-        }
+        // Extracted segments should cover the speech region (~5-8.5s)
+        let totalExtracted = extracted.reduce(Float(0)) { $0 + $1.duration }
+        XCTAssertGreaterThan(totalExtracted, 2.0,
+                             "Should extract at least 2s of speech (got \(totalExtracted)s)")
+
+        let firstStart = extracted.first!.startTime
+        let lastEnd = extracted.last!.endTime
+        XCTAssertEqual(firstStart, 5.0, accuracy: 1.0,
+                       "Extraction should start around 5s (got \(firstStart)s)")
+        XCTAssertEqual(lastEnd, 8.5, accuracy: 1.0,
+                       "Extraction should end around 8.5s (got \(lastEnd)s)")
     }
 
     // MARK: - E2E: Embedding Subsegment Consistency

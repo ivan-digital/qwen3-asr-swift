@@ -147,17 +147,185 @@ final class DiarizationHelpersTests: XCTestCase {
         XCTAssertEqual(config.offset, 0.3, accuracy: 0.001)
         XCTAssertEqual(config.minSpeechDuration, 0.3, accuracy: 0.001)
         XCTAssertEqual(config.minSilenceDuration, 0.15, accuracy: 0.001)
+        XCTAssertEqual(config.clusteringThreshold, 0.715, accuracy: 0.001)
     }
 
     func testDiarizationConfigCustomValues() {
         let config = DiarizationConfig(
             onset: 0.7, offset: 0.4,
-            minSpeechDuration: 0.5, minSilenceDuration: 0.2
+            minSpeechDuration: 0.5, minSilenceDuration: 0.2,
+            clusteringThreshold: 0.5
         )
         XCTAssertEqual(config.onset, 0.7, accuracy: 0.001)
         XCTAssertEqual(config.offset, 0.4, accuracy: 0.001)
         XCTAssertEqual(config.minSpeechDuration, 0.5, accuracy: 0.001)
         XCTAssertEqual(config.minSilenceDuration, 0.2, accuracy: 0.001)
+        XCTAssertEqual(config.clusteringThreshold, 0.5, accuracy: 0.001)
+    }
+
+    // MARK: - cosineDistance
+
+    func testCosineDistanceSameVector() {
+        let a: [Float] = [1, 0, 0]
+        let dist = DiarizationHelpers.cosineDistance(a, a)
+        XCTAssertEqual(dist, 0.0, accuracy: 0.001)
+    }
+
+    func testCosineDistanceOpposite() {
+        let a: [Float] = [1, 0, 0]
+        let b: [Float] = [-1, 0, 0]
+        let dist = DiarizationHelpers.cosineDistance(a, b)
+        XCTAssertEqual(dist, 2.0, accuracy: 0.001)
+    }
+
+    func testCosineDistanceOrthogonal() {
+        let a: [Float] = [1, 0, 0]
+        let b: [Float] = [0, 1, 0]
+        let dist = DiarizationHelpers.cosineDistance(a, b)
+        XCTAssertEqual(dist, 1.0, accuracy: 0.001)
+    }
+
+    func testCosineDistanceZeroVector() {
+        let a: [Float] = [0, 0, 0]
+        let b: [Float] = [1, 0, 0]
+        let dist = DiarizationHelpers.cosineDistance(a, b)
+        XCTAssertEqual(dist, 2.0, accuracy: 0.001)  // degenerate
+    }
+
+    // MARK: - constrainedAgglomerativeClustering
+
+    func testClusteringEmpty() {
+        let (assignment, centroids) = DiarizationHelpers.constrainedAgglomerativeClustering(
+            items: [], threshold: 0.5)
+        XCTAssertTrue(assignment.isEmpty)
+        XCTAssertTrue(centroids.isEmpty)
+    }
+
+    func testClusteringSingleItem() {
+        let items = [DiarizationHelpers.ClusterItem(
+            windowIndex: 0, localSpeakerId: 0, embedding: [1, 0, 0])]
+        let (assignment, centroids) = DiarizationHelpers.constrainedAgglomerativeClustering(
+            items: items, threshold: 0.5)
+        XCTAssertEqual(assignment, [0])
+        XCTAssertEqual(centroids.count, 1)
+    }
+
+    func testClusteringSimilarEmbeddingsDifferentWindows() {
+        // Two similar embeddings from different windows → should merge
+        let items = [
+            DiarizationHelpers.ClusterItem(windowIndex: 0, localSpeakerId: 0,
+                                           embedding: [1, 0, 0, 0]),
+            DiarizationHelpers.ClusterItem(windowIndex: 1, localSpeakerId: 0,
+                                           embedding: [0.99, 0.1, 0, 0]),
+        ]
+        let (assignment, centroids) = DiarizationHelpers.constrainedAgglomerativeClustering(
+            items: items, threshold: 0.5)
+
+        // Should be merged into same cluster
+        XCTAssertEqual(assignment[0], assignment[1])
+        XCTAssertEqual(centroids.count, 1)
+    }
+
+    func testClusteringSameWindowNeverMerge() {
+        // Two similar embeddings from SAME window → constraint prevents merge
+        let items = [
+            DiarizationHelpers.ClusterItem(windowIndex: 0, localSpeakerId: 0,
+                                           embedding: [1, 0, 0, 0]),
+            DiarizationHelpers.ClusterItem(windowIndex: 0, localSpeakerId: 1,
+                                           embedding: [0.99, 0.1, 0, 0]),
+        ]
+        let (assignment, centroids) = DiarizationHelpers.constrainedAgglomerativeClustering(
+            items: items, threshold: 2.0)  // Very permissive threshold
+
+        // Must NOT merge despite being similar
+        XCTAssertNotEqual(assignment[0], assignment[1])
+        XCTAssertEqual(centroids.count, 2)
+    }
+
+    func testClusteringThresholdRespected() {
+        // Two embeddings with cosine distance > threshold → should NOT merge
+        let items = [
+            DiarizationHelpers.ClusterItem(windowIndex: 0, localSpeakerId: 0,
+                                           embedding: [1, 0, 0, 0]),
+            DiarizationHelpers.ClusterItem(windowIndex: 1, localSpeakerId: 0,
+                                           embedding: [0, 1, 0, 0]),
+        ]
+        // Cosine distance = 1.0, threshold = 0.5 → should NOT merge
+        let (assignment, centroids) = DiarizationHelpers.constrainedAgglomerativeClustering(
+            items: items, threshold: 0.5)
+
+        XCTAssertNotEqual(assignment[0], assignment[1])
+        XCTAssertEqual(centroids.count, 2)
+    }
+
+    func testClusteringCentroidLinkage() {
+        // After merging, centroid should be the weighted average
+        let items = [
+            DiarizationHelpers.ClusterItem(windowIndex: 0, localSpeakerId: 0,
+                                           embedding: [1, 0]),
+            DiarizationHelpers.ClusterItem(windowIndex: 1, localSpeakerId: 0,
+                                           embedding: [0.9, 0.1]),
+        ]
+        let (assignment, centroids) = DiarizationHelpers.constrainedAgglomerativeClustering(
+            items: items, threshold: 1.0)
+
+        XCTAssertEqual(assignment[0], assignment[1])
+        XCTAssertEqual(centroids.count, 1)
+        // Centroid should be average: [(1+0.9)/2, (0+0.1)/2] = [0.95, 0.05]
+        XCTAssertEqual(centroids[0][0], 0.95, accuracy: 0.001)
+        XCTAssertEqual(centroids[0][1], 0.05, accuracy: 0.001)
+    }
+
+    func testClusteringTransitiveConstraints() {
+        // Three items: A(win0), B(win1), C(win0)
+        // A and B are similar (closest pair) → merge. Merged {A,B} inherits win0 from A,
+        // so {A,B} cannot merge with C (both have win0).
+        let items = [
+            DiarizationHelpers.ClusterItem(windowIndex: 0, localSpeakerId: 0,
+                                           embedding: [1, 0, 0, 0]),  // A
+            DiarizationHelpers.ClusterItem(windowIndex: 1, localSpeakerId: 0,
+                                           embedding: [0.99, 0.01, 0, 0]),  // B (close to A)
+            DiarizationHelpers.ClusterItem(windowIndex: 0, localSpeakerId: 1,
+                                           embedding: [0, 0, 1, 0]),  // C (far from A and B)
+        ]
+        let (assignment, centroids) = DiarizationHelpers.constrainedAgglomerativeClustering(
+            items: items, threshold: 2.0)
+
+        // A and B should merge (closest, different windows)
+        XCTAssertEqual(assignment[0], assignment[1], "A and B should be in same cluster")
+        // C cannot merge with {A,B} — both have window 0
+        XCTAssertNotEqual(assignment[0], assignment[2], "C should not merge with {A,B}")
+        XCTAssertEqual(centroids.count, 2)
+    }
+
+    func testClusteringMultipleSpeakers() {
+        // 2 speakers across 3 windows — speaker embeddings are clearly separated
+        let spk0: [Float] = [1, 0, 0, 0]
+        let spk1: [Float] = [0, 0, 1, 0]
+        let items = [
+            DiarizationHelpers.ClusterItem(windowIndex: 0, localSpeakerId: 0, embedding: spk0),
+            DiarizationHelpers.ClusterItem(windowIndex: 0, localSpeakerId: 1, embedding: spk1),
+            DiarizationHelpers.ClusterItem(windowIndex: 1, localSpeakerId: 0, embedding: spk0),
+            DiarizationHelpers.ClusterItem(windowIndex: 1, localSpeakerId: 1, embedding: spk1),
+            DiarizationHelpers.ClusterItem(windowIndex: 2, localSpeakerId: 0, embedding: spk0),
+            DiarizationHelpers.ClusterItem(windowIndex: 2, localSpeakerId: 1, embedding: spk1),
+        ]
+        let (assignment, centroids) = DiarizationHelpers.constrainedAgglomerativeClustering(
+            items: items, threshold: 0.5)
+
+        // Should produce exactly 2 clusters
+        XCTAssertEqual(centroids.count, 2)
+
+        // All spk0 items should be in same cluster
+        XCTAssertEqual(assignment[0], assignment[2])
+        XCTAssertEqual(assignment[0], assignment[4])
+
+        // All spk1 items should be in same cluster
+        XCTAssertEqual(assignment[1], assignment[3])
+        XCTAssertEqual(assignment[1], assignment[5])
+
+        // spk0 and spk1 should be in different clusters
+        XCTAssertNotEqual(assignment[0], assignment[1])
     }
 
     // MARK: - DiarizationResult
