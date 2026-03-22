@@ -240,6 +240,12 @@ def main():
              "Lower values reduce CoreML memory by limiting buffer pre-allocation. "
              "Use 10 for iOS to save ~1GB of runtime memory.",
     )
+    parser.add_argument(
+        "--single-shape",
+        action="store_true",
+        help="Use a single fixed shape instead of EnumeratedShapes. "
+             "Eliminates buffer pre-allocation for unused shapes, further reducing memory.",
+    )
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir)
@@ -320,30 +326,38 @@ def main():
     print("Phase 2: Converting traced models to CoreML")
     print("=" * 60)
 
-    # Encoder — use EnumeratedShapes to avoid BNNS crash with dynamic shapes.
-    # ~100 mel frames per second of audio.
+    # Encoder — ~100 mel frames per second of audio.
     # Smaller max = less CoreML buffer pre-allocation = less runtime memory.
     max_frames = args.max_duration * 100
-    all_frame_sizes = [100, 200, 300, 400, 500, 750, 1000, 1500, 2000, 3000]
-    frame_sizes = [s for s in all_frame_sizes if s <= max_frames]
-    if not frame_sizes or frame_sizes[-1] < max_frames:
-        frame_sizes.append(max_frames)
-    print(f"\nConverting encoder (max {args.max_duration}s, shapes: {frame_sizes})...")
-    mel_shapes = [
-        ct.Shape(shape=(1, 128, l))
-        for l in frame_sizes
-    ]
+
+    if args.single_shape:
+        # Single fixed shape: no EnumeratedShapes overhead, minimum memory.
+        # Best for voice pipelines where utterance length is predictable.
+        print(f"\nConverting encoder (single shape: {max_frames} frames = {args.max_duration}s)...")
+        mel_input = ct.TensorType(
+            name="mel",
+            shape=(1, 128, max_frames),
+            dtype=np.float32,
+        )
+    else:
+        # EnumeratedShapes: multiple sizes, CoreML pre-allocates for all.
+        all_frame_sizes = [100, 200, 300, 400, 500, 750, 1000, 1500, 2000, 3000]
+        frame_sizes = [s for s in all_frame_sizes if s <= max_frames]
+        if not frame_sizes or frame_sizes[-1] < max_frames:
+            frame_sizes.append(max_frames)
+        print(f"\nConverting encoder (max {args.max_duration}s, shapes: {frame_sizes})...")
+        mel_input = ct.TensorType(
+            name="mel",
+            shape=ct.EnumeratedShapes(shapes=[
+                ct.Shape(shape=(1, 128, l)) for l in frame_sizes
+            ]),
+            dtype=np.float32,
+        )
+
     enc_ml = convert_to_coreml(
         traced_dir / "encoder.pt",
         "encoder",
-        [
-            ct.TensorType(
-                name="mel",
-                shape=ct.EnumeratedShapes(shapes=mel_shapes),
-                dtype=np.float32,
-            ),
-            ct.TensorType(name="length", shape=[1], dtype=np.int32),
-        ],
+        [mel_input, ct.TensorType(name="length", shape=[1], dtype=np.int32)],
         ["encoded", "encoded_length"],
         ct.ComputeUnit.CPU_AND_NE,
     )
