@@ -19,12 +19,21 @@ class KokoroNetwork {
     private var models: [ModelBucket: MLModel]
 
     /// Load CoreML models from cache directory.
-    init(directory: URL, computeUnits: MLComputeUnits = .all) throws {
+    ///
+    /// - Parameters:
+    ///   - directory: Path to cached model files
+    ///   - computeUnits: CoreML compute units
+    ///   - maxBuckets: Maximum number of buckets to load (smallest first).
+    ///     Loading fewer buckets saves memory. Default 0 = load all available.
+    init(directory: URL, computeUnits: MLComputeUnits = .all, maxBuckets: Int = 0) throws {
         let config = MLModelConfiguration()
         config.computeUnits = computeUnits
 
         var loaded = [ModelBucket: MLModel]()
-        for bucket in ModelBucket.allCases {
+        // Load smallest buckets first — they use least memory
+        let sortedBuckets = ModelBucket.allCases.sorted { $0.maxTokens < $1.maxTokens }
+        for bucket in sortedBuckets {
+            if maxBuckets > 0 && loaded.count >= maxBuckets { break }
             let url = directory.appendingPathComponent("\(bucket.modelName).mlmodelc", isDirectory: true)
             if FileManager.default.fileExists(atPath: url.path) {
                 loaded[bucket] = try MLModel(contentsOf: url, configuration: config)

@@ -108,7 +108,9 @@ final class CompanionChatViewModel {
             },
             ttsFactory: {
                 try await KokoroTTSModel.fromPretrained(
-                    modelId: KokoroTTSModel.int8iOSModelId) { _, _ in }
+                    modelId: KokoroTTSModel.int8iOSModelId,
+                    maxBuckets: 1  // Only load smallest (5s) — pipeline responses are short
+                ) { _, _ in }
             },
             vad: vad,
             llmFactory: { [weak self] in
