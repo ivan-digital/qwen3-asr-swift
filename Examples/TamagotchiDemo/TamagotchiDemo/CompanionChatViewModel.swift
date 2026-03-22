@@ -112,7 +112,7 @@ final class CompanionChatViewModel {
         pipeline = VoicePipeline(
             sttFactory: {
                 try await ParakeetASRModel.fromPretrained(
-                    modelId: ParakeetASRModel.int8iOSModelId
+                    modelId: ParakeetASRModel.int8iOS5sModelId  // Single 5s shape — minimum memory
                 ) { _, _ in }
             },
             ttsFactory: {

@@ -19,11 +19,14 @@ public class ParakeetASRModel {
     /// INT8 quantized variant (higher accuracy, larger size).
     public static let int8ModelId = "aufklarer/Parakeet-TDT-v3-CoreML-INT8"
 
-    /// iOS-optimized variants: 10s max duration, reduced CoreML buffer pre-allocation.
-    /// INT8: faster (native ANE), better accuracy, ~627MB disk.
-    /// INT4: smaller download, ~332MB disk.
+    /// iOS-optimized variants: reduced CoreML buffer pre-allocation.
+    /// INT8 10s: 10 enumerated shapes up to 10s, ~627MB disk.
     public static let int8iOSModelId = "aufklarer/Parakeet-TDT-v3-CoreML-INT8-iOS"
+    /// INT4 10s: 10 enumerated shapes up to 10s, ~332MB disk.
     public static let int4iOSModelId = "aufklarer/Parakeet-TDT-v3-CoreML-INT4-iOS"
+    /// INT8 5s single shape: minimum memory — one fixed 500-frame shape, ~561MB disk.
+    /// Best for voice pipelines where utterances are short.
+    public static let int8iOS5sModelId = "aufklarer/Parakeet-TDT-v3-CoreML-INT8-iOS-5s"
 
     /// Whether the model is loaded and ready for inference.
     var _isLoaded = true
