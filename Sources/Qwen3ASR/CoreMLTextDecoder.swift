@@ -267,6 +267,28 @@ public class CoreMLTextDecoder {
         return result
     }
 
+    /// Extract audio embedding at index from MLMultiArray (no MLX dependency).
+    ///
+    /// This is the MLX-free equivalent of `audioEmbeddingToMultiArray(_:at:)`.
+    /// Used by `transcribeWithoutMLX()` to avoid any Metal GPU evaluation,
+    /// making it safe for iOS background execution.
+    ///
+    /// - Parameters:
+    ///   - embeddings: Audio embeddings as MLMultiArray with shape `[1, T, hidden_size]`
+    ///   - index: Time-step index to extract (0..<T)
+    /// - Returns: MLMultiArray with shape `[1, 1, hidden_size]` for a single time step
+    public func audioEmbeddingFromMultiArray(_ embeddings: MLMultiArray, at index: Int) throws -> MLMultiArray {
+        let hidden = embeddings.shape[2].intValue
+        let result = try MLMultiArray(shape: [1, 1, hidden as NSNumber], dataType: .float32)
+        let srcPtr = embeddings.dataPointer.assumingMemoryBound(to: Float.self)
+        let dstPtr = result.dataPointer.assumingMemoryBound(to: Float.self)
+        let offset = index * hidden
+        for i in 0..<hidden {
+            dstPtr[i] = srcPtr[offset + i]
+        }
+        return result
+    }
+
     // MARK: - Helpers
 
     private static func findModel(named name: String, in directory: URL) -> URL? {
