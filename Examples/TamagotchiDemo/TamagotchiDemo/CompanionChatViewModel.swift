@@ -93,7 +93,7 @@ final class CompanionChatViewModel {
             loadProgress = 0.15
             let asr = try await Task.detached {
                 try await ParakeetASRModel.fromPretrained(
-                    modelId: ParakeetASRModel.int8iOS5sModelId
+                    modelId: ParakeetASRModel.int8iOSModelId
                 ) { progress, status in
                     DispatchQueue.main.async { [weak self] in
                         self?.loadProgress = 0.15 + progress * 0.2
