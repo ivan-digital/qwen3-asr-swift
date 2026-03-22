@@ -70,16 +70,59 @@ final class CompanionChatViewModel {
         loadProgress = 0
 
         do {
-            loadingStatus = "Loading VAD..."
-            loadProgress = 0.3
+            // Download all models during loading screen — not lazily on first speech.
+            // Models are loaded into memory later by the pipeline factories.
+
+            loadingStatus = "Downloading VAD..."
+            loadProgress = 0.1
             vadModel = try await Task.detached {
                 try await SileroVADModel.fromPretrained(engine: .coreml) { progress, status in
                     DispatchQueue.main.async { [weak self] in
-                        self?.loadProgress = 0.3 + progress * 0.6
-                        if !status.isEmpty { self?.loadingStatus = status }
+                        self?.loadProgress = 0.1 + progress * 0.15
+                        if !status.isEmpty { self?.loadingStatus = "VAD: \(status)" }
                     }
                 }
             }.value
+
+            loadingStatus = "Downloading ASR..."
+            loadProgress = 0.3
+            // Download only — the factory will load from cache later
+            _ = try await Task.detached {
+                try await ParakeetASRModel.fromPretrained(
+                    modelId: ParakeetASRModel.int8iOS5sModelId
+                ) { progress, status in
+                    DispatchQueue.main.async { [weak self] in
+                        self?.loadProgress = 0.3 + progress * 0.2
+                        if !status.isEmpty { self?.loadingStatus = "ASR: \(status)" }
+                    }
+                }
+            }.value
+
+            loadingStatus = "Downloading LLM..."
+            loadProgress = 0.55
+            _ = try await Task.detached {
+                try await Qwen3ChatModel.fromPretrained(computeUnits: .all) { progress, status in
+                    DispatchQueue.main.async { [weak self] in
+                        self?.loadProgress = 0.55 + progress * 0.2
+                        if !status.isEmpty { self?.loadingStatus = "LLM: \(status)" }
+                    }
+                }
+            }.value
+
+            loadingStatus = "Downloading TTS..."
+            loadProgress = 0.8
+            _ = try await Task.detached {
+                try await KokoroTTSModel.fromPretrained(
+                    modelId: KokoroTTSModel.int8iOSModelId,
+                    loadG2P: false
+                ) { progress, status in
+                    DispatchQueue.main.async { [weak self] in
+                        self?.loadProgress = 0.8 + progress * 0.15
+                        if !status.isEmpty { self?.loadingStatus = "TTS: \(status)" }
+                    }
+                }
+            }.value
+
             loadProgress = 1.0
             loadingStatus = "Ready"
         } catch {
