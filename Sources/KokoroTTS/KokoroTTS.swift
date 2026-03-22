@@ -71,23 +71,15 @@ public final class KokoroTTSModel {
         // Step 1: Phonemize text → token IDs
         let tokenIds = phonemizer.tokenize(text, maxLength: config.maxPhonemeLength)
 
-        // Step 2: Select model bucket based on token count
-        guard let bucket = ModelBucket.select(forTokenCount: tokenIds.count) else {
+        // Step 2: Select model bucket based on token count and loaded models
+        let available = Set(network.availableBuckets)
+        guard let activeBucket = ModelBucket.select(
+            forTokenCount: tokenIds.count, available: available
+        ) else {
             throw AudioModelError.inferenceFailed(
                 operation: "kokoro-synthesize",
-                reason: "Text too long (\(tokenIds.count) tokens), max \(ModelBucket.v21_15s.maxTokens)")
-        }
-
-        // Check if we have this bucket loaded, fall back if needed
-        let activeBucket: ModelBucket
-        if network.availableBuckets.contains(bucket) {
-            activeBucket = bucket
-        } else if let fallback = network.availableBuckets.first(where: { $0.maxTokens >= tokenIds.count }) {
-            activeBucket = fallback
-        } else {
-            throw AudioModelError.inferenceFailed(
-                operation: "kokoro-synthesize",
-                reason: "No suitable model bucket for \(tokenIds.count) tokens")
+                reason: "No suitable model bucket for \(tokenIds.count) tokens "
+                    + "(available: \(available.map(\.modelName)))")
         }
 
         // Step 3: Get voice style embedding (256-dim)

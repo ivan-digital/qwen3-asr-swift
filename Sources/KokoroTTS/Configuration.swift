@@ -85,24 +85,34 @@ public enum ModelBucket: CaseIterable, Sendable, Hashable {
     public var maxDuration: Double { Double(maxSamples) / 24000.0 }
 
     /// Select the smallest bucket that fits the given token count.
-    public static func select(forTokenCount tokens: Int, preferV24: Bool = true) -> ModelBucket? {
-        // Prefer v2.4 models (iOS 17+, better quality) if available
+    ///
+    /// When `available` is provided, only selects from loaded buckets.
+    /// This ensures selection matches what `KokoroNetwork` actually loaded
+    /// (e.g., with `maxBuckets: 1`, only the smallest bucket is available).
+    public static func select(
+        forTokenCount tokens: Int,
+        preferV24: Bool = true,
+        available: Set<ModelBucket>? = nil
+    ) -> ModelBucket? {
+        let candidates: [ModelBucket]
         if preferV24 {
-            if tokens <= ModelBucket.v24_10s.maxTokens {
-                return .v24_10s
-            }
-            // v24_15s has same token limit as v24_10s but more audio output
-            // Only useful if we know audio will be long
+            // v2.4 first (iOS 17+), then v2.1 fallback, sorted by maxTokens
+            candidates = [.v24_10s, .v21_5s, .v21_10s, .v24_15s, .v21_15s]
+        } else {
+            candidates = [.v21_5s, .v21_10s, .v21_15s]
         }
 
-        // Fall back to v2.1 models (iOS 16+)
-        let v21Buckets: [ModelBucket] = [.v21_5s, .v21_10s, .v21_15s]
-        for bucket in v21Buckets {
+        for bucket in candidates {
+            if let avail = available, !avail.contains(bucket) { continue }
             if tokens <= bucket.maxTokens {
                 return bucket
             }
         }
 
+        // If nothing fits, return the largest available bucket (truncated output)
+        if let avail = available {
+            return candidates.filter { avail.contains($0) }.last
+        }
         return nil
     }
 }
