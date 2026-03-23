@@ -16,7 +16,10 @@ final class EchoViewModel {
     var errorMessage: String?
     var isRunning = false
     var pipelineState: String = "idle"
+    var lastTranscription: String = ""
+    var lastLanguage: String = ""
     var log: [String] = []
+    var vadLevel: Float = 0
 
     private var vad: SileroVADModel?
     private var asr: ParakeetASRModel?
@@ -51,11 +54,11 @@ final class EchoViewModel {
                 return model
             }.value
 
-            loadingStatus = "Loading TTS (Qwen3 Base)..."
-            appendLog("Loading Qwen3-TTS (Base)...")
+            loadingStatus = "Loading TTS (Qwen3 CustomVoice)..."
+            appendLog("Loading Qwen3-TTS (CustomVoice)...")
             tts = try await Task.detached {
                 try await Qwen3TTSModel.fromPretrained(
-                    modelId: TTSModelVariant.base.rawValue)
+                    modelId: TTSModelVariant.customVoice.rawValue)
             }.value
 
             appendLog("All models loaded.")
@@ -75,7 +78,11 @@ final class EchoViewModel {
         var config = PipelineConfig()
         config.mode = .echo
         config.allowInterruptions = true
-        config.minSilenceDuration = 1.2       // Wait longer before ending speech (avoids mid-sentence cuts)
+        config.minInterruptionDuration = 2.0  // Require 2s sustained speech to interrupt (filters AEC leaks)
+        config.postPlaybackGuard = 0.6        // Let AEC settle after TTS stops before re-arming VAD
+        config.vadOnset = 0.6                 // Slightly higher than default to reject ambient noise
+        config.vadOffset = 0.4                // Clear drop to end speech
+        config.minSilenceDuration = 0.6       // Standard silence gap
         config.eagerSTT = false               // Wait for confirmed end-of-speech before transcribing
         config.maxResponseDuration = 15.0
 
@@ -152,18 +159,18 @@ final class EchoViewModel {
             appendLog("[VAD] Speech ended")
         case .transcriptionCompleted(let text, let language, _):
             pipelineState = "synthesizing..."
+            lastTranscription = text
+            lastLanguage = language ?? ""
             let langTag = language.map { " [\($0)]" } ?? ""
             appendLog("[STT\(langTag)] \(text)")
         case .responseCreated:
             pipelineState = "speaking..."
             player.resetGeneration()
         case .responseInterrupted:
-            // User interrupted — fade out immediately
             player.stop()
             pipelineState = "interrupted → listening"
             appendLog("[Interrupted] Stopping playback")
         case .responseAudioDelta(let samples):
-            appendLog("[TTS chunk] \(samples.count) samples (\(String(format: "%.1f", Double(samples.count) / 24000.0))s)")
             if isRecordingDebug { debugTTSBuffer.append(contentsOf: samples) }
             do {
                 try player.play(samples: samples, sampleRate: 24000)
@@ -171,7 +178,7 @@ final class EchoViewModel {
                 appendLog("[ERROR] Playback: \(error.localizedDescription)")
             }
         case .responseDone:
-            appendLog("[Pipeline] Response done")
+            appendLog("[TTS] Done")
             player.markGenerationComplete()
         case .toolCallStarted(let name):
             appendLog("[Tool] \(name) started")
@@ -190,8 +197,6 @@ final class EchoViewModel {
 
     private func resumeAfterResponse() {
         guard isRunning else { return }
-        // Non-blocking — post-playback guard is handled inside the turn
-        // detector by suppressing VAD events for the configured duration.
         pipeline?.resumeListening()
         pipelineState = "listening"
         appendLog("Listening...")
@@ -281,13 +286,21 @@ final class EchoViewModel {
             guard count > 0 else { return }
             let samples = Array(UnsafeBufferPointer(start: outData[0], count: count))
 
+            let rms = sqrt(samples.map { $0 * $0 }.reduce(0, +) / Float(count))
+
             let bufNum = sampleCounter + 1
             sampleCounter = bufNum
             if bufNum <= 3 {
-                let rms = sqrt(samples.map { $0 * $0 }.reduce(0, +) / Float(count))
                 DispatchQueue.main.async {
                     self.appendLog("[Mic] Buffer #\(bufNum): \(count) samples, RMS=\(String(format: "%.6f", rms))")
                 }
+            }
+
+            // Update VAD level indicator (RMS scaled for visual, capped at 1.0)
+            // Speech is typically RMS > 0.01, scale so 0.05 = full bar
+            let level = min(rms / 0.05, 1.0)
+            if bufNum % 5 == 0 {  // throttle UI updates
+                DispatchQueue.main.async { self.vadLevel = level }
             }
 
             // Record for debug
