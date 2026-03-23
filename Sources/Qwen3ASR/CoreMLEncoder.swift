@@ -122,6 +122,66 @@ public class CoreMLASREncoder {
         return multiArrayToMLXArray(embeddings)
     }
 
+    // MARK: - MLX-free encoding (for iOS background / pure CoreML path)
+
+    /// Encode mel spectrogram to audio embeddings without any MLXArray dependency.
+    ///
+    /// Accepts raw `[Float]` mel data in `[melBins, timeFrames]` layout (the same
+    /// layout produced by `WhisperFeatureExtractor.extractFeaturesRaw`).
+    /// Returns the encoder output as `MLMultiArray` directly, avoiding the
+    /// Metal GPU eval that `MLXArray` would trigger.
+    ///
+    /// - Parameters:
+    ///   - melData: Flat float array in row-major `[melBins, timeFrames]` order
+    ///   - melBins: Number of mel frequency bins (typically 128)
+    ///   - timeFrames: Number of time frames
+    /// - Returns: Audio embeddings as `MLMultiArray` with shape `[1, T/8, 1024]`
+    public func encode(melData: [Float], melBins: Int, timeFrames: Int) throws -> MLMultiArray {
+        guard let targetLength = enumeratedMelLengths.first(where: { $0 >= timeFrames }) else {
+            throw AudioModelError.inferenceFailed(
+                operation: "CoreML encoder",
+                reason: "Audio too long: \(timeFrames) mel frames exceeds max \(enumeratedMelLengths.last!)")
+        }
+
+        // Create MLMultiArray [1, melBins, targetLength] directly from [Float]
+        let melArray = try MLMultiArray(
+            shape: [1, melBins as NSNumber, targetLength as NSNumber],
+            dataType: .float32)
+        let ptr = melArray.dataPointer.assumingMemoryBound(to: Float.self)
+
+        // melData layout is [melBins, timeFrames] (row-major)
+        // MLMultiArray layout is [1, melBins, targetLength] (row-major, batch dim = 1)
+        for bin in 0..<melBins {
+            let srcOffset = bin * timeFrames
+            let dstOffset = bin * targetLength
+            for t in 0..<timeFrames {
+                ptr[dstOffset + t] = melData[srcOffset + t]
+            }
+            // Zero-pad remaining time steps
+            for t in timeFrames..<targetLength {
+                ptr[dstOffset + t] = 0
+            }
+        }
+
+        // Run prediction
+        let input = try MLDictionaryFeatureProvider(dictionary: [
+            "mel": MLFeatureValue(multiArray: melArray),
+        ])
+        let output = try model.prediction(from: input)
+
+        guard let embeddings = output.featureValue(for: "audio_embeddings")?.multiArrayValue else {
+            throw AudioModelError.inferenceFailed(
+                operation: "CoreML encoder", reason: "Missing audio_embeddings output")
+        }
+
+        return embeddings
+    }
+
+    /// Convenience: encode a `MelFeatures` struct directly.
+    public func encode(melFeatures: MelFeatures) throws -> MLMultiArray {
+        return try encode(melData: melFeatures.data, melBins: melFeatures.melBins, timeFrames: melFeatures.timeFrames)
+    }
+
     private func multiArrayToMLXArray(_ array: MLMultiArray) -> MLXArray {
         let shape = array.shape.map { $0.intValue }
         let count = array.count
