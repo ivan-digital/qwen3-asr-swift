@@ -9,8 +9,10 @@ import Qwen3TTS
 @MainActor
 final class SpeakViewModel {
     var text = "The quick brown fox jumps over the lazy dog."
-    var language = "english"
-    var speaker = "vivian"
+    var language = "english" {
+        didSet { speaker = Self.defaultSpeaker(for: language) }
+    }
+    var speaker = "ryan"
     var isLoading = false
     var isSynthesizing = false
     var loadingStatus = ""
@@ -18,6 +20,17 @@ final class SpeakViewModel {
 
     let languages = ["english", "chinese", "japanese", "korean", "french", "german", "spanish"]
     var speakers: [String] = []
+
+    /// Best speaker for each language per Qwen3-TTS docs.
+    static func defaultSpeaker(for language: String) -> String {
+        switch language.lowercased() {
+        case "english": return "ryan"
+        case "chinese": return "vivian"
+        case "japanese": return "ono_anna"
+        case "korean": return "sohee"
+        default: return "ryan"
+        }
+    }
 
     #if os(macOS)
     private var ttsModel: Qwen3TTSModel?
@@ -82,7 +95,11 @@ final class SpeakViewModel {
         let inputText = text
         let inputLang = language
         let inputSpeaker = speaker
-        let samples = model.synthesize(text: inputText, language: inputLang, speaker: inputSpeaker)
+
+        // Run synthesis off main thread to avoid blocking UI
+        let samples = await Task.detached {
+            model.synthesize(text: inputText, language: inputLang, speaker: inputSpeaker)
+        }.value
 
         guard !samples.isEmpty else {
             errorMessage = "Synthesis produced no audio."
@@ -90,8 +107,11 @@ final class SpeakViewModel {
             return
         }
 
+        player.ensureStandaloneEngine()
+        player.resetGeneration()
         do {
             try player.play(samples: samples, sampleRate: 24000)
+            player.markGenerationComplete()
         } catch {
             errorMessage = "Playback failed: \(error.localizedDescription)"
         }
