@@ -80,6 +80,12 @@ public struct RespondCommand: ParsableCommand {
     @Option(name: .long, help: "Consecutive low-entropy steps before early stop (default: 10)")
     public var entropyWindow: Int?
 
+    @Flag(name: .long, help: "Full-duplex mode: feed input WAV into ring buffer, record response. Saves input + output WAVs for offline analysis.")
+    public var fullDuplex: Bool = false
+
+    @Option(name: .long, help: "Full-duplex debug output directory (default: /tmp/personaplex_debug)")
+    public var debugDir: String = "/tmp/personaplex_debug"
+
     public init() {}
 
     public func run() throws {
@@ -171,7 +177,61 @@ public struct RespondCommand: ParsableCommand {
             var responseSamples: [Float] = []
             var textTokens: [Int32] = []
 
-            if stream {
+            if fullDuplex {
+                // Full-duplex debug mode: feed input into ring buffer, record all output
+                let dir = URL(fileURLWithPath: debugDir)
+                try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+                print("Full-duplex mode: feeding \(String(format: "%.1f", duration))s input...")
+                let ringBuffer = AudioRingBuffer(capacity: 24000 * 10)
+
+                // Feed input audio into ring buffer in real-time-ish chunks
+                let chunkSize = 1920  // 80ms at 24kHz (one Mimi frame)
+                Task.detached {
+                    var offset = 0
+                    while offset < audio.count {
+                        let end = min(offset + chunkSize, audio.count)
+                        let chunk = Array(audio[offset..<end])
+                        ringBuffer.write(chunk)
+                        offset = end
+                        // Simulate real-time: 80ms per chunk
+                        try? await Task.sleep(nanoseconds: 80_000_000)
+                    }
+                    print("  Input feed complete (\(audio.count) samples)")
+                }
+
+                let stream = model.respondRealtime(
+                    voice: selectedVoice,
+                    systemPromptTokens: selectedPrompt.tokens,
+                    userAudioBuffer: ringBuffer,
+                    maxSteps: maxSteps,
+                    verbose: verbose
+                )
+
+                var frameCount = 0
+                for try await agentSamples in stream {
+                    responseSamples.append(contentsOf: agentSamples)
+                    frameCount += 1
+                    if frameCount % 25 == 0 {
+                        let elapsed = CFAbsoluteTimeGetCurrent() - startTime
+                        let audioSec = Double(responseSamples.count) / 24000.0
+                        print("  Frame \(frameCount): \(String(format: "%.1f", audioSec))s audio, \(String(format: "%.1f", elapsed))s elapsed")
+                    }
+                }
+
+                let elapsed = CFAbsoluteTimeGetCurrent() - startTime
+                let outDuration = Double(responseSamples.count) / 24000.0
+                print("Full-duplex complete: \(frameCount) frames, \(String(format: "%.1f", outDuration))s audio in \(String(format: "%.1f", elapsed))s")
+
+                // Save debug files
+                let inputPath = dir.appendingPathComponent("input.wav")
+                let outputPath = dir.appendingPathComponent("output.wav")
+                try WAVWriter.write(samples: audio, sampleRate: 24000, to: inputPath)
+                try WAVWriter.write(samples: responseSamples, sampleRate: 24000, to: outputPath)
+                print("Saved: \(inputPath.path)")
+                print("Saved: \(outputPath.path)")
+                return
+            } else if stream {
                 let streamingConfig = PersonaPlexModel.PersonaPlexStreamingConfig(
                     firstChunkFrames: chunkFrames, chunkFrames: chunkFrames)
                 let audioStream = model.respondStream(
