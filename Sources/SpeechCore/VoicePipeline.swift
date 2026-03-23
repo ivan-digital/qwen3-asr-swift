@@ -642,10 +642,36 @@ public final class VoicePipeline {
                 let rms = sqrt(samples.map { $0 * $0 }.reduce(0, +) / Float(max(length, 1)))
                 AudioLog.pipeline.info("STT input: \(length) samples, \(String(format: "%.2f", duration))s, RMS=\(String(format: "%.4f", rms))")
                 pipeLog("[STT] transcribe start: \(length) samples, \(String(format: "%.2f", duration))s, RMS=\(String(format: "%.4f", rms)) [MEM: \(memoryMB())MB]")
-                let result = bridge.model.transcribeWithLanguage(
-                    audio: samples,
-                    sampleRate: Int(sampleRate),
-                    language: nil)
+
+                // Chunk long audio into ≤5s segments for single-shape models
+                let maxChunkSamples = Int(sampleRate) * 5  // 5s
+                let result: TranscriptionResult
+                if samples.count <= maxChunkSamples {
+                    result = bridge.model.transcribeWithLanguage(
+                        audio: samples, sampleRate: Int(sampleRate), language: nil)
+                } else {
+                    var texts: [String] = []
+                    var totalConf: Float = 0
+                    var chunks = 0
+                    var lang: String?
+                    var offset = 0
+                    while offset < samples.count {
+                        let end = min(offset + maxChunkSamples, samples.count)
+                        let chunk = Array(samples[offset..<end])
+                        let r = bridge.model.transcribeWithLanguage(
+                            audio: chunk, sampleRate: Int(sampleRate), language: nil)
+                        if !r.text.isEmpty { texts.append(r.text) }
+                        totalConf += r.confidence
+                        chunks += 1
+                        if lang == nil { lang = r.language }
+                        offset = end
+                    }
+                    result = TranscriptionResult(
+                        text: texts.joined(separator: " "),
+                        language: lang,
+                        confidence: chunks > 0 ? totalConf / Float(chunks) : 0)
+                    pipeLog("[STT] chunked: \(chunks) chunks → '\(result.text)'")
+                }
                 pipeLog("[STT] transcribe done: text='\(result.text)' lang=\(result.language ?? "nil") conf=\(result.confidence)")
                 // Store as C strings on bridge — pointers valid until next transcribe call
                 bridge.lastText = Array(result.text.utf8CString)
