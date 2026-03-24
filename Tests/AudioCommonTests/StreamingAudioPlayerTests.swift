@@ -8,7 +8,7 @@ final class StreamingAudioPlayerTests: XCTestCase {
     func testInitialState() {
         let player = StreamingAudioPlayer()
         XCTAssertFalse(player.isPlaying)
-        XCTAssertEqual(player.preBufferDuration, 0)
+        XCTAssertEqual(player.preBufferDuration, 1.0)
     }
 
     // MARK: - Generation Lifecycle

@@ -112,7 +112,8 @@ public final class StreamingAudioPlayer: @unchecked Sendable {
     public private(set) var isPlaying = false
 
     /// Pre-buffer duration in seconds. Playback starts after this much audio accumulates.
-    public var preBufferDuration: Double = 0
+    /// Default 1.0s — sufficient for streaming TTS at RTF < 0.6.
+    public var preBufferDuration: Double = 1.0
 
     /// Callback when all audio has finished playing.
     public var onPlaybackFinished: (() -> Void)?

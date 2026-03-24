@@ -2,6 +2,11 @@
 
 AI speech models for Apple Silicon (MLX Swift). ASR, TTS, speech-to-speech, VAD, diarization, speech enhancement.
 
+## Workflow
+
+- **Never commit, push, or comment on GitHub without explicit user confirmation.** Draft first, ask to confirm, then execute.
+- **Every README.md change must update all 9 translations** (`README_zh.md`, `README_ja.md`, `README_ko.md`, `README_es.md`, `README_de.md`, `README_fr.md`, `README_hi.md`, `README_pt.md`, `README_ru.md`). No exceptions.
+
 ## Git Conventions
 
 - Never mention Claude, AI, or any AI tool in commit messages, PR descriptions, or co-author tags
@@ -148,6 +153,7 @@ docs/
     silero-vad.md           Silero VAD streaming
     speaker-diarization.md  Speaker diarization pipeline
     speech-enhancement.md   DeepFilterNet3 pipeline
+    audio-playback.md       Streaming audio playback, pre-buffer, ring buffer
   benchmarks/               WER, DER, RTF results
   shared-protocols.md       Protocol reference (cross-cutting)
 ```

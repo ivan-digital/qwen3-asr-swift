@@ -1117,7 +1117,7 @@ Qwen3-ASR 1.7B 8-bit übertrifft Whisper Large v3 Turbo (2,5%) bei vergleichbare
 
 **Modelle:** [ASR-Modell](docs/models/asr-model.md), [TTS-Modell](docs/models/tts-model.md), [CosyVoice TTS](docs/models/cosyvoice-tts.md), [Kokoro TTS](docs/models/kokoro-tts.md), [Parakeet TDT](docs/models/parakeet-asr.md), [PersonaPlex](docs/models/personaplex.md), [FireRedVAD](docs/models/fireredvad.md)
 
-**Inferenz:** [ASR-Inferenz](docs/inference/asr-inference.md), [TTS-Inferenz](docs/inference/qwen3-tts-inference.md), [Forced Aligner](docs/inference/forced-aligner.md), [FireRedVAD](docs/inference/fireredvad.md), [Silero VAD](docs/inference/silero-vad.md), [Sprecherdiarisierung](docs/inference/speaker-diarization.md), [Sprachverbesserung](docs/inference/speech-enhancement.md)
+**Inferenz:** [ASR-Inferenz](docs/inference/asr-inference.md), [TTS-Inferenz](docs/inference/qwen3-tts-inference.md), [Forced Aligner](docs/inference/forced-aligner.md), [FireRedVAD](docs/inference/fireredvad.md), [Silero VAD](docs/inference/silero-vad.md), [Sprecherdiarisierung](docs/inference/speaker-diarization.md), [Sprachverbesserung](docs/inference/speech-enhancement.md), [Audio-Wiedergabe](docs/inference/audio-playback.md)
 
 **Benchmarks:** [ASR WER](docs/benchmarks/asr-wer.md), [TTS Round-Trip](docs/benchmarks/tts-roundtrip.md), [VAD-Erkennung](docs/benchmarks/vad-detection.md)
 

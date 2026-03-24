@@ -1117,7 +1117,7 @@ Qwen3-ASR 1.7B 8-bit 在同等规模下超越 Whisper Large v3 Turbo (2.5%)。�
 
 **模型：** [ASR 模型](docs/models/asr-model.md)、[TTS 模型](docs/models/tts-model.md)、[CosyVoice TTS](docs/models/cosyvoice-tts.md)、[Kokoro TTS](docs/models/kokoro-tts.md)、[Parakeet TDT](docs/models/parakeet-asr.md)、[PersonaPlex](docs/models/personaplex.md)、[FireRedVAD](docs/models/fireredvad.md)
 
-**推理：** [ASR 推理](docs/inference/asr-inference.md)、[TTS 推理](docs/inference/qwen3-tts-inference.md)、[强制对齐器](docs/inference/forced-aligner.md)、[FireRedVAD](docs/inference/fireredvad.md)、[Silero VAD](docs/inference/silero-vad.md)、[说话人分离](docs/inference/speaker-diarization.md)、[语音增强](docs/inference/speech-enhancement.md)
+**推理：** [ASR 推理](docs/inference/asr-inference.md)、[TTS 推理](docs/inference/qwen3-tts-inference.md)、[强制对齐器](docs/inference/forced-aligner.md)、[FireRedVAD](docs/inference/fireredvad.md)、[Silero VAD](docs/inference/silero-vad.md)、[说话人分离](docs/inference/speaker-diarization.md)、[语音增强](docs/inference/speech-enhancement.md)、[音频播放](docs/inference/audio-playback.md)
 
 **基准测试：** [ASR WER](docs/benchmarks/asr-wer.md)、[TTS 往返测试](docs/benchmarks/tts-roundtrip.md)、[VAD 检测](docs/benchmarks/vad-detection.md)
 
