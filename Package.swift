@@ -195,6 +195,7 @@ let package = Package(
                 "SpeechEnhancement",
                 "ParakeetASR",
                 "KokoroTTS",
+                "SourceSeparation",
                 "AudioCommon",
                 .product(name: "MLX", package: "mlx-swift"),
                 .product(name: "ArgumentParser", package: "swift-argument-parser")
