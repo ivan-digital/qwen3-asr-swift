@@ -156,6 +156,7 @@ public final class SourceSeparator {
             let weights = try MLX.loadArrays(url: weightsURL)
             let params = ModuleParameters.unflattened(weights)
             try model.update(parameters: params)
+            model.train(false)  // Use pretrained running_mean/running_var in BatchNorm
             models[target] = model
         }
 
