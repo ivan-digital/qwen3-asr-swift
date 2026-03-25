@@ -33,10 +33,19 @@ public final class SourceSeparator {
     ///   - sampleRate: Input sample rate (resampled to 44100 if different)
     ///   - targets: Which stems to extract (default: all 4)
     /// - Returns: Dictionary of target → stereo audio `[[Float]]`
+    /// Separate a stereo audio mix into stems.
+    ///
+    /// - Parameters:
+    ///   - audio: Stereo audio as `[[Float]]` — `audio[0]` = left, `audio[1]` = right
+    ///   - sampleRate: Input sample rate (resampled to 44100 if different)
+    ///   - targets: Which stems to extract (default: all 4)
+    ///   - wiener: Apply Wiener post-filtering (improves SDR ~0.5 dB, requires all 4 stems)
+    /// - Returns: Dictionary of target → stereo audio `[[Float]]`
     public func separate(
         audio: [[Float]],
         sampleRate: Int = 44100,
-        targets: [SeparationTarget] = SeparationTarget.allCases
+        targets: [SeparationTarget] = SeparationTarget.allCases,
+        wiener: Bool = true
     ) -> [SeparationTarget: [[Float]]] {
         guard audio.count == 2 else {
             // Mono → duplicate to stereo
@@ -65,20 +74,18 @@ public final class SourceSeparator {
             }
         }
 
-        var results: [SeparationTarget: [[Float]]] = [:]
+        // Run all target models and collect magnitude estimates
+        var targetMags: [(target: SeparationTarget, left: [[Float]], right: [[Float]])] = []
 
         for target in targets {
             guard let model = models[target] else { continue }
 
-            // Convert to MLXArray [T, 2, 2049]
             let flatInput = inputMag.flatMap { $0 }
             let mlxInput = MLXArray(flatInput, [T, 2, stft.nBins])
 
-            // Forward pass
             let output = model(mlxInput)
             eval(output)
 
-            // Extract [T, 2, 2049] back to per-channel magnitude
             let outputFlat = output.asArray(Float.self)
             var leftOutMag = [[Float]](repeating: [Float](repeating: 0, count: stft.nBins), count: T)
             var rightOutMag = [[Float]](repeating: [Float](repeating: 0, count: stft.nBins), count: T)
@@ -90,13 +97,35 @@ public final class SourceSeparator {
                 }
             }
 
-            // Apply phase from original mix and iSTFT
-            let leftStem = stft.applyMaskAndInvert(
-                maskedMag: leftOutMag, origReal: leftReal, origImag: leftImag, length: length)
-            let rightStem = stft.applyMaskAndInvert(
-                maskedMag: rightOutMag, origReal: rightReal, origImag: rightImag, length: length)
+            targetMags.append((target, leftOutMag, rightOutMag))
+        }
 
-            results[target] = [leftStem, rightStem]
+        var results: [SeparationTarget: [[Float]]] = [:]
+
+        if wiener && targetMags.count > 1 {
+            // Wiener soft-mask: ratio of squared magnitudes
+            let allLeftMags = targetMags.map(\.left)
+            let (refinedLeft, refinedRight) = WienerFilter.apply(
+                targetSpecs: allLeftMags,
+                mixReal: leftReal, mixImag: leftImag,
+                mixRealR: rightReal, mixImagR: rightImag)
+
+            for (i, entry) in targetMags.enumerated() {
+                let leftStem = stft.applyMaskAndInvert(
+                    maskedMag: refinedLeft[i], origReal: leftReal, origImag: leftImag, length: length)
+                let rightStem = stft.applyMaskAndInvert(
+                    maskedMag: refinedRight[i], origReal: rightReal, origImag: rightImag, length: length)
+                results[entry.target] = [leftStem, rightStem]
+            }
+        } else {
+            // No Wiener — direct phase reconstruction
+            for entry in targetMags {
+                let leftStem = stft.applyMaskAndInvert(
+                    maskedMag: entry.left, origReal: leftReal, origImag: leftImag, length: length)
+                let rightStem = stft.applyMaskAndInvert(
+                    maskedMag: entry.right, origReal: rightReal, origImag: rightImag, length: length)
+                results[entry.target] = [leftStem, rightStem]
+            }
         }
 
         return results
