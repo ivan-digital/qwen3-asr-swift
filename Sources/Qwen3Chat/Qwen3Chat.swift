@@ -25,6 +25,7 @@ import AudioCommon
 ///   boundaries but does not provide internal synchronization.
 public final class Qwen3ChatModel: @unchecked Sendable {
     public static let defaultModelId = "aufklarer/Qwen3-0.6B-Chat-CoreML"
+    public static let qwen35ModelId = "aufklarer/Qwen3.5-0.8B-Chat-CoreML"
 
     let config: Qwen3ChatConfig
     let tokenizer: ChatTokenizer
