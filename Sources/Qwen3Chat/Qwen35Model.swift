@@ -13,7 +13,7 @@ import MLXFast
 /// are learned per-head scalar gates derived from the input via softplus/sigmoid.
 ///
 /// A causal conv1d (kernel=4) provides short-range local context before the attention.
-/// Output is gated: o_proj maps [attention_output; silu(z)] from 2*hiddenSize to hiddenSize.
+/// Output is gated: `o_proj(attention_output * silu(z))` where both are 2*hiddenSize = numHeads*headDim.
 ///
 /// Weight shapes (HuggingFace safetensors):
 ///   - in_proj_qkv.weight: [6144, 1024]   (3 * 16 * 128)
@@ -38,7 +38,9 @@ public final class DeltaNetLayer: Module {
     @ModuleInfo(key: "in_proj_a") var inProjA: Linear
 
     /// Conv1d weight: [C, 1, K] depthwise convolution applied to QKV before attention.
-    @ParameterInfo(key: "conv1d.weight") var convWeight: MLXArray
+    /// Stored under a flat key to avoid nested key path issues in MLXNN module traversal.
+    /// Weight loading applies this directly via `layer.convWeight = ...`.
+    @ParameterInfo(key: "conv1d_weight") var convWeight: MLXArray
 
     @ParameterInfo(key: "dt_bias") var dtBias: MLXArray
     @ParameterInfo(key: "A_log") var aLog: MLXArray
@@ -54,36 +56,21 @@ public final class DeltaNetLayer: Module {
         self.convKernel = config.linearConvKernelDim ?? 4
         self.qkvDim = 3 * numHeads * headDim
 
-        self._inProjQKV = ModuleInfo(
-            key: "in_proj_qkv",
-            wrappedValue: Linear(hiddenSize, qkvDim, bias: false))
-        self._inProjZ = ModuleInfo(
-            key: "in_proj_z",
-            wrappedValue: Linear(hiddenSize, 2 * hiddenSize, bias: false))
-        self._inProjB = ModuleInfo(
-            key: "in_proj_b",
-            wrappedValue: Linear(hiddenSize, numHeads, bias: false))
-        self._inProjA = ModuleInfo(
-            key: "in_proj_a",
-            wrappedValue: Linear(hiddenSize, numHeads, bias: false))
+        self._inProjQKV = ModuleInfo(wrappedValue:  Linear(hiddenSize, qkvDim, bias: false))
+        self._inProjZ = ModuleInfo(wrappedValue:  Linear(hiddenSize, 2 * hiddenSize, bias: false))
+        self._inProjB = ModuleInfo(wrappedValue:  Linear(hiddenSize, numHeads, bias: false))
+        self._inProjA = ModuleInfo(wrappedValue:  Linear(hiddenSize, numHeads, bias: false))
 
         self._convWeight = ParameterInfo(
-            key: "conv1d.weight",
             wrappedValue: MLXArray.zeros([qkvDim, 1, convKernel]))
 
-        self._dtBias = ParameterInfo(
-            key: "dt_bias",
-            wrappedValue: MLXArray.zeros([numHeads]))
-        self._aLog = ParameterInfo(
-            key: "A_log",
-            wrappedValue: MLXArray.zeros([numHeads]))
+        self._dtBias = ParameterInfo(wrappedValue: MLXArray.zeros([numHeads]))
+        self._aLog = ParameterInfo(wrappedValue: MLXArray.zeros([numHeads]))
 
         self._norm = ModuleInfo(
             wrappedValue: RMSNorm(dimensions: headDim, eps: Float(config.rmsNormEps)))
 
-        self._outProj = ModuleInfo(
-            key: "out_proj",
-            wrappedValue: Linear(2 * hiddenSize, hiddenSize, bias: false))
+        self._outProj = ModuleInfo(wrappedValue:  Linear(2 * hiddenSize, hiddenSize, bias: false))
 
         super.init()
     }
@@ -179,16 +166,18 @@ public final class DeltaNetLayer: Module {
         outputSteps.reserveCapacity(t)
 
         for step in 0..<t {
-            // Extract step tensors: [B, H, D]
-            let qStep = q[0..., step, 0..., 0...].squeezed(axis: 1)
-            let kStep = kNormed[0..., step, 0..., 0...].squeezed(axis: 1)
-            let vStep = v[0..., step, 0..., 0...].squeezed(axis: 1)
+            // Extract step tensors using range indexing to keep axis, then squeeze
+            // q shape: [B, T, H, D] -> select step -> [B, 1, H, D] -> squeeze -> [B, H, D]
+            let qStep = q[0..., step..<(step + 1), 0..., 0...].squeezed(axis: 1)
+            let kStep = kNormed[0..., step..<(step + 1), 0..., 0...].squeezed(axis: 1)
+            let vStep = v[0..., step..<(step + 1), 0..., 0...].squeezed(axis: 1)
 
-            // [B, H] -> [B, H, 1, 1] for broadcasting with [B, H, D, D]
-            let alphaStep = alpha[0..., step, 0...].squeezed(axis: 1)
-                .expandedDimensions(axes: [-1, -1])
-            let betaStep = beta[0..., step, 0...].squeezed(axis: 1)
-                .expandedDimensions(axes: [-1, -1])
+            // alpha shape: [B, T, H] -> select step -> [B, 1, H] -> squeeze -> [B, H]
+            // Then reshape to [B, H, 1, 1] for broadcasting with [B, H, D, D]
+            let alphaStepFlat = alpha[0..., step..<(step + 1), 0...].squeezed(axis: 1)
+            let alphaStep = alphaStepFlat.reshaped(b, numHeads, 1, 1)
+            let betaStepFlat = beta[0..., step..<(step + 1), 0...].squeezed(axis: 1)
+            let betaStep = betaStepFlat.reshaped(b, numHeads, 1, 1)
 
             // Outer product: v_t (x) k_t -> [B, H, D, D]
             let outer = vStep.expandedDimensions(axis: -1) *  // [B, H, D, 1]
@@ -209,16 +198,14 @@ public final class DeltaNetLayer: Module {
         // Per-head RMSNorm
         output = norm(output)
 
-        // Reshape to [B, T, H*D]
+        // Reshape to [B, T, H*D=2048]
         output = output.reshaped(b, t, numHeads * headDim)
 
-        // Gated output: o_proj([attn_out; silu(z1) * z2])
-        let z1 = zRaw[0..., 0..., ..<hiddenSize]
-        let z2 = zRaw[0..., 0..., hiddenSize...]
-        let gate = silu(z1) * z2  // [B, T, hiddenSize]
-
-        let gated = concatenated([output, gate], axis: -1)  // [B, T, 2*hiddenSize]
-        let result = outProj(gated)
+        // Gated output: o_proj(attn_output * silu(z))
+        // Both attention output and z have the same dimension (2048 = numHeads * headDim = 2 * hiddenSize).
+        // Element-wise gating, then project down to hiddenSize.
+        let gated = output * silu(zRaw)  // [B, T, 2048]
+        let result = outProj(gated)      // [B, T, 1024]
 
         return (result, State(s: currentS, convState: newConvState))
     }
@@ -307,34 +294,22 @@ public final class GatedAttentionLayer: Module {
         let qDim = numQHeads * headDim  // 2048
 
         // q_proj outputs 2 * qDim (Q + gate)
-        self._qProj = ModuleInfo(
-            key: "q_proj",
-            wrappedValue: QuantizedLinear(
+        self._qProj = ModuleInfo(wrappedValue:  QuantizedLinear(
                 hiddenSize, 2 * qDim, bias: false,
                 groupSize: groupSize, bits: bits))
-        self._kProj = ModuleInfo(
-            key: "k_proj",
-            wrappedValue: QuantizedLinear(
+        self._kProj = ModuleInfo(wrappedValue:  QuantizedLinear(
                 hiddenSize, numKVHeads * headDim, bias: false,
                 groupSize: groupSize, bits: bits))
-        self._vProj = ModuleInfo(
-            key: "v_proj",
-            wrappedValue: QuantizedLinear(
+        self._vProj = ModuleInfo(wrappedValue:  QuantizedLinear(
                 hiddenSize, numKVHeads * headDim, bias: false,
                 groupSize: groupSize, bits: bits))
         // o_proj: qDim -> hiddenSize (after gating reduces 2*qDim to qDim)
-        self._oProj = ModuleInfo(
-            key: "o_proj",
-            wrappedValue: QuantizedLinear(
+        self._oProj = ModuleInfo(wrappedValue:  QuantizedLinear(
                 qDim, hiddenSize, bias: false,
                 groupSize: groupSize, bits: bits))
 
-        self._qNorm = ModuleInfo(
-            key: "q_norm",
-            wrappedValue: RMSNorm(dimensions: headDim, eps: Float(config.rmsNormEps)))
-        self._kNorm = ModuleInfo(
-            key: "k_norm",
-            wrappedValue: RMSNorm(dimensions: headDim, eps: Float(config.rmsNormEps)))
+        self._qNorm = ModuleInfo(wrappedValue:  RMSNorm(dimensions: headDim, eps: Float(config.rmsNormEps)))
+        self._kNorm = ModuleInfo(wrappedValue:  RMSNorm(dimensions: headDim, eps: Float(config.rmsNormEps)))
 
         // Partial RoPE: only rotates first `ropeDims` of each head
         self.rope = MLXNN.RoPE(
@@ -429,6 +404,11 @@ public final class GatedAttentionLayer: Module {
 ///
 /// Either a DeltaNet (linear_attention) or GatedAttention (full_attention) layer,
 /// both sharing the same pre-norm structure and SwiGLU MLP.
+///
+/// The attention submodule is stored as the base `Module` type and registered
+/// under the key `"self_attn"` via `@ModuleInfo`. This ensures the MLX Module
+/// system discovers it for parameter traversal (`eval`, `clearParameters`, etc.)
+/// and weight loading maps to the correct key path.
 public final class Qwen35TransformerLayer: Module {
     public let layerType: String
 
@@ -436,45 +416,32 @@ public final class Qwen35TransformerLayer: Module {
     @ModuleInfo(key: "post_attention_layernorm") var postAttentionLayerNorm: RMSNorm
     @ModuleInfo var mlp: Qwen35MLP
 
-    // Exactly one of these is non-nil, determined by layerType.
-    // Both use the key "self_attn" so weights load to the correct submodule.
-    var deltaNet: DeltaNetLayer?
-    var gatedAttn: GatedAttentionLayer?
+    /// The attention submodule — either DeltaNetLayer or GatedAttentionLayer.
+    /// Registered under the key "self_attn" for weight loading.
+    @ModuleInfo(key: "self_attn") var selfAttn: Module
 
     public init(config: Qwen3ChatConfig, layerType: String) {
         self.layerType = layerType
 
-        self._inputLayerNorm = ModuleInfo(
-            key: "input_layernorm",
-            wrappedValue: RMSNorm(dimensions: config.hiddenSize, eps: Float(config.rmsNormEps)))
-        self._postAttentionLayerNorm = ModuleInfo(
-            key: "post_attention_layernorm",
-            wrappedValue: RMSNorm(dimensions: config.hiddenSize, eps: Float(config.rmsNormEps)))
+        self._inputLayerNorm = ModuleInfo(wrappedValue:  RMSNorm(dimensions: config.hiddenSize, eps: Float(config.rmsNormEps)))
+        self._postAttentionLayerNorm = ModuleInfo(wrappedValue:  RMSNorm(dimensions: config.hiddenSize, eps: Float(config.rmsNormEps)))
         self._mlp = ModuleInfo(
             wrappedValue: Qwen35MLP(config: config))
 
         if layerType == "linear_attention" {
-            self.deltaNet = DeltaNetLayer(config: config)
-            self.gatedAttn = nil
+            self._selfAttn = ModuleInfo(wrappedValue:  DeltaNetLayer(config: config))
         } else {
-            self.deltaNet = nil
-            self.gatedAttn = GatedAttentionLayer(config: config)
+            self._selfAttn = ModuleInfo(wrappedValue:  GatedAttentionLayer(config: config))
         }
 
         super.init()
     }
 
-    // Manually register the attention submodule under "self_attn" key
-    // since we can't use two @ModuleInfo with the same key.
-    override public func innerChildren() -> [(key: String?, value: Module)] {
-        var children = super.innerChildren()
-        if let dn = deltaNet {
-            children.append((key: "self_attn", value: dn))
-        } else if let ga = gatedAttn {
-            children.append((key: "self_attn", value: ga))
-        }
-        return children
-    }
+    /// Access the DeltaNet submodule (only valid for linear_attention layers).
+    public var deltaNet: DeltaNetLayer? { selfAttn as? DeltaNetLayer }
+
+    /// Access the GatedAttention submodule (only valid for full_attention layers).
+    public var gatedAttn: GatedAttentionLayer? { selfAttn as? GatedAttentionLayer }
 
     /// Forward for DeltaNet (linear attention) layer.
     public func forwardDeltaNet(
@@ -521,12 +488,15 @@ public final class Qwen35MLP: Module {
         let is_ = config.intermediateSize
         let gs = 64, bits = 4
 
-        self._gateProj = ModuleInfo(key: "gate_proj",
-            wrappedValue: QuantizedLinear(hs, is_, bias: false, groupSize: gs, bits: bits))
-        self._upProj = ModuleInfo(key: "up_proj",
-            wrappedValue: QuantizedLinear(hs, is_, bias: false, groupSize: gs, bits: bits))
-        self._downProj = ModuleInfo(key: "down_proj",
-            wrappedValue: QuantizedLinear(is_, hs, bias: false, groupSize: gs, bits: bits))
+        self._gateProj = ModuleInfo(
+            wrappedValue: QuantizedLinear(hs, is_, bias: false, groupSize: gs, bits: bits),
+            key: "gate_proj")
+        self._upProj = ModuleInfo(
+            wrappedValue: QuantizedLinear(hs, is_, bias: false, groupSize: gs, bits: bits),
+            key: "up_proj")
+        self._downProj = ModuleInfo(
+            wrappedValue: QuantizedLinear(is_, hs, bias: false, groupSize: gs, bits: bits),
+            key: "down_proj")
 
         super.init()
     }
@@ -567,9 +537,7 @@ public final class Qwen35MLXModel: Module {
             $0.element == "full_attention" ? $0.offset : nil
         }
 
-        self._embedTokens = ModuleInfo(
-            key: "embed_tokens",
-            wrappedValue: PreQuantizedEmbedding(
+        self._embedTokens = ModuleInfo(wrappedValue:  PreQuantizedEmbedding(
                 embeddingCount: config.vocabSize,
                 dimensions: config.hiddenSize,
                 groupSize: 64, bits: 4))
