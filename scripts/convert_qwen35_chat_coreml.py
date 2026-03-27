@@ -170,7 +170,9 @@ class DeltaNetAttention(nn.Module):
         self.A_log = nn.Parameter(torch.zeros(self.num_heads))
 
         # Group norm (per head, dim=128)
-        self.norm = nn.GroupNorm(self.num_heads, self.num_heads * self.head_dim)
+        # RMSNormGated: weight shape [head_dim], applied per-head then gated by silu(z)
+        self.norm = nn.Module()
+        self.norm.weight = nn.Parameter(torch.ones(self.head_dim))
 
         # Output projection: [1024, 2048] — gated output, takes half
         self.out_proj = nn.Linear(gate_dim, hidden, bias=False)
@@ -222,45 +224,74 @@ class DeltaNetAttention(nn.Module):
 
         # Split QKV: each [1, 1, 2048] -> reshape to [1, 16, 1, 128]
         q, k, v = qkv_conv.chunk(3, dim=-1)
-        q = q.view(B, self.num_heads, 1, self.head_dim)  # [1, 16, 1, 128]
-        k = k.view(B, self.num_heads, 1, self.head_dim)  # [1, 16, 1, 128]
-        v = v.view(B, self.num_heads, 1, self.head_dim)  # [1, 16, 1, 128]
+        q = q.view(B, 1, self.num_heads, self.head_dim)  # [1, 1, 16, 128]
+        k = k.view(B, 1, self.num_heads, self.head_dim)  # [1, 1, 16, 128]
+        v = v.view(B, 1, self.num_heads, self.head_dim)  # [1, 1, 16, 128]
 
-        # Compute beta (input-dependent): sigmoid(in_proj_b(x) + dt_bias)
-        beta = torch.sigmoid(self.in_proj_b(x).squeeze(1) + self.dt_bias)  # [1, 16]
-        beta = beta.view(B, self.num_heads, 1, 1)  # [1, 16, 1, 1]
+        # Compute beta: sigmoid(in_proj_b(x)), [1, 1, 16]
+        beta = torch.sigmoid(self.in_proj_b(x))  # [1, 1, 16]
 
-        # Compute alpha (decay): sigmoid(-in_proj_a(x) + A_log.exp())
-        # A_log stores log of the base decay factor
-        alpha = torch.sigmoid(
-            -self.in_proj_a(x).squeeze(1) + self.A_log.exp()
-        )  # [1, 16]
-        alpha = alpha.view(B, self.num_heads, 1, 1)  # [1, 16, 1, 1]
+        # Compute g (gated decay): g = -A_log.exp() * softplus(a + dt_bias)
+        # g is negative so exp(g) < 1 (decay)
+        a = self.in_proj_a(x)  # [1, 1, 16]
+        g = -self.A_log.float().exp() * F.softplus(a.float() + self.dt_bias)  # [1, 1, 16]
 
-        # L2-normalize k for stable linear attention
+        # L2-normalize q and k
+        q = F.normalize(q, p=2, dim=-1)
         k = F.normalize(k, p=2, dim=-1)
 
-        # Recurrent state update:
-        #   S_new = alpha * S_old + beta * (v^T @ k)
-        # v: [1, 16, 1, 128], k: [1, 16, 1, 128]
-        # outer product: [1, 16, 128, 128]
-        vk_outer = torch.matmul(v.transpose(-2, -1), k)  # [1, 16, 128, 128]
-        new_recurrent_state = alpha * recurrent_state + beta * vk_outer
+        # Scale q
+        scale = 1.0 / (self.head_dim ** 0.5)
+        q = q * scale
 
-        # Linear attention output: o = S @ q
-        # S: [1, 16, 128, 128], q: [1, 16, 1, 128] -> q^T: [1, 16, 128, 1]
-        o = torch.matmul(new_recurrent_state, q.transpose(-2, -1))  # [1, 16, 128, 1]
-        o = o.transpose(-2, -1)  # [1, 16, 1, 128]
+        # Transpose to [B, H, T, D] for recurrence
+        q = q.transpose(1, 2)  # [1, 16, 1, 128]
+        k = k.transpose(1, 2)  # [1, 16, 1, 128]
+        v = v.transpose(1, 2)  # [1, 16, 1, 128]
+        beta = beta.transpose(1, 2)  # [1, 16, 1]
+        g = g.transpose(1, 2)  # [1, 16, 1]
 
-        # Reshape to [1, 1, num_heads * head_dim] = [1, 1, 2048]
-        o = o.reshape(B, 1, self.num_heads * self.head_dim)
+        # Gated delta rule recurrence (single step):
+        #   S = exp(g) * S + k^T * (beta * (v - S @ k))
+        #   output = S @ q
+        g_t = g[:, :, 0].exp().unsqueeze(-1).unsqueeze(-1)  # [1, 16, 1, 1]
+        beta_t = beta[:, :, 0].unsqueeze(-1)  # [1, 16, 1]
+        k_t = k[:, :, 0]  # [1, 16, 128]
+        v_t = v[:, :, 0]  # [1, 16, 128]
+        q_t = q[:, :, 0]  # [1, 16, 128]
 
-        # Group norm (operates on [B, C] or [B, C, T])
-        # Reshape for GroupNorm: [1, 2048, 1] (channels-first with T=1)
-        o = self.norm(o.transpose(1, 2)).transpose(1, 2)  # [1, 1, 2048]
+        # Decay existing state
+        new_recurrent_state = recurrent_state * g_t  # [1, 16, 128, 128]
 
-        # Gated output: o * z, then project
-        o = o * z  # [1, 1, 2048]
+        # Predict current v from state: kv_mem = sum_d(S[h,d,:] * k[h,d]) for each v-dim
+        kv_mem = (new_recurrent_state * k_t.unsqueeze(-1)).sum(dim=-2)  # [1, 16, 128]
+
+        # Delta correction: how much v differs from prediction
+        delta = (v_t - kv_mem) * beta_t  # [1, 16, 128]
+
+        # Update state: S += k^T * delta (outer product update)
+        new_recurrent_state = new_recurrent_state + k_t.unsqueeze(-1) * delta.unsqueeze(-2)  # [1, 16, 128, 128]
+
+        # Read output using query
+        o = (new_recurrent_state * q_t.unsqueeze(-1)).sum(dim=-2)  # [1, 16, 128]
+
+        # Reshape to [1, 1, 2048] (flatten heads)
+        o = o.unsqueeze(1).reshape(B, 1, self.num_heads * self.head_dim)
+
+        # RMSNorm gated by z: norm(o) * silu(z)
+        # z: [1, 1, 2048], o: [1, 1, 2048]
+        z_reshaped = z.view(B, 1, self.num_heads, self.head_dim)
+        o_reshaped = o.view(B, 1, self.num_heads, self.head_dim)
+        # Per-head RMSNorm
+        o_normed = o_reshaped.float()
+        variance = o_normed.pow(2).mean(-1, keepdim=True)
+        o_normed = o_normed * torch.rsqrt(variance + 1e-6)
+        o_normed = self.norm.weight * o_normed.to(o.dtype)
+        # Apply silu gate
+        o_normed = o_normed * F.silu(z_reshaped.float()).to(o.dtype)
+        o = o_normed.reshape(B, 1, self.num_heads * self.head_dim)
+
+        # Project to hidden_size
         output = self.out_proj(o)  # [1, 1, 1024]
 
         return output, new_conv_state, new_recurrent_state
@@ -406,7 +437,7 @@ class DeltaNetLayer(nn.Module):
 
     def __init__(self, config):
         super().__init__()
-        self.self_attn = DeltaNetAttention(config)
+        self.linear_attn = DeltaNetAttention(config)
         self.mlp = SwiGLUMLP(config["hidden_size"], config["intermediate_size"])
         self.input_layernorm = RMSNorm(config["hidden_size"], eps=config["rms_norm_eps"])
         self.post_attention_layernorm = RMSNorm(config["hidden_size"], eps=config["rms_norm_eps"])
@@ -414,7 +445,7 @@ class DeltaNetLayer(nn.Module):
     def forward(self, x, conv_state, recurrent_state):
         residual = x
         x_norm = self.input_layernorm(x)
-        attn_out, new_conv_state, new_recurrent_state = self.self_attn(
+        attn_out, new_conv_state, new_recurrent_state = self.linear_attn(
             x_norm, conv_state, recurrent_state
         )
         x = residual + attn_out
