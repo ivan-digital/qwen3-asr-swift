@@ -69,10 +69,10 @@ MODEL_CONFIG = {
     "deltanet_norm_dim": 128,       # group norm per head
 
     # GatedAttention config (6 layers: indices 3, 7, 11, 15, 19, 23)
-    "attn_num_heads": 16,           # 4096 / 256 = 16
+    "attn_num_heads": 8,            # num_attention_heads (q_proj outputs 2*8*256=4096 for Q+gate)
     "attn_num_kv_heads": 2,         # 512 / 256 = 2
     "attn_head_dim": 256,
-    "attn_out_gate_dim": 2048,      # o_proj output is 2*hidden
+    # q_proj outputs 2*num_heads*head_dim = 4096 (Q + gate interleaved per head)
     "rope_theta": 10000000.0,
     "partial_rotary_factor": 0.25,  # rotary_dim = 256 * 0.25 = 64
 }
@@ -345,11 +345,11 @@ class PartialRoPE(nn.Module):
 class GatedSelfAttention(nn.Module):
     """GatedAttention with KV cache (MLState), partial RoPE, and output gating.
 
-    GatedAttention differs from standard attention:
-    - o_proj outputs 2*hidden_size, split into [hidden, gate]
-    - Output = hidden * sigmoid(gate)
-    - Q/K have per-head RMSNorm
-    - Partial RoPE (only 25% of head_dim)
+    Architecture (matching HuggingFace Qwen3NextAttention):
+    - q_proj: [hidden, 2*num_heads*head_dim] — outputs Q+gate INTERLEAVED per head
+    - After reshape to [B, T, H, 2*D], split into Q [B, T, H, D] and gate [B, T, 2048]
+    - Q gets QK norm + partial RoPE, gate is applied as sigmoid(gate) after attention
+    - o_proj: [num_heads*head_dim, hidden] — standard output projection
     """
 
     def __init__(self, config):
@@ -360,14 +360,15 @@ class GatedSelfAttention(nn.Module):
         self.groups = self.num_heads // self.num_kv_heads
         self.scale = 1.0 / math.sqrt(self.head_dim)
         hidden = config["hidden_size"]
-        gate_dim = config["attn_out_gate_dim"]
         rotary_dim = int(self.head_dim * config["partial_rotary_factor"])
+        qDim = self.num_heads * self.head_dim  # 2048
 
-        self.q_proj = nn.Linear(hidden, self.num_heads * self.head_dim, bias=False)
+        # q_proj outputs Q + gate interleaved per head: [hidden, 2*qDim]
+        self.q_proj = nn.Linear(hidden, 2 * qDim, bias=False)
         self.k_proj = nn.Linear(hidden, self.num_kv_heads * self.head_dim, bias=False)
         self.v_proj = nn.Linear(hidden, self.num_kv_heads * self.head_dim, bias=False)
-        # Output projection: outputs 2*hidden for gating
-        self.o_proj = nn.Linear(self.num_heads * self.head_dim, gate_dim, bias=False)
+        # Standard o_proj: [qDim, hidden]
+        self.o_proj = nn.Linear(qDim, hidden, bias=False)
 
         self.q_norm = RMSNorm(self.head_dim, eps=config["rms_norm_eps"])
         self.k_norm = RMSNorm(self.head_dim, eps=config["rms_norm_eps"])
@@ -388,9 +389,14 @@ class GatedSelfAttention(nn.Module):
             output: [1, 1, hidden_size]
         """
         B, T, _ = x.shape  # T=1
-        hidden = x.shape[2]
 
-        q = self.q_proj(x).view(B, T, self.num_heads, self.head_dim).transpose(1, 2)
+        # Q projection: [1, 1, 4096] -> reshape to [1, 1, H, 2*D] -> split Q/gate INTERLEAVED
+        q_and_gate = self.q_proj(x)  # [1, 1, 4096]
+        q_and_gate = q_and_gate.view(B, T, self.num_heads, 2 * self.head_dim)
+        q, gate = q_and_gate.chunk(2, dim=-1)  # each [1, 1, H, D=256]
+        gate = gate.reshape(B, T, -1)  # [1, 1, 2048]
+
+        q = q.transpose(1, 2)  # [1, H, 1, D]
         k = self.k_proj(x).view(B, T, self.num_kv_heads, self.head_dim).transpose(1, 2)
         v = self.v_proj(x).view(B, T, self.num_kv_heads, self.head_dim).transpose(1, 2)
 
@@ -420,12 +426,10 @@ class GatedSelfAttention(nn.Module):
         attn = F.softmax(attn, dim=-1)
         out = torch.matmul(attn, v_exp)
 
-        out = out.transpose(1, 2).reshape(B, T, -1)  # [1, 1, num_heads*head_dim]
+        out = out.transpose(1, 2).reshape(B, T, -1)  # [1, 1, num_heads*head_dim=2048]
 
-        # Gated output: o_proj -> [1, 1, 2*hidden], split and gate
-        projected = self.o_proj(out)  # [1, 1, 2048]
-        out_val, gate = projected.chunk(2, dim=-1)  # each [1, 1, 1024]
-        output = out_val * torch.sigmoid(gate)  # [1, 1, 1024]
+        # Gated output: sigmoid(gate) then o_proj
+        output = self.o_proj(out * torch.sigmoid(gate))  # [1, 1, 1024]
 
         return output
 
@@ -626,7 +630,7 @@ def download_weights(model_id, weights_dir=None):
     # Strip common prefixes (model., thinker.model., etc.)
     stripped = {}
     for k, v in all_weights.items():
-        for prefix in ["thinker.model.", "model."]:
+        for prefix in ["model.language_model.", "thinker.model.", "model."]:
             if k.startswith(prefix):
                 stripped[k[len(prefix):]] = v
                 break

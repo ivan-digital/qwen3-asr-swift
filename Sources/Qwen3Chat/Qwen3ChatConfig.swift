@@ -119,8 +119,8 @@ public struct Qwen3ChatConfig: Codable, Sendable {
         maxSeqLen: 2048,
         ropeTheta: 10_000_000.0,
         rmsNormEps: 1e-6,
-        eosTokenId: 248044,
-        padTokenId: 248043,
+        eosTokenId: 248046,  // <|im_end|> — stops generation at end of assistant turn
+        padTokenId: 248044,  // <|endoftext|>
         quantization: "int4",
         modelType: .qwen35,
         layerTypes: [

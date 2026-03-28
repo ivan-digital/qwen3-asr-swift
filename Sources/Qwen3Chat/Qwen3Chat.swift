@@ -26,8 +26,8 @@ import AudioCommon
 public final class Qwen3ChatModel: @unchecked Sendable {
     @available(*, deprecated, message: "Use Qwen35MLXChat for Qwen3.5")
     public static let defaultModelId = "aufklarer/Qwen3-0.6B-Chat-CoreML"
+    /// Qwen3.5 CoreML model repo (int4/ + int8/ variants, for iOS Neural Engine)
     public static let qwen35ModelId = "aufklarer/Qwen3.5-0.8B-Chat-CoreML"
-    public static let qwen35MLXModelId = "aufklarer/Qwen3.5-0.8B-Chat-MLX-4bit"
 
     let config: Qwen3ChatConfig
     let tokenizer: ChatTokenizer

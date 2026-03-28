@@ -40,11 +40,11 @@ enum ChatTemplate {
     static let thinkEndId = 151668    // </think>
 
     // Qwen3.5 special token IDs (248K vocab)
-    static let qwen35ImStartId = 248042
-    static let qwen35ImEndId = 248043
-    static let qwen35EndOfTextId = 248044
-    static let qwen35ThinkStartId = 248065  // <think>
-    static let qwen35ThinkEndId = 248066    // </think>
+    static let qwen35ImStartId = 248045     // <|im_start|>
+    static let qwen35ImEndId = 248046       // <|im_end|>
+    static let qwen35EndOfTextId = 248044   // <|endoftext|>
+    static let qwen35ThinkStartId = 248068  // <think>
+    static let qwen35ThinkEndId = 248069    // </think>
 
     /// Get the correct special token IDs for a given config.
     static func tokenIds(for config: Qwen3ChatConfig) -> (
@@ -62,20 +62,29 @@ enum ChatTemplate {
     /// Strip thinking block from generated tokens.
     ///
     /// Removes tokens from `<think>` through `</think>` (inclusive)
-    /// and any trailing newline, returning only the response content.
+    /// and any trailing newlines, returning only the response content.
+    /// Handles both Qwen3 and Qwen3.5 token IDs.
     static func stripThinking(from tokens: [Int]) -> [Int] {
-        guard let startIdx = tokens.firstIndex(of: thinkStartId) else {
-            return tokens
+        let thinkStarts: Set<Int> = [thinkStartId, qwen35ThinkStartId]
+        let thinkEnds: Set<Int> = [thinkEndId, qwen35ThinkEndId]
+        let newlines: Set<Int> = [newlineId, 271]  // 198 = \n, 271 = \n\n
+
+        guard let startIdx = tokens.firstIndex(where: { thinkStarts.contains($0) }) else {
+            // No <think> — still strip any leading </think> + newlines
+            // (happens when non-thinking template causes model to echo end-think)
+            var i = 0
+            while i < tokens.count && (thinkEnds.contains(tokens[i]) || newlines.contains(tokens[i])) {
+                i += 1
+            }
+            return i > 0 ? Array(tokens[i...]) : tokens
         }
-        if let endIdx = tokens.firstIndex(of: thinkEndId) {
-            // Skip </think> and optional trailing newline
+        if let endIdx = tokens.firstIndex(where: { thinkEnds.contains($0) }) {
             var afterThink = endIdx + 1
-            if afterThink < tokens.count && tokens[afterThink] == newlineId {
+            while afterThink < tokens.count && newlines.contains(tokens[afterThink]) {
                 afterThink += 1
             }
             return Array(tokens[0..<startIdx]) + Array(tokens[afterThink...])
         }
-        // No </think> found — strip everything from <think> onwards
         return Array(tokens[0..<startIdx])
     }
 
@@ -115,14 +124,15 @@ enum ChatTemplate {
             tokens.append(contentsOf: tokenizer.encode("assistant"))
             tokens.append(ids.newline)
 
-            // Inject empty think block to skip reasoning
+            // Inject empty think block to skip reasoning.
+            // Must tokenize "\n\n" to get correct BPE token (271)
+            // rather than two separate newlines (198, 198).
             if !enableThinking {
+                let doubleNewline = tokenizer.encode("\n\n")
                 tokens.append(ids.thinkStart)
-                tokens.append(ids.newline)
-                tokens.append(ids.newline)
+                tokens.append(contentsOf: doubleNewline)
                 tokens.append(ids.thinkEnd)
-                tokens.append(ids.newline)
-                tokens.append(ids.newline)
+                tokens.append(contentsOf: doubleNewline)
             }
         }
 

@@ -73,40 +73,52 @@ public final class Qwen35MLXChat: @unchecked Sendable {
 
     // MARK: - Factory
 
+    /// Quantization variant.
+    public enum Quantization: String {
+        case int4
+        case int8
+    }
+
     /// Load a pre-trained Qwen3.5 chat model from HuggingFace.
     ///
     /// Downloads quantized safetensors and tokenizer on first use.
     /// Model is loaded into MLX for GPU inference on Apple Silicon.
     ///
     /// - Parameters:
-    ///   - modelId: HuggingFace model ID
+    ///   - modelId: HuggingFace model ID (repo with int4/ and int8/ subdirs)
+    ///   - quantization: INT4 (404 MB) or INT8 (763 MB)
     ///   - progressHandler: Optional callback for download/load progress
     public static func fromPretrained(
         modelId: String = defaultModelId,
+        quantization: Quantization = .int4,
         progressHandler: ((Double, String) -> Void)? = nil
     ) async throws -> Qwen35MLXChat {
         let cacheDir = try HuggingFaceDownloader.getCacheDirectory(for: modelId)
+        let variant = quantization.rawValue
 
-        // Download model files
-        progressHandler?(0.05, "Downloading model...")
+        // Download model files from variant subdirectory (int4/ or int8/)
+        progressHandler?(0.05, "Downloading \(variant) model...")
         try await HuggingFaceDownloader.downloadWeights(
             modelId: modelId,
             to: cacheDir,
             additionalFiles: [
-                "chat_config.json",
-                "vocab.json",
-                "merges.txt",
-                "tokenizer_config.json",
+                "\(variant)/model.safetensors",
+                "\(variant)/config.json",
+                "\(variant)/tokenizer.json",
+                "\(variant)/tokenizer_config.json",
             ],
             progressHandler: { progress in
                 progressHandler?(progress * 0.5, "Downloading...")
             }
         )
 
+        // Variant files are in a subdirectory
+        let variantDir = cacheDir.appendingPathComponent(variant)
+
         // Load config
         progressHandler?(0.5, "Loading config...")
-        let configURL = cacheDir.appendingPathComponent("chat_config.json")
         let config: Qwen3ChatConfig
+        let configURL = variantDir.appendingPathComponent("config.json")
         if FileManager.default.fileExists(atPath: configURL.path) {
             config = try Qwen3ChatConfig.load(from: configURL)
         } else {
@@ -116,7 +128,7 @@ public final class Qwen35MLXChat: @unchecked Sendable {
         // Load tokenizer
         progressHandler?(0.55, "Loading tokenizer...")
         let tokenizer = ChatTokenizer()
-        try tokenizer.load(from: cacheDir)
+        try tokenizer.load(from: variantDir)
 
         // Create model
         progressHandler?(0.6, "Creating model...")
@@ -125,7 +137,7 @@ public final class Qwen35MLXChat: @unchecked Sendable {
         // Load weights
         progressHandler?(0.65, "Loading weights...")
         try Qwen35WeightLoader.loadWeights(
-            into: model, from: cacheDir,
+            into: model, from: variantDir,
             progressHandler: { pct, msg in
                 progressHandler?(0.65 + pct * 0.3, msg)
             })
@@ -139,8 +151,8 @@ public final class Qwen35MLXChat: @unchecked Sendable {
         directory: URL,
         progressHandler: ((Double, String) -> Void)? = nil
     ) async throws -> Qwen35MLXChat {
-        let configURL = directory.appendingPathComponent("chat_config.json")
         let config: Qwen3ChatConfig
+        let configURL = directory.appendingPathComponent("config.json")
         if FileManager.default.fileExists(atPath: configURL.path) {
             config = try Qwen3ChatConfig.load(from: configURL)
         } else {
@@ -180,7 +192,9 @@ public final class Qwen35MLXChat: @unchecked Sendable {
 
         let promptTokens = ChatTemplate.encode(
             messages: messages,
-            tokenizer: tokenizer)
+            tokenizer: tokenizer,
+            config: config,
+            enableThinking: false)
 
         // Prefill
         let prefillStart = CFAbsoluteTimeGetCurrent()
@@ -210,17 +224,21 @@ public final class Qwen35MLXChat: @unchecked Sendable {
                 previousTokens: promptTokens + generatedTokens)
 
             if nextToken == config.eosTokenId { break }
-            if nextToken == ChatTemplate.imEndId { break }
+            if nextToken == ChatTemplate.imEndId || nextToken == ChatTemplate.qwen35ImEndId { break }
 
             generatedTokens.append(nextToken)
 
-            // Thinking token tracking
-            if nextToken == ChatTemplate.thinkStartId { inThinking = true }
-            else if nextToken == ChatTemplate.thinkEndId { inThinking = false }
+            // Thinking token tracking (handle both Qwen3 and Qwen3.5 token IDs)
+            if nextToken == ChatTemplate.thinkStartId || nextToken == ChatTemplate.qwen35ThinkStartId {
+                inThinking = true
+            } else if nextToken == ChatTemplate.thinkEndId || nextToken == ChatTemplate.qwen35ThinkEndId {
+                inThinking = false
+            }
 
             if inThinking && generatedTokens.count > thinkBudget {
-                generatedTokens.append(ChatTemplate.thinkEndId)
-                let tokenArr = MLXArray([Int32(ChatTemplate.thinkEndId)])
+                let thinkEnd = config.isQwen35 ? ChatTemplate.qwen35ThinkEndId : ChatTemplate.thinkEndId
+                generatedTokens.append(thinkEnd)
+                let tokenArr = MLXArray([Int32(thinkEnd)])
                     .expandedDimensions(axis: 0)
                 let (stepLogits, newState) = model.forward(inputIds: tokenArr, state: state)
                 eval(stepLogits)
@@ -230,9 +248,11 @@ public final class Qwen35MLXChat: @unchecked Sendable {
                 continue
             }
 
-            let responseCount = generatedTokens.filter { token in
-                token != ChatTemplate.thinkStartId && token != ChatTemplate.thinkEndId
-            }.count
+            let thinkTokens: Set<Int> = [
+                ChatTemplate.thinkStartId, ChatTemplate.thinkEndId,
+                ChatTemplate.qwen35ThinkStartId, ChatTemplate.qwen35ThinkEndId
+            ]
+            let responseCount = generatedTokens.filter { !thinkTokens.contains($0) }.count
             if !inThinking && responseCount >= sampling.maxTokens { break }
 
             // Decode one step
@@ -263,7 +283,9 @@ public final class Qwen35MLXChat: @unchecked Sendable {
 
                     let promptTokens = ChatTemplate.encode(
                         messages: messages,
-                        tokenizer: self.tokenizer)
+                        tokenizer: self.tokenizer,
+                        config: self.config,
+                        enableThinking: false)
 
                     let promptArray = MLXArray(promptTokens.map { Int32($0) })
                         .expandedDimensions(axis: 0)
@@ -283,13 +305,13 @@ public final class Qwen35MLXChat: @unchecked Sendable {
                             previousTokens: promptTokens + generatedTokens)
 
                         if nextToken == self.config.eosTokenId { break }
-                        if nextToken == ChatTemplate.imEndId { break }
+                        if nextToken == ChatTemplate.imEndId || nextToken == ChatTemplate.qwen35ImEndId { break }
 
                         generatedTokens.append(nextToken)
 
-                        if nextToken == ChatTemplate.thinkStartId {
+                        if nextToken == ChatTemplate.thinkStartId || nextToken == ChatTemplate.qwen35ThinkStartId {
                             inThinking = true
-                        } else if nextToken == ChatTemplate.thinkEndId {
+                        } else if nextToken == ChatTemplate.thinkEndId || nextToken == ChatTemplate.qwen35ThinkEndId {
                             inThinking = false
                         } else if !inThinking,
                                   let text = self.tokenizer.decodeToken(nextToken),
@@ -320,7 +342,10 @@ public final class Qwen35MLXChat: @unchecked Sendable {
     private func extractLastPositionLogits(_ logits: MLXArray) -> [Float] {
         let t = logits.dim(1)
         let lastPos = logits[0, t - 1].asType(.float32)  // [vocabSize]
-        return (0..<config.vocabSize).map { lastPos[$0].item(Float.self) }
+        eval(lastPos)
+        // Bulk extract all floats at once — do NOT use per-element .item() (248K syncs)
+        let all: [Float] = lastPos.asArray(Float.self)
+        return Array(all.prefix(config.vocabSize))
     }
 }
 

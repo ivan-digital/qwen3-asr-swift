@@ -29,6 +29,106 @@ final class Qwen3ChatConfigTests: XCTestCase {
         XCTAssertEqual(config.numAttentionHeads / config.numKeyValueHeads, 2)
     }
 
+    // MARK: - Qwen3.5 Config
+
+    func testQwen35_08B() {
+        let config = Qwen3ChatConfig.qwen35_08B
+        XCTAssertEqual(config.hiddenSize, 1024)
+        XCTAssertEqual(config.numHiddenLayers, 24)
+        XCTAssertEqual(config.numAttentionHeads, 8)
+        XCTAssertEqual(config.numKeyValueHeads, 2)
+        XCTAssertEqual(config.headDim, 256)
+        XCTAssertEqual(config.intermediateSize, 3584)
+        XCTAssertEqual(config.vocabSize, 248320)
+        XCTAssertEqual(config.maxSeqLen, 2048)
+        XCTAssertEqual(config.ropeTheta, 10_000_000.0, accuracy: 1.0)
+        XCTAssertEqual(config.eosTokenId, 248046)
+        XCTAssertEqual(config.padTokenId, 248044)
+        XCTAssertEqual(config.quantization, "int4")
+        XCTAssertEqual(config.modelType, .qwen35)
+        XCTAssertTrue(config.isQwen35)
+    }
+
+    func testQwen35LayerTypes() {
+        let config = Qwen3ChatConfig.qwen35_08B
+        let types = config.layerTypes!
+        XCTAssertEqual(types.count, 24)
+
+        // Pattern: 3 linear + 1 full, repeated 6 times
+        for i in 0..<24 {
+            if (i + 1) % 4 == 0 {
+                XCTAssertEqual(types[i], "full_attention", "Layer \(i) should be full_attention")
+            } else {
+                XCTAssertEqual(types[i], "linear_attention", "Layer \(i) should be linear_attention")
+            }
+        }
+
+        XCTAssertEqual(config.numFullAttentionLayers, 6)
+        XCTAssertEqual(config.fullAttentionInterval, 4)
+    }
+
+    func testQwen35DeltaNetConfig() {
+        let config = Qwen3ChatConfig.qwen35_08B
+        XCTAssertEqual(config.linearNumKeyHeads, 16)
+        XCTAssertEqual(config.linearKeyHeadDim, 128)
+        XCTAssertEqual(config.linearNumValueHeads, 16)
+        XCTAssertEqual(config.linearValueHeadDim, 128)
+        XCTAssertEqual(config.linearConvKernelDim, 4)
+        XCTAssertEqual(config.partialRotaryFactor, 0.25)
+        XCTAssertEqual(config.tieWordEmbeddings, true)
+    }
+
+    func testQwen35ConfigRoundTrip() throws {
+        let original = Qwen3ChatConfig.qwen35_08B
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(Qwen3ChatConfig.self, from: data)
+
+        XCTAssertEqual(decoded.hiddenSize, original.hiddenSize)
+        XCTAssertEqual(decoded.numHiddenLayers, original.numHiddenLayers)
+        XCTAssertEqual(decoded.modelType, .qwen35)
+        XCTAssertEqual(decoded.layerTypes, original.layerTypes)
+        XCTAssertEqual(decoded.linearNumKeyHeads, 16)
+        XCTAssertEqual(decoded.tieWordEmbeddings, true)
+        XCTAssertTrue(decoded.isQwen35)
+    }
+
+    func testQwen35ConfigFromJson() throws {
+        let json = """
+        {
+            "hidden_size": 1024,
+            "num_hidden_layers": 24,
+            "num_attention_heads": 8,
+            "num_key_value_heads": 2,
+            "head_dim": 256,
+            "intermediate_size": 3584,
+            "vocab_size": 248320,
+            "max_seq_len": 2048,
+            "rope_theta": 10000000,
+            "rms_norm_eps": 1e-6,
+            "eos_token_id": 248046,
+            "pad_token_id": 248044,
+            "quantization": "int4",
+            "model_type": "qwen3_5_text",
+            "layer_types": ["linear_attention", "linear_attention", "linear_attention", "full_attention"],
+            "full_attention_interval": 4,
+            "linear_num_key_heads": 16,
+            "linear_key_head_dim": 128,
+            "linear_num_value_heads": 16,
+            "linear_value_head_dim": 128,
+            "linear_conv_kernel_dim": 4,
+            "partial_rotary_factor": 0.25,
+            "tie_word_embeddings": true
+        }
+        """.data(using: .utf8)!
+
+        let config = try JSONDecoder().decode(Qwen3ChatConfig.self, from: json)
+        XCTAssertEqual(config.modelType, .qwen35)
+        XCTAssertTrue(config.isQwen35)
+        XCTAssertEqual(config.layerTypes?.count, 4)
+        XCTAssertEqual(config.numFullAttentionLayers, 1)
+        XCTAssertEqual(config.linearNumKeyHeads, 16)
+    }
+
     func testCodableRoundTrip() throws {
         let original = Qwen3ChatConfig.qwen3_06B
         let data = try JSONEncoder().encode(original)
