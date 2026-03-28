@@ -1,6 +1,6 @@
 import Foundation
 
-/// Errors for Qwen3 chat model operations.
+/// Errors for Qwen3.5 chat model operations.
 public enum ChatModelError: LocalizedError {
     case modelLoadFailed(String)
     case tokenizerLoadFailed(String)
@@ -19,7 +19,7 @@ public enum ChatModelError: LocalizedError {
         case .configNotFound(let url):
             "Config not found at \(url.path)"
         case .modelNotFound(let url):
-            "CoreML model not found at \(url.path)"
+            "Model not found at \(url.path)"
         }
     }
 }

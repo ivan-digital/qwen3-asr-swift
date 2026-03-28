@@ -16,7 +16,7 @@ Spracherkennung, -synthese und -verständnis auf dem Gerät für Mac und iOS. L�
 - **Qwen3-TTS** — Sprachsynthese (höchste Qualität, Streaming, benutzerdefinierte Sprecher, 10 Sprachen)
 - **CosyVoice TTS** — Sprachsynthese mit Streaming, Stimmklonen, Mehrsprecherdialog und Emotions-Tags (9 Sprachen, DiT Flow Matching, CAM++ Sprecherencoder)
 - **Kokoro TTS** — Sprachsynthese auf dem Gerät (82M Parameter, CoreML/Neural Engine, 50 Stimmen, iOS-tauglich, 10 Sprachen)
-- **Qwen3-Chat** — LLM-Chat auf dem Gerät (0.6B, CoreML/Neural Engine, INT4/INT8, Token-Streaming, Denkmodus)
+- **Qwen3.5-Chat** — LLM-Chat auf dem Gerät (0.8B, MLX + CoreML, INT4/INT8, DeltaNet-Hybrid, Token-Streaming)
 - **PersonaPlex** — Vollduplex-Sprache-zu-Sprache-Konversation (7B, Audio rein → Audio raus, 18 Stimmvoreinstellungen)
 - **DeepFilterNet3** — Sprachverbesserung / Rauschunterdrückung (2,1M Parameter, Echtzeit 48kHz)
 - **FireRedVAD** — Offline-Sprachaktivitätserkennung (DFSMN, CoreML, 100+ Sprachen, 97,6% F1)
@@ -51,7 +51,7 @@ Siehe [Roadmap-Diskussion](https://github.com/soniqo/speech-swift/discussions/81
 | Qwen3-TTS-1.7B Base | Text → Sprache | Ja (~120ms) | 10 Sprachen | [4-bit](https://huggingface.co/aufklarer/Qwen3-TTS-12Hz-1.7B-Base-MLX-4bit) 3.2 GB · [8-bit](https://huggingface.co/aufklarer/Qwen3-TTS-12Hz-1.7B-Base-MLX-8bit) 4.8 GB |
 | CosyVoice3-0.5B | Text → Sprache | Ja (~150ms) | 9 Sprachen | [4-bit](https://huggingface.co/aufklarer/CosyVoice3-0.5B-MLX-4bit) 1.2 GB |
 | Kokoro-82M | Text → Sprache | Nein | 10 Sprachen | [CoreML](https://huggingface.co/aufklarer/Kokoro-82M-CoreML) ~325 MB |
-| Qwen3-0.6B Chat | Text → Text (LLM) | Ja (Streaming) | Mehrsprachig | [CoreML INT4](https://huggingface.co/aufklarer/Qwen3-0.6B-Chat-CoreML) 318 MB · [CoreML INT8](https://huggingface.co/aufklarer/Qwen3-0.6B-Chat-CoreML) 571 MB |
+| Qwen3.5-0.8B Chat | Text → Text (LLM) | Yes (streaming) | Multi | [MLX INT4](https://huggingface.co/aufklarer/Qwen3.5-0.8B-Chat-MLX) 404 MB · [CoreML INT4](https://huggingface.co/aufklarer/Qwen3.5-0.8B-Chat-CoreML) 531 MB |
 | PersonaPlex-7B | Sprache → Sprache | Ja (~2s-Blöcke) | EN | [4-bit](https://huggingface.co/aufklarer/PersonaPlex-7B-MLX-4bit) 4.9 GB · [8-bit](https://huggingface.co/aufklarer/PersonaPlex-7B-MLX-8bit) 9.1 GB |
 | FireRedVAD | Sprachaktivitätserkennung | Nein (offline) | 100+ Sprachen | [CoreML](https://huggingface.co/aufklarer/FireRedVAD-CoreML) ~1.2 MB |
 | Silero-VAD-v5 | Sprachaktivitätserkennung | Ja (32ms-Blöcke) | Sprachunabhängig | [MLX](https://huggingface.co/aufklarer/Silero-VAD-v5-MLX) · [CoreML](https://huggingface.co/aufklarer/Silero-VAD-v5-CoreML) ~1.2 MB |
@@ -76,8 +76,8 @@ Gewichtsspeicher ist der GPU- (MLX) oder ANE-Speicher (CoreML), der von Modellpa
 | Qwen3-TTS-0.6B (4-bit, MLX) | 977 MB | ~2 GB |
 | CosyVoice3-0.5B (4-bit, MLX) | 732 MB | ~2.5 GB |
 | Kokoro-82M (CoreML) | 325 MB | ~350 MB |
-| Qwen3-Chat-0.6B (INT4, CoreML) | 318 MB | ~600 MB |
-| Qwen3-Chat-0.6B (INT8, CoreML) | 571 MB | ~900 MB |
+| Qwen3.5-Chat-0.8B (INT4, MLX) | 404 MB | ~700 MB |
+| Qwen3.5-Chat-0.8B (INT4, CoreML) | 531 MB | ~800 MB |
 | PersonaPlex-7B (8-bit, MLX) | 9,100 MB | ~11 GB |
 | PersonaPlex-7B (4-bit, MLX) | 4,900 MB | ~6.5 GB |
 | Silero-VAD-v5 (MLX) | 1.2 MB | ~5 MB |
@@ -1217,7 +1217,7 @@ PERSONAPLEX_E2E=1 swift test --filter PersonaPlexE2ETests
 ## FAQ
 
 **Funktioniert speech-swift auf iOS?**
-Kokoro TTS, Qwen3-Chat, Silero VAD, Parakeet ASR, DeepFilterNet3 und WeSpeaker laufen alle auf iOS 17+ über CoreML auf der Neural Engine. MLX-basierte Modelle (Qwen3-ASR, Qwen3-TTS, PersonaPlex) erfordern macOS 14+ auf Apple Silicon.
+Kokoro TTS, Qwen3.5-Chat (CoreML), Silero VAD, Parakeet ASR, DeepFilterNet3 und WeSpeaker laufen alle auf iOS 17+ über CoreML auf der Neural Engine. MLX-basierte Modelle (Qwen3-ASR, Qwen3-TTS, Qwen3.5-Chat MLX, PersonaPlex) erfordern macOS 14+ auf Apple Silicon.
 
 **Wird eine Internetverbindung benötigt?**
 Nur für den erstmaligen Modell-Download von HuggingFace (automatisch, zwischengespeichert in `~/Library/Caches/qwen3-speech/`). Danach läuft alle Inferenz vollständig offline ohne Netzwerkzugriff.

@@ -3,7 +3,7 @@ import Foundation
 /// Standalone token sampler for text generation.
 ///
 /// Supports temperature scaling, top-K filtering, top-P (nucleus) filtering,
-/// and repetition penalty. Used by CoreMLGenerator and available for testing.
+/// and repetition penalty.
 enum ChatSampler {
 
     /// Sample a token from logits using the given sampling config.

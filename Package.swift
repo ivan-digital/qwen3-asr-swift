@@ -168,6 +168,10 @@ let package = Package(
             name: "Qwen3Chat",
             dependencies: [
                 "AudioCommon",
+                "MLXCommon",
+                .product(name: "MLX", package: "mlx-swift"),
+                .product(name: "MLXNN", package: "mlx-swift"),
+                .product(name: "MLXFast", package: "mlx-swift"),
             ]
         ),
         .target(

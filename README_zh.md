@@ -16,7 +16,7 @@
 - **Qwen3-TTS** — 文本转语音合成（最高质量，流式输出，自定义说话人，10 种语言）
 - **CosyVoice TTS** — 支持流式合成、声音克隆、多说话人对话和情感标签的文本转语音（9 种语言，DiT flow matching，CAM++ 说话人编码器）
 - **Kokoro TTS** — 端侧文本转语音（82M 参数，CoreML/神经引擎，50 种音色，iOS 就绪，10 种语言）
-- **Qwen3-Chat** — 端侧 LLM 对话（0.6B，CoreML/神经引擎，INT4/INT8，流式 token，思考模式）
+- **Qwen3.5-Chat** — 端侧 LLM 对话（0.8B，MLX + CoreML，INT4/INT8，DeltaNet 混合架构，流式 token）
 - **PersonaPlex** — 全双工语音到语音对话（7B，音频输入 → 音频输出，18 种预设音色）
 - **DeepFilterNet3** — 语音增强 / 噪声抑制（2.1M 参数，实时 48kHz）
 - **FireRedVAD** — 离线语音活动检测（DFSMN，CoreML，100+ 种语言，97.6% F1）
@@ -51,7 +51,7 @@
 | Qwen3-TTS-1.7B Base | 文本 → 语音 | 是 (~120ms) | 10 种语言 | [4-bit](https://huggingface.co/aufklarer/Qwen3-TTS-12Hz-1.7B-Base-MLX-4bit) 3.2 GB · [8-bit](https://huggingface.co/aufklarer/Qwen3-TTS-12Hz-1.7B-Base-MLX-8bit) 4.8 GB |
 | CosyVoice3-0.5B | 文本 → 语音 | 是 (~150ms) | 9 种语言 | [4-bit](https://huggingface.co/aufklarer/CosyVoice3-0.5B-MLX-4bit) 1.2 GB |
 | Kokoro-82M | 文本 → 语音 | 否 | 10 种语言 | [CoreML](https://huggingface.co/aufklarer/Kokoro-82M-CoreML) ~325 MB |
-| Qwen3-0.6B Chat | 文本 → 文本 (LLM) | 是（流式） | 多语言 | [CoreML INT4](https://huggingface.co/aufklarer/Qwen3-0.6B-Chat-CoreML) 318 MB · [CoreML INT8](https://huggingface.co/aufklarer/Qwen3-0.6B-Chat-CoreML) 571 MB |
+| Qwen3.5-0.8B Chat | Text → Text (LLM) | Yes (streaming) | Multi | [MLX INT4](https://huggingface.co/aufklarer/Qwen3.5-0.8B-Chat-MLX) 404 MB · [CoreML INT4](https://huggingface.co/aufklarer/Qwen3.5-0.8B-Chat-CoreML) 531 MB |
 | PersonaPlex-7B | 语音 → 语音 | 是 (~2s 分块) | EN | [4-bit](https://huggingface.co/aufklarer/PersonaPlex-7B-MLX-4bit) 4.9 GB · [8-bit](https://huggingface.co/aufklarer/PersonaPlex-7B-MLX-8bit) 9.1 GB |
 | FireRedVAD | 语音活动检测 | 否（离线） | 100+ 种语言 | [CoreML](https://huggingface.co/aufklarer/FireRedVAD-CoreML) ~1.2 MB |
 | Silero-VAD-v5 | 语音活动检测 | 是 (32ms 分块) | 语言无关 | [MLX](https://huggingface.co/aufklarer/Silero-VAD-v5-MLX) · [CoreML](https://huggingface.co/aufklarer/Silero-VAD-v5-CoreML) ~1.2 MB |
@@ -76,8 +76,8 @@
 | Qwen3-TTS-0.6B (4-bit, MLX) | 977 MB | ~2 GB |
 | CosyVoice3-0.5B (4-bit, MLX) | 732 MB | ~2.5 GB |
 | Kokoro-82M (CoreML) | 325 MB | ~350 MB |
-| Qwen3-Chat-0.6B (INT4, CoreML) | 318 MB | ~600 MB |
-| Qwen3-Chat-0.6B (INT8, CoreML) | 571 MB | ~900 MB |
+| Qwen3.5-Chat-0.8B (INT4, MLX) | 404 MB | ~700 MB |
+| Qwen3.5-Chat-0.8B (INT4, CoreML) | 531 MB | ~800 MB |
 | PersonaPlex-7B (8-bit, MLX) | 9,100 MB | ~11 GB |
 | PersonaPlex-7B (4-bit, MLX) | 4,900 MB | ~6.5 GB |
 | Silero-VAD-v5 (MLX) | 1.2 MB | ~5 MB |
@@ -1217,7 +1217,7 @@ PERSONAPLEX_E2E=1 swift test --filter PersonaPlexE2ETests
 ## 常见问题
 
 **speech-swift 能在 iOS 上运行吗？**
-Kokoro TTS、Qwen3-Chat、Silero VAD、Parakeet ASR、DeepFilterNet3 和 WeSpeaker 均可通过 CoreML 在 iOS 17+ 的神经引擎上运行。基于 MLX 的模型（Qwen3-ASR、Qwen3-TTS、PersonaPlex）需要在 Apple Silicon 上运行 macOS 14+。
+Kokoro TTS、Qwen3.5-Chat（CoreML）、Silero VAD、Parakeet ASR、DeepFilterNet3 和 WeSpeaker 均可通过 CoreML 在 iOS 17+ 的神经引擎上运行。基于 MLX 的模型（Qwen3-ASR、Qwen3-TTS、Qwen3.5-Chat MLX、PersonaPlex）需要在 Apple Silicon 上运行 macOS 14+。
 
 **需要网络连接吗？**
 仅在首次从 HuggingFace 下载模型时需要（自动下载，缓存在 `~/Library/Caches/qwen3-speech/`）。之后所有推理完全离线运行，不进行任何网络访问。

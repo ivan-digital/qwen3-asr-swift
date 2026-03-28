@@ -11,24 +11,76 @@ public final class ChatTokenizer: @unchecked Sendable {
     private var bpeMergeRanks: [String: Int] = [:]
     private var addedTokens: [String: Int] = [:]
 
-    public var eosTokenId: Int = 151645
+    public var eosTokenId: Int = 248046  // <|im_end|>
     public var vocabSize: Int { idToToken.count }
 
     public init() {}
 
-    /// Load tokenizer from a directory containing vocab.json and merges.txt.
+    /// Load tokenizer from a directory.
+    ///
+    /// Supports two formats:
+    /// 1. `tokenizer.json` (HuggingFace format, preferred) — contains vocab, merges, and added tokens
+    /// 2. `vocab.json` + `merges.txt` (legacy) — separate files
     public func load(from directory: URL) throws {
+        let tokenizerJsonURL = directory.appendingPathComponent("tokenizer.json")
         let vocabURL = directory.appendingPathComponent("vocab.json")
-        try loadVocab(from: vocabURL)
 
-        let mergesURL = directory.appendingPathComponent("merges.txt")
-        if FileManager.default.fileExists(atPath: mergesURL.path) {
-            try loadMerges(from: mergesURL)
+        if FileManager.default.fileExists(atPath: tokenizerJsonURL.path) {
+            try loadFromTokenizerJson(from: tokenizerJsonURL)
+        } else {
+            try loadVocab(from: vocabURL)
+
+            let mergesURL = directory.appendingPathComponent("merges.txt")
+            if FileManager.default.fileExists(atPath: mergesURL.path) {
+                try loadMerges(from: mergesURL)
+            }
         }
 
         let configURL = directory.appendingPathComponent("tokenizer_config.json")
         if FileManager.default.fileExists(atPath: configURL.path) {
             try loadAddedTokens(from: configURL)
+        }
+    }
+
+    /// Load from HuggingFace tokenizer.json (contains vocab + merges + added tokens).
+    private func loadFromTokenizerJson(from url: URL) throws {
+        let data = try Data(contentsOf: url)
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let model = root["model"] as? [String: Any],
+              let vocab = model["vocab"] as? [String: Int] else {
+            throw ChatModelError.tokenizerLoadFailed("Invalid tokenizer.json format")
+        }
+
+        tokenToId = vocab
+        idToToken = Dictionary(uniqueKeysWithValues: vocab.map { ($1, $0) })
+
+        // Load merges
+        if let merges = model["merges"] as? [[String]] {
+            for (i, pair) in merges.enumerated() {
+                guard pair.count == 2 else { continue }
+                bpeMerges.append((pair[0], pair[1]))
+                bpeMergeRanks["\(pair[0]) \(pair[1])"] = i
+            }
+        } else if let merges = model["merges"] as? [String] {
+            // Alternative format: each merge as "a b" string
+            for (i, merge) in merges.enumerated() {
+                let parts = merge.split(separator: " ", maxSplits: 1)
+                guard parts.count == 2 else { continue }
+                let pair = (String(parts[0]), String(parts[1]))
+                bpeMerges.append(pair)
+                bpeMergeRanks["\(pair.0) \(pair.1)"] = i
+            }
+        }
+
+        // Load added tokens
+        if let addedList = root["added_tokens"] as? [[String: Any]] {
+            for entry in addedList {
+                guard let content = entry["content"] as? String,
+                      let id = entry["id"] as? Int else { continue }
+                addedTokens[content] = id
+                tokenToId[content] = id
+                idToToken[id] = content
+            }
         }
     }
 
