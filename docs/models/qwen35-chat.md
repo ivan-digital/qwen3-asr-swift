@@ -139,5 +139,5 @@ By default, generation uses `enableThinking: false` which injects an empty `<thi
 
 ## Conversion
 
-- **MLX**: `scripts/repackage_qwen35_chat_mlx.py` — extracts text-only weights from mlx-community VLM model
+- **MLX**: `scripts/convert_qwen35_chat_mlx.py` — quantizes FP16 HuggingFace weights to INT4/INT8 using MLX native quantization
 - **CoreML**: `scripts/convert_qwen35_chat_coreml.py` — converts FP16 HuggingFace weights to CoreML with INT4/INT8 quantization
