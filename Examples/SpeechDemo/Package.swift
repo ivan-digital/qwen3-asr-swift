@@ -1,9 +1,9 @@
-// swift-tools-version: 5.9
+// swift-tools-version: 5.10
 import PackageDescription
 
 let package = Package(
     name: "SpeechDemo",
-    platforms: [.macOS(.v14), .iOS(.v17)],
+    platforms: [.macOS("15.0"), .iOS("18.0")],
     dependencies: [
         .package(path: "../.."),
     ],
