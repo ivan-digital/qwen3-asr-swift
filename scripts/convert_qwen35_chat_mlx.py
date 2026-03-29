@@ -120,10 +120,16 @@ def main():
             mlx_weights[key] = mx.array(w.numpy())
 
     # Apply sanitization (norm +1, conv1d transpose)
-    norm_suffixes = ("layernorm.weight", "norm.weight", "q_norm.weight", "k_norm.weight")
+    # Only specific norms need +1 (HF stores as value-1).
+    # DeltaNet linear_attn.norm.weight and final norm.weight do NOT need +1.
+    norm_suffixes = (
+        ".input_layernorm.weight",
+        ".post_attention_layernorm.weight",
+        ".q_norm.weight",
+        ".k_norm.weight",
+    )
     for key in list(mlx_weights.keys()):
         w = mlx_weights[key]
-        # RMSNorm weights: HF stores as (value - 1), add 1 back
         if w.ndim == 1 and any(key.endswith(s) for s in norm_suffixes):
             mlx_weights[key] = w.astype(mx.float32) + 1.0
         # Conv1d: PyTorch [C, 1, K] → MLX [C, K, 1]

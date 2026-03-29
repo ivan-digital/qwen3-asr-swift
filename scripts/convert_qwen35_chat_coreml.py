@@ -686,9 +686,11 @@ def load_weights(decoder, embedding_model, weights):
         if src_key in weights:
             if decoder_sd[key].shape == weights[src_key].shape:
                 w = weights[src_key].float()
-                # HF stores RMSNorm weights as (value - 1), add 1 back
-                norm_suffixes = ("layernorm.weight", "norm.weight",
-                                 "q_norm.weight", "k_norm.weight")
+                # HF stores certain RMSNorm weights as (value - 1), add 1 back.
+                # DeltaNet linear_attn.norm.weight and final norm.weight do NOT need +1.
+                norm_suffixes = (".input_layernorm.weight",
+                                 ".post_attention_layernorm.weight",
+                                 ".q_norm.weight", ".k_norm.weight")
                 if w.ndim == 1 and any(key.endswith(s) for s in norm_suffixes):
                     w = w + 1.0
                 decoder_sd[key] = w
