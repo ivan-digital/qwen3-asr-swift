@@ -196,8 +196,8 @@ class DeltaNetAttention(nn.Module):
         # Project to QKV: [1, 1, 6144]
         qkv = self.in_proj_qkv(x)  # [1, 1, 6144]
 
-        # Gate: z = silu(in_proj_z(x)), [1, 1, 2048]
-        z = F.silu(self.in_proj_z(x))
+        # Gate projection (silu applied later at gating step, NOT here)
+        z = self.in_proj_z(x)  # [1, 1, 2048]
 
         # Causal conv1d with carried state
         # conv_state: [1, 6144, 3], new input: [1, 6144, 1]
