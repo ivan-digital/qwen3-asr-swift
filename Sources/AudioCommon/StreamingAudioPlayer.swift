@@ -104,9 +104,6 @@ public final class StreamingAudioPlayer: @unchecked Sendable {
     private var playbackStarted = false
     private var generationComplete = false
     private var isFirstChunk = true
-    /// Tail of previous chunk for cross-fade at chunk boundaries
-    private var prevChunkTail: [Float] = []
-    private let crossFadeSamples = 480  // 10ms at 48kHz, 20ms at 24kHz
     private var upsampler: AVAudioConverter?
     private var preBufferSamples: Int = 0
     public private(set) var totalWritten: Int = 0
@@ -206,7 +203,7 @@ public final class StreamingAudioPlayer: @unchecked Sendable {
             var sumSq: Float = 0
             for s in samples { sumSq += s * s }
             let rms = sqrt(sumSq / Float(samples.count))
-            if rms < 0.02 { return }  // Drop codec warmup noise
+            if rms < 0.005 { return }  // Only drop near-silence (codec init noise)
             isFirstChunk = false
             // 5ms fade-in to prevent pop
             if let fmt = format {
@@ -215,24 +212,6 @@ public final class StreamingAudioPlayer: @unchecked Sendable {
                     output[i] *= Float(i) / Float(fadeFrames)
                 }
             }
-        }
-
-        // Cross-fade at chunk boundaries to eliminate discontinuities.
-        // Blend the tail of the previous chunk with the head of this chunk.
-        if !prevChunkTail.isEmpty && output.count >= crossFadeSamples {
-            let fadeLen = min(prevChunkTail.count, crossFadeSamples, output.count)
-            for i in 0..<fadeLen {
-                let t = Float(i) / Float(fadeLen)  // 0→1
-                output[i] = prevChunkTail[i] * (1.0 - t) + output[i] * t
-            }
-        }
-
-        // Save tail for next chunk's cross-fade
-        if output.count > crossFadeSamples {
-            prevChunkTail = Array(output[(output.count - crossFadeSamples)...])
-            output = Array(output[0..<(output.count - crossFadeSamples)])
-        } else {
-            prevChunkTail = []
         }
 
         lock.lock()
@@ -288,15 +267,6 @@ public final class StreamingAudioPlayer: @unchecked Sendable {
     /// Signal that TTS generation is complete — no more chunks will arrive.
     /// The render callback will drain remaining samples, then fire onPlaybackFinished.
     public func markGenerationComplete() {
-        // Flush any remaining cross-fade tail
-        if !prevChunkTail.isEmpty {
-            lock.lock()
-            ringBuffer?.write(prevChunkTail)
-            totalWritten += prevChunkTail.count
-            lock.unlock()
-            prevChunkTail = []
-        }
-
         lock.lock()
         generationComplete = true
         playbackStarted = true
@@ -320,7 +290,6 @@ public final class StreamingAudioPlayer: @unchecked Sendable {
         playbackFinishedFired = false
         playbackStarted = false
         isFirstChunk = true
-        prevChunkTail = []
         totalWritten = 0
         totalRead = 0
         ringBuffer?.reset()
