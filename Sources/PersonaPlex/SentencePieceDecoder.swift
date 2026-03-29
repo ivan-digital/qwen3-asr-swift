@@ -53,7 +53,7 @@ public struct SentencePieceDecoder: Sendable {
                         subOffset += strLen
                     } else if subField == 2 && subWire == 5 {
                         // Float field (32-bit / wire type 5)
-                        score = data[subOffset..<(subOffset + 4)].withUnsafeBytes { $0.load(as: Float.self) }
+                        score = data[subOffset..<(subOffset + 4)].withUnsafeBytes { $0.loadUnaligned(as: Float.self) }
                         subOffset += 4
                     } else {
                         // Skip other fields
