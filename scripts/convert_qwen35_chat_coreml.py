@@ -685,7 +685,13 @@ def load_weights(decoder, embedding_model, weights):
 
         if src_key in weights:
             if decoder_sd[key].shape == weights[src_key].shape:
-                decoder_sd[key] = weights[src_key].float()
+                w = weights[src_key].float()
+                # HF stores RMSNorm weights as (value - 1), add 1 back
+                norm_suffixes = ("layernorm.weight", "norm.weight",
+                                 "q_norm.weight", "k_norm.weight")
+                if w.ndim == 1 and any(key.endswith(s) for s in norm_suffixes):
+                    w = w + 1.0
+                decoder_sd[key] = w
                 loaded += 1
             else:
                 print(f"  Shape mismatch: {key} "

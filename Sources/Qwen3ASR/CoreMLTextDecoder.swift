@@ -13,7 +13,6 @@ import AudioCommon
 /// The decoder consists of two CoreML models:
 ///   - **embedding**: Token ID → embedding vector lookup
 ///   - **decoder**: Embedding → logits, with 56 KV cache states (28 layers × 2)
-@available(macOS 15, iOS 18, *)
 public class CoreMLTextDecoder {
     private let embeddingModel: MLModel
     private let decoderModel: MLModel
