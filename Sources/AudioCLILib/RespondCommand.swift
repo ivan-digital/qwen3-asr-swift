@@ -22,6 +22,9 @@ public struct RespondCommand: ParsableCommand {
     @Option(name: .long, help: "System prompt preset: assistant, focused, customer-service, teacher")
     public var systemPrompt: String = "assistant"
 
+    @Option(name: .long, help: "Custom system prompt text (overrides --system-prompt preset)")
+    public var systemPromptText: String?
+
     @Option(name: .long, help: "Maximum generation steps at 12.5Hz (default: 200 = ~16s)")
     public var maxSteps: Int = 200
 
@@ -116,10 +119,14 @@ public struct RespondCommand: ParsableCommand {
             throw ExitCode(1)
         }
 
-        guard let selectedPrompt = SystemPromptPreset(rawValue: systemPrompt) else {
-            print("Unknown system prompt: \(systemPrompt)")
-            print("Use --list-prompts to see available options.")
-            throw ExitCode(1)
+        var selectedPrompt: SystemPromptPreset?
+        if systemPromptText == nil {
+            guard let preset = SystemPromptPreset(rawValue: systemPrompt) else {
+                print("Unknown system prompt: \(systemPrompt)")
+                print("Use --list-prompts to see available options.")
+                throw ExitCode(1)
+            }
+            selectedPrompt = preset
         }
 
         try runAsync {
@@ -149,18 +156,22 @@ public struct RespondCommand: ParsableCommand {
                 print("  Warmup: \(String(format: "%.2f", warmTime))s")
             }
 
-            // Load SentencePiece decoder for transcript
-            var spmDecoder: SentencePieceDecoder?
-            if transcript || json {
-                do {
-                    let cacheDir = try HuggingFaceDownloader.getCacheDirectory(for: modelId)
-                    let spmPath = cacheDir.appendingPathComponent("tokenizer_spm_32k_3.model").path
-                    if FileManager.default.fileExists(atPath: spmPath) {
-                        spmDecoder = try SentencePieceDecoder(modelPath: spmPath)
-                    }
-                } catch {
-                    if !json { print("Warning: Could not load SentencePiece decoder: \(error)") }
+            // Use the model's built-in tokenizer for transcript decoding
+            let spmDecoder = model.tokenizer
+
+            // Resolve system prompt tokens
+            let promptTokens: [Int32]?
+            let promptLabel: String
+            if let customText = systemPromptText {
+                guard let tokens = model.tokenizeSystemPrompt(customText) else {
+                    print("Error: SentencePiece tokenizer not available for custom system prompt.")
+                    throw ExitCode(1)
                 }
+                promptTokens = tokens
+                promptLabel = "custom (\(tokens.count) tokens)"
+            } else {
+                promptTokens = selectedPrompt?.tokens
+                promptLabel = selectedPrompt?.rawValue ?? "default"
             }
 
             if !json { print("Loading input audio: \(input)") }
@@ -170,7 +181,7 @@ public struct RespondCommand: ParsableCommand {
             let duration = Double(audio.count) / 24000.0
             if !json {
                 print("  Duration: \(String(format: "%.2f", duration))s (\(audio.count) samples)")
-                print("Generating response with voice \(selectedVoice.rawValue), prompt: \(selectedPrompt.rawValue)")
+                print("Generating response with voice \(selectedVoice.rawValue), prompt: \(promptLabel)")
             }
             let startTime = CFAbsoluteTimeGetCurrent()
 
@@ -202,7 +213,7 @@ public struct RespondCommand: ParsableCommand {
 
                 let stream = model.respondRealtime(
                     voice: selectedVoice,
-                    systemPromptTokens: selectedPrompt.tokens,
+                    systemPromptTokens: promptTokens,
                     userAudioBuffer: ringBuffer,
                     maxSteps: maxSteps,
                     verbose: verbose
@@ -237,7 +248,7 @@ public struct RespondCommand: ParsableCommand {
                 let audioStream = model.respondStream(
                     userAudio: audio,
                     voice: selectedVoice,
-                    systemPromptTokens: selectedPrompt.tokens,
+                    systemPromptTokens: promptTokens,
                     maxSteps: maxSteps,
                     streaming: streamingConfig,
                     verbose: verbose)
@@ -256,7 +267,7 @@ public struct RespondCommand: ParsableCommand {
                 let result = model.respond(
                     userAudio: audio,
                     voice: selectedVoice,
-                    systemPromptTokens: selectedPrompt.tokens,
+                    systemPromptTokens: promptTokens,
                     maxSteps: maxSteps,
                     verbose: verbose)
                 responseSamples = result.audio
@@ -280,7 +291,7 @@ public struct RespondCommand: ParsableCommand {
                 var result: [String: Any] = [
                     "audio": output,
                     "voice": selectedVoice.rawValue,
-                    "system_prompt": selectedPrompt.rawValue,
+                    "system_prompt": promptLabel,
                     "input_duration": round(duration * 100) / 100,
                     "output_duration": round(responseDuration * 100) / 100,
                     "elapsed": round(elapsed * 100) / 100,

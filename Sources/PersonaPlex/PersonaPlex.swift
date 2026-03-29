@@ -21,6 +21,9 @@ public final class PersonaPlexModel: Module {
     /// Model ID used to load this instance (for resolving voice files etc.)
     public private(set) var modelId: String = defaultModelId
 
+    /// SentencePiece tokenizer for encoding/decoding text (loaded from model directory).
+    public private(set) var tokenizer: SentencePieceDecoder?
+
     @ModuleInfo public var temporal: TemporalTransformer
     @ModuleInfo public var depformer: Depformer
     public let mimi: Mimi
@@ -33,6 +36,53 @@ public final class PersonaPlexModel: Module {
         self._temporal = ModuleInfo(wrappedValue: TemporalTransformer(cfg: cfg.temporal))
         self._depformer = ModuleInfo(wrappedValue: Depformer(cfg: cfg.depformer, temporalDim: cfg.temporal.dim))
         self.mimi = Mimi(cfg: cfg.mimi)
+    }
+
+    // MARK: - String System Prompt Convenience
+
+    /// Tokenize a system prompt string using the built-in SentencePiece tokenizer.
+    /// Wraps the text with `<system>` tags as required by PersonaPlex.
+    /// Returns nil if the tokenizer is not loaded.
+    public func tokenizeSystemPrompt(_ text: String) -> [Int32]? {
+        return tokenizer?.encodeSystemPrompt(text)
+    }
+
+    /// Generate a response using a plain-text system prompt string.
+    public func respond(
+        userAudio: [Float],
+        voice: PersonaPlexVoice = .NATM0,
+        systemPrompt: String,
+        maxSteps: Int = 500,
+        verbose: Bool = false
+    ) -> (audio: [Float], textTokens: [Int32]) {
+        let tokens = tokenizeSystemPrompt(systemPrompt)
+        return respond(
+            userAudio: userAudio,
+            voice: voice,
+            systemPromptTokens: tokens,
+            maxSteps: maxSteps,
+            verbose: verbose
+        )
+    }
+
+    /// Stream a response using a plain-text system prompt string.
+    public func respondStream(
+        userAudio: [Float],
+        voice: PersonaPlexVoice = .NATM0,
+        systemPrompt: String,
+        maxSteps: Int = 500,
+        streaming: PersonaPlexStreamingConfig = .default,
+        verbose: Bool = false
+    ) -> AsyncThrowingStream<AudioChunk, Error> {
+        let tokens = tokenizeSystemPrompt(systemPrompt)
+        return respondStream(
+            userAudio: userAudio,
+            voice: voice,
+            systemPromptTokens: tokens,
+            maxSteps: maxSteps,
+            streaming: streaming,
+            verbose: verbose
+        )
     }
 
     // MARK: - Offline Inference
@@ -1584,6 +1634,12 @@ public final class PersonaPlexModel: Module {
             from: modelDir
         ) { progress, status in
             progressHandler?(0.80 + progress * 0.15, status)
+        }
+
+        // Load SentencePiece tokenizer
+        let spmPath = modelDir.appendingPathComponent("tokenizer_spm_32k_3.model").path
+        if FileManager.default.fileExists(atPath: spmPath) {
+            model.tokenizer = try? SentencePieceDecoder(modelPath: spmPath)
         }
 
         model.train(false)

@@ -159,6 +159,82 @@ final class PersonaPlexTests: XCTestCase {
         XCTAssertTrue(decoded.lowercased().contains("helpful"), "Decoded text should contain 'helpful': got '\(decoded)'")
     }
 
+    // MARK: - SentencePiece Encoder Tests
+
+    func testSentencePieceEncoderRoundTrip() throws {
+        let modelId = "aufklarer/PersonaPlex-7B-MLX-4bit"
+        let cacheDir: URL
+        do {
+            cacheDir = try HuggingFaceDownloader.getCacheDirectory(for: modelId)
+        } catch {
+            throw XCTSkip("Cannot resolve cache directory")
+        }
+
+        let spmPath = cacheDir.appendingPathComponent("tokenizer_spm_32k_3.model").path
+        guard FileManager.default.fileExists(atPath: spmPath) else {
+            throw XCTSkip("SentencePiece model not cached at \(spmPath)")
+        }
+
+        let decoder = try SentencePieceDecoder(modelPath: spmPath)
+
+        // Encode and decode should round-trip
+        let text = "You are a helpful assistant."
+        let tokens = decoder.encode(text)
+        XCTAssertFalse(tokens.isEmpty, "Encoded tokens should not be empty")
+        let decoded = decoder.decode(tokens)
+        XCTAssertEqual(decoded, text, "Round-trip should preserve text: got '\(decoded)'")
+    }
+
+    func testSentencePieceEncodeSystemPrompt() throws {
+        let modelId = "aufklarer/PersonaPlex-7B-MLX-4bit"
+        let cacheDir: URL
+        do {
+            cacheDir = try HuggingFaceDownloader.getCacheDirectory(for: modelId)
+        } catch {
+            throw XCTSkip("Cannot resolve cache directory")
+        }
+
+        let spmPath = cacheDir.appendingPathComponent("tokenizer_spm_32k_3.model").path
+        guard FileManager.default.fileExists(atPath: spmPath) else {
+            throw XCTSkip("SentencePiece model not cached at \(spmPath)")
+        }
+
+        let decoder = try SentencePieceDecoder(modelPath: spmPath)
+
+        // encodeSystemPrompt should wrap with <system> tags
+        let tokens = decoder.encodeSystemPrompt("You are a helpful assistant.")
+        let decoded = decoder.decode(tokens)
+        XCTAssertEqual(decoded, "You are a helpful assistant.", "System prompt decode should strip <system> tags")
+
+        // Verify <system> tag tokens are present (first and last non-trivial tokens)
+        XCTAssertTrue(tokens.count > 5, "System prompt should produce multiple tokens")
+    }
+
+    func testSentencePieceEncodeMatchesPreset() throws {
+        let modelId = "aufklarer/PersonaPlex-7B-MLX-4bit"
+        let cacheDir: URL
+        do {
+            cacheDir = try HuggingFaceDownloader.getCacheDirectory(for: modelId)
+        } catch {
+            throw XCTSkip("Cannot resolve cache directory")
+        }
+
+        let spmPath = cacheDir.appendingPathComponent("tokenizer_spm_32k_3.model").path
+        guard FileManager.default.fileExists(atPath: spmPath) else {
+            throw XCTSkip("SentencePiece model not cached at \(spmPath)")
+        }
+
+        let decoder = try SentencePieceDecoder(modelPath: spmPath)
+
+        // Encoding the assistant preset text should produce identical tokens
+        let presetTokens = SystemPromptPreset.assistant.tokens
+        let encodedTokens = decoder.encodeSystemPrompt("You are a helpful assistant. Answer questions clearly and concisely.")
+        XCTAssertEqual(
+            encodedTokens, presetTokens,
+            "Encoded tokens should match pre-tokenized assistant preset.\n  Expected: \(presetTokens)\n  Got:      \(encodedTokens)"
+        )
+    }
+
     // MARK: - Silence Early Stop Config Tests
 
     func testAudioChunkTextTokensDefault() {
@@ -429,6 +505,46 @@ final class E2EPersonaPlexTests: XCTestCase {
 
         let responseDuration = Double(response.count) / Double(sampleRate)
         print("Response: \(response.count) samples (\(String(format: "%.2f", responseDuration))s)")
+    }
+
+    func testRespondWithCustomSystemPrompt() throws {
+        let model = try self.model
+
+        // Verify tokenizer is loaded
+        XCTAssertNotNil(model.tokenizer, "Model should have built-in tokenizer")
+
+        // Generate test audio (0.5s sine wave)
+        let numSamples = 12000
+        var testAudio = [Float](repeating: 0, count: numSamples)
+        for i in 0..<numSamples {
+            testAudio[i] = sin(2 * .pi * 440 * Float(i) / 24000.0) * 0.5
+        }
+
+        // Use the string-based system prompt API
+        let (response, textTokens) = model.respond(
+            userAudio: testAudio,
+            voice: .NATM0,
+            systemPrompt: "You enjoy having a good conversation.",
+            maxSteps: 10,
+            verbose: true
+        )
+
+        XCTAssertFalse(response.isEmpty, "Should produce response audio with custom prompt")
+        print("Custom prompt response: \(response.count) samples, \(textTokens.count) text tokens")
+    }
+
+    func testTokenizeSystemPromptMatchesPreset() throws {
+        let model = try self.model
+
+        // Verify the model's tokenizer produces the same tokens as the preset
+        guard let tokens = model.tokenizeSystemPrompt(
+            "You are a helpful assistant. Answer questions clearly and concisely."
+        ) else {
+            XCTFail("tokenizeSystemPrompt returned nil")
+            return
+        }
+        let presetTokens = SystemPromptPreset.assistant.tokens
+        XCTAssertEqual(tokens, presetTokens, "Model tokenizer should match preset tokens")
     }
 
     func testRespondNonSilent() throws {
