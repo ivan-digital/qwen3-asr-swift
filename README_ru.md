@@ -51,7 +51,7 @@
 | Qwen3-TTS-1.7B Base | Текст → Речь | Да (~120мс) | 10 языков | [4-bit](https://huggingface.co/aufklarer/Qwen3-TTS-12Hz-1.7B-Base-MLX-4bit) 3.2 GB · [8-bit](https://huggingface.co/aufklarer/Qwen3-TTS-12Hz-1.7B-Base-MLX-8bit) 4.8 GB |
 | CosyVoice3-0.5B | Текст → Речь | Да (~150мс) | 9 языков | [4-bit](https://huggingface.co/aufklarer/CosyVoice3-0.5B-MLX-4bit) 1.2 GB |
 | Kokoro-82M | Текст → Речь | Нет | 10 языков | [CoreML](https://huggingface.co/aufklarer/Kokoro-82M-CoreML) ~325 MB |
-| Qwen3.5-0.8B Chat | Text → Text (LLM) | Yes (streaming) | Multi | [MLX INT4](https://huggingface.co/aufklarer/Qwen3.5-0.8B-Chat-MLX) 404 MB · [CoreML INT4](https://huggingface.co/aufklarer/Qwen3.5-0.8B-Chat-CoreML) 531 MB |
+| Qwen3.5-0.8B Chat | Text → Text (LLM) | Yes (streaming) | Multi | [MLX INT4](https://huggingface.co/aufklarer/Qwen3.5-0.8B-Chat-MLX) 418 MB · [CoreML INT8](https://huggingface.co/aufklarer/Qwen3.5-0.8B-Chat-CoreML) 981 MB |
 | PersonaPlex-7B | Речь → Речь | Да (~2с фрагменты) | EN | [4-bit](https://huggingface.co/aufklarer/PersonaPlex-7B-MLX-4bit) 4.9 GB · [8-bit](https://huggingface.co/aufklarer/PersonaPlex-7B-MLX-8bit) 9.1 GB |
 | FireRedVAD | Обнаружение голосовой активности | Нет (офлайн) | 100+ языков | [CoreML](https://huggingface.co/aufklarer/FireRedVAD-CoreML) ~1.2 MB |
 | Silero-VAD-v5 | Обнаружение голосовой активности | Да (фрагменты по 32мс) | Языконезависимый | [MLX](https://huggingface.co/aufklarer/Silero-VAD-v5-MLX) · [CoreML](https://huggingface.co/aufklarer/Silero-VAD-v5-CoreML) ~1.2 MB |
@@ -76,8 +76,8 @@
 | Qwen3-TTS-0.6B (4-bit, MLX) | 977 MB | ~2 GB |
 | CosyVoice3-0.5B (4-bit, MLX) | 732 MB | ~2.5 GB |
 | Kokoro-82M (CoreML) | 325 MB | ~350 MB |
-| Qwen3.5-Chat-0.8B (INT4, MLX) | 404 MB | ~700 MB |
-| Qwen3.5-Chat-0.8B (INT4, CoreML) | 531 MB | ~800 MB |
+| Qwen3.5-Chat-0.8B (INT4, MLX) | 418 MB | ~700 MB |
+| Qwen3.5-Chat-0.8B (INT8, CoreML) | 981 MB | ~1.2 GB |
 | PersonaPlex-7B (8-bit, MLX) | 9,100 MB | ~11 GB |
 | PersonaPlex-7B (4-bit, MLX) | 4,900 MB | ~6.5 GB |
 | Silero-VAD-v5 (MLX) | 1.2 MB | ~5 MB |

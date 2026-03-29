@@ -16,7 +16,7 @@ Mac과 iOS를 위한 온디바이스 음성 인식, 합성 및 이해. Apple Sil
 - **Qwen3-TTS** — 텍스트-음성 변환 (최고 품질, 스트리밍, 커스텀 화자, 10개 언어)
 - **CosyVoice TTS** — 스트리밍, 음성 복제, 다화자 대화, 감정 태그를 지원하는 텍스트-음성 변환 (9개 언어, DiT flow matching, CAM++ 화자 인코더)
 - **Kokoro TTS** — 온디바이스 텍스트-음성 변환 (82M 파라미터, CoreML/Neural Engine, 50개 음색, iOS 지원, 10개 언어)
-- **Qwen3.5-Chat** — 온디바이스 LLM 채팅 (0.8B, MLX + CoreML, INT4/INT8, DeltaNet 하이브리드, 스트리밍 토큰)
+- **Qwen3.5-Chat** — 온디바이스 LLM 채팅 (0.8B, MLX + CoreML, INT4 + CoreML INT8, DeltaNet 하이브리드, 스트리밍 토큰)
 - **PersonaPlex** — 전이중 음성-음성 대화 (7B, 오디오 입력 → 오디오 출력, 18개 음색 프리셋)
 - **DeepFilterNet3** — 음성 향상 / 노이즈 억제 (2.1M 파라미터, 실시간 48kHz)
 - **FireRedVAD** — 오프라인 음성 활동 감지 (DFSMN, CoreML, 100개 이상 언어, 97.6% F1)
@@ -51,7 +51,7 @@ Mac과 iOS를 위한 온디바이스 음성 인식, 합성 및 이해. Apple Sil
 | Qwen3-TTS-1.7B Base | 텍스트 → 음성 | 예 (~120ms) | 10개 언어 | [4-bit](https://huggingface.co/aufklarer/Qwen3-TTS-12Hz-1.7B-Base-MLX-4bit) 3.2 GB · [8-bit](https://huggingface.co/aufklarer/Qwen3-TTS-12Hz-1.7B-Base-MLX-8bit) 4.8 GB |
 | CosyVoice3-0.5B | 텍스트 → 음성 | 예 (~150ms) | 9개 언어 | [4-bit](https://huggingface.co/aufklarer/CosyVoice3-0.5B-MLX-4bit) 1.2 GB |
 | Kokoro-82M | 텍스트 → 음성 | 아니오 | 10개 언어 | [CoreML](https://huggingface.co/aufklarer/Kokoro-82M-CoreML) ~325 MB |
-| Qwen3.5-0.8B Chat | Text → Text (LLM) | Yes (streaming) | Multi | [MLX INT4](https://huggingface.co/aufklarer/Qwen3.5-0.8B-Chat-MLX) 404 MB · [CoreML INT4](https://huggingface.co/aufklarer/Qwen3.5-0.8B-Chat-CoreML) 531 MB |
+| Qwen3.5-0.8B Chat | Text → Text (LLM) | Yes (streaming) | Multi | [MLX INT4](https://huggingface.co/aufklarer/Qwen3.5-0.8B-Chat-MLX) 418 MB · [CoreML INT8](https://huggingface.co/aufklarer/Qwen3.5-0.8B-Chat-CoreML) 981 MB |
 | PersonaPlex-7B | 음성 → 음성 | 예 (~2초 청크) | EN | [4-bit](https://huggingface.co/aufklarer/PersonaPlex-7B-MLX-4bit) 4.9 GB · [8-bit](https://huggingface.co/aufklarer/PersonaPlex-7B-MLX-8bit) 9.1 GB |
 | FireRedVAD | 음성 활동 감지 | 아니오 (오프라인) | 100개 이상 언어 | [CoreML](https://huggingface.co/aufklarer/FireRedVAD-CoreML) ~1.2 MB |
 | Silero-VAD-v5 | 음성 활동 감지 | 예 (32ms 청크) | 언어 무관 | [MLX](https://huggingface.co/aufklarer/Silero-VAD-v5-MLX) · [CoreML](https://huggingface.co/aufklarer/Silero-VAD-v5-CoreML) ~1.2 MB |
@@ -76,8 +76,8 @@ Mac과 iOS를 위한 온디바이스 음성 인식, 합성 및 이해. Apple Sil
 | Qwen3-TTS-0.6B (4-bit, MLX) | 977 MB | ~2 GB |
 | CosyVoice3-0.5B (4-bit, MLX) | 732 MB | ~2.5 GB |
 | Kokoro-82M (CoreML) | 325 MB | ~350 MB |
-| Qwen3.5-Chat-0.8B (INT4, MLX) | 404 MB | ~700 MB |
-| Qwen3.5-Chat-0.8B (INT4, CoreML) | 531 MB | ~800 MB |
+| Qwen3.5-Chat-0.8B (INT4, MLX) | 418 MB | ~700 MB |
+| Qwen3.5-Chat-0.8B (INT8, CoreML) | 981 MB | ~1.2 GB |
 | PersonaPlex-7B (8-bit, MLX) | 9,100 MB | ~11 GB |
 | PersonaPlex-7B (4-bit, MLX) | 4,900 MB | ~6.5 GB |
 | Silero-VAD-v5 (MLX) | 1.2 MB | ~5 MB |

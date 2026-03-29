@@ -16,7 +16,7 @@ Reconnaissance, synthese et comprehension vocale embarquees pour Mac et iOS. S'e
 - **Qwen3-TTS** -- Synthese vocale (qualite maximale, streaming, locuteurs personnalises, 10 langues)
 - **CosyVoice TTS** -- Synthese vocale avec streaming, clonage vocal, dialogue multi-locuteurs et balises d'emotion (9 langues, DiT flow matching, encodeur de locuteur CAM++)
 - **Kokoro TTS** -- Synthese vocale embarquee (82M parametres, CoreML/Neural Engine, 50 voix, compatible iOS, 10 langues)
-- **Qwen3.5-Chat** -- Chat LLM embarque (0.8B, MLX + CoreML, INT4/INT8, DeltaNet hybride, tokens en streaming)
+- **Qwen3.5-Chat** -- Chat LLM embarque (0.8B, MLX + CoreML, INT4 + CoreML INT8, DeltaNet hybride, tokens en streaming)
 - **PersonaPlex** -- Conversation parole-a-parole en full-duplex (7B, audio entrant → audio sortant, 18 preselections de voix)
 - **DeepFilterNet3** -- Amelioration de la parole / suppression du bruit (2.1M parametres, temps reel 48kHz)
 - **FireRedVAD** -- Detection d'activite vocale hors ligne (DFSMN, CoreML, 100+ langues, 97.6% F1)
@@ -51,7 +51,7 @@ Consultez la [discussion Feuille de route](https://github.com/soniqo/speech-swif
 | Qwen3-TTS-1.7B Base | Texte → Parole | Oui (~120ms) | 10 langues | [4-bit](https://huggingface.co/aufklarer/Qwen3-TTS-12Hz-1.7B-Base-MLX-4bit) 3.2 GB · [8-bit](https://huggingface.co/aufklarer/Qwen3-TTS-12Hz-1.7B-Base-MLX-8bit) 4.8 GB |
 | CosyVoice3-0.5B | Texte → Parole | Oui (~150ms) | 9 langues | [4-bit](https://huggingface.co/aufklarer/CosyVoice3-0.5B-MLX-4bit) 1.2 GB |
 | Kokoro-82M | Texte → Parole | Non | 10 langues | [CoreML](https://huggingface.co/aufklarer/Kokoro-82M-CoreML) ~325 MB |
-| Qwen3.5-0.8B Chat | Text → Text (LLM) | Yes (streaming) | Multi | [MLX INT4](https://huggingface.co/aufklarer/Qwen3.5-0.8B-Chat-MLX) 404 MB · [CoreML INT4](https://huggingface.co/aufklarer/Qwen3.5-0.8B-Chat-CoreML) 531 MB |
+| Qwen3.5-0.8B Chat | Text → Text (LLM) | Yes (streaming) | Multi | [MLX INT4](https://huggingface.co/aufklarer/Qwen3.5-0.8B-Chat-MLX) 418 MB · [CoreML INT8](https://huggingface.co/aufklarer/Qwen3.5-0.8B-Chat-CoreML) 981 MB |
 | PersonaPlex-7B | Parole → Parole | Oui (~2s par bloc) | EN | [4-bit](https://huggingface.co/aufklarer/PersonaPlex-7B-MLX-4bit) 4.9 GB · [8-bit](https://huggingface.co/aufklarer/PersonaPlex-7B-MLX-8bit) 9.1 GB |
 | FireRedVAD | Detection d'activite vocale | Non (hors ligne) | 100+ langues | [CoreML](https://huggingface.co/aufklarer/FireRedVAD-CoreML) ~1.2 MB |
 | Silero-VAD-v5 | Detection d'activite vocale | Oui (blocs de 32ms) | Independant de la langue | [MLX](https://huggingface.co/aufklarer/Silero-VAD-v5-MLX) · [CoreML](https://huggingface.co/aufklarer/Silero-VAD-v5-CoreML) ~1.2 MB |
@@ -76,8 +76,8 @@ La memoire des poids correspond a la memoire GPU (MLX) ou ANE (CoreML) consommee
 | Qwen3-TTS-0.6B (4-bit, MLX) | 977 MB | ~2 GB |
 | CosyVoice3-0.5B (4-bit, MLX) | 732 MB | ~2.5 GB |
 | Kokoro-82M (CoreML) | 325 MB | ~350 MB |
-| Qwen3.5-Chat-0.8B (INT4, MLX) | 404 MB | ~700 MB |
-| Qwen3.5-Chat-0.8B (INT4, CoreML) | 531 MB | ~800 MB |
+| Qwen3.5-Chat-0.8B (INT4, MLX) | 418 MB | ~700 MB |
+| Qwen3.5-Chat-0.8B (INT8, CoreML) | 981 MB | ~1.2 GB |
 | PersonaPlex-7B (8-bit, MLX) | 9,100 MB | ~11 GB |
 | PersonaPlex-7B (4-bit, MLX) | 4,900 MB | ~6.5 GB |
 | Silero-VAD-v5 (MLX) | 1.2 MB | ~5 MB |
