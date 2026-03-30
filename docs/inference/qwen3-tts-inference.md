@@ -251,3 +251,61 @@ let audio = model.synthesizeWithVoiceCloneICL(
 
 ICL fixes EOS failure on short texts and non-English languages (e.g. German) that occur with x-vector-only mode.
 
+
+## CoreML Backend (Neural Engine)
+
+The CoreML backend uses 6 ANE-optimized models for on-device TTS inference:
+
+### Architecture
+
+```
+Text -> [TextProjector] -> embeddings
+                            + CodeEmbedder(codec_tokens) ─> [CodeDecoder] -> CB0 logits
+                                                                |
+                                                                v
+                                                        [MultiCodeDecoder] -> CB1-15
+                                                                |
+                                                                v
+                                                        [SpeechDecoder] -> 24kHz audio
+```
+
+### 6 CoreML Models
+
+| Model | Description | I/O | Quantization |
+|-------|-------------|-----|-------------|
+| TextProjector | text token → embedding | `int32 → [1,1024,1,1]` | W16A16 |
+| CodeEmbedder | codec token → embedding | `int32 → [1,1024,1,1]` | W16A16 |
+| MultiCodeEmbedder | CB1-15 token → embedding (linearized) | `int32 → [1,1024,1,1]` | W16A16 |
+| CodeDecoder | 28-layer transformer, scatter-write KV | NCHW, KV `[1,28672,1,256]` | W8A16 |
+| MultiCodeDecoder | 5-layer CP transformer, 15 lm_heads | NCHW, KV `[1,5120,1,16]` | W8A16 |
+| SpeechDecoder | Batch vocoder (T=125) | `[1,16,125] → audio` | W8A16 |
+
+### Key Design Patterns
+
+- **NCHW layout**: All embeddings and transformer I/O use `[batch, channels, 1, seq]` format for ANE
+- **Scatter-write KV cache**: Fixed-size pre-allocated cache with one-hot position mask
+- **Non-streaming prefill**: All text tokens processed in prefill, decode only feeds codec+pad
+- **Speaker embedding**: Required 1024-dim x-vector for voice identity (critical for FP16 quality)
+- **Actual model layers**: Converted via `torch.jit.trace` on the real model, not reimplementation
+
+### Conversion
+
+```bash
+python scripts/convert_qwen3_tts_coreml.py \
+    --model-id Qwen/Qwen3-TTS-12Hz-0.6B-Base \
+    --output-dir models/Qwen3-TTS-CoreML \
+    --quantize-w8
+```
+
+### Usage (Swift)
+
+```swift
+let model = try await Qwen3TTSCoreMLModel.fromPretrained()
+let audio = try model.synthesize(text: "Hello world", language: "english")
+```
+
+### CLI
+
+```bash
+audio speak "Hello world" --engine coreml --output hello.wav
+```
