@@ -63,32 +63,33 @@ enum TTSSampler {
             return Int32(logits.enumerated().max(by: { $0.element < $1.element })!.offset)
         }
 
-        // 5. Temperature
-        for i in 0..<vocabSize { logits[i] /= temperature }
+        // 5. Temperature (in Float64 for precision matching Python)
+        var dLogits = logits.map { Double($0) / Double(temperature) }
 
         // 6. Top-k
         if topK > 0, topK < vocabSize {
-            let sorted = logits.sorted()
+            let sorted = dLogits.sorted()
             let threshold = sorted[vocabSize - topK]
             for i in 0..<vocabSize {
-                if logits[i] < threshold { logits[i] = -1e9 }
+                if dLogits[i] < threshold { dLogits[i] = -1e9 }
             }
         }
+        // Replace logits with double-precision version for sampling below
+        for i in 0..<vocabSize { logits[i] = Float(dLogits[i]) }
 
-        // 8. Categorical sampling: softmax → cumulative → uniform threshold
-        // Matches Python's np.random.choice(p=probs)
+        // 8. Categorical sampling in Float64 (matches Python's np.float64 softmax)
         let maxLogit = logits.max() ?? 0
-        var probs = [Float](repeating: 0, count: vocabSize)
-        var sumExp: Float = 0
+        var probs = [Double](repeating: 0, count: vocabSize)
+        var sumExp: Double = 0
         for i in 0..<vocabSize {
-            let e = exp(logits[i] - maxLogit)
+            let e = exp(Double(logits[i]) - Double(maxLogit))
             probs[i] = e
             sumExp += e
         }
         for i in 0..<vocabSize { probs[i] /= sumExp }
 
-        let u = Float.random(in: 0..<1)
-        var cumulative: Float = 0
+        let u = Double.random(in: 0..<1)
+        var cumulative: Double = 0
         for i in 0..<vocabSize {
             cumulative += probs[i]
             if cumulative > u { return Int32(i) }
