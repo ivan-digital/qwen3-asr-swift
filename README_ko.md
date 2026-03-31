@@ -15,7 +15,7 @@ Mac과 iOS를 위한 온디바이스 음성 인식, 합성 및 이해. Apple Sil
 - **Qwen3-ForcedAligner** — 단어 수준 타임스탬프 정렬 (오디오 + 텍스트 → 타임스탬프)
 - **Qwen3-TTS** — 텍스트-음성 변환 (최고 품질, 스트리밍, 커스텀 화자, 10개 언어)
 - **CosyVoice TTS** — 스트리밍, 음성 복제, 다화자 대화, 감정 태그를 지원하는 텍스트-음성 변환 (9개 언어, DiT flow matching, CAM++ 화자 인코더)
-- **Kokoro TTS** — 온디바이스 텍스트-음성 변환 (82M 파라미터, CoreML/Neural Engine, 50개 음색, iOS 지원, 10개 언어)
+- **Kokoro TTS** — 온디바이스 텍스트-음성 변환 (82M 파라미터, CoreML/Neural Engine, 54개 음색, iOS 지원, 10개 언어)
 - **Qwen3.5-Chat** — 온디바이스 LLM 채팅 (0.8B, MLX + CoreML, INT4 + CoreML INT8, DeltaNet 하이브리드, 스트리밍 토큰)
 - **PersonaPlex** — 전이중 음성-음성 대화 (7B, 오디오 입력 → 오디오 출력, 18개 음색 프리셋)
 - **DeepFilterNet3** — 음성 향상 / 노이즈 억제 (2.1M 파라미터, 실시간 48kHz)
@@ -50,7 +50,7 @@ Mac과 iOS를 위한 온디바이스 음성 인식, 합성 및 이해. Apple Sil
 | Qwen3-TTS-0.6B CustomVoice | 텍스트 → 음성 | 예 (~120ms) | 10개 언어 | [4-bit](https://huggingface.co/aufklarer/Qwen3-TTS-12Hz-0.6B-CustomVoice-MLX-4bit) 1.7 GB |
 | Qwen3-TTS-1.7B Base | 텍스트 → 음성 | 예 (~120ms) | 10개 언어 | [4-bit](https://huggingface.co/aufklarer/Qwen3-TTS-12Hz-1.7B-Base-MLX-4bit) 3.2 GB · [8-bit](https://huggingface.co/aufklarer/Qwen3-TTS-12Hz-1.7B-Base-MLX-8bit) 4.8 GB |
 | CosyVoice3-0.5B | 텍스트 → 음성 | 예 (~150ms) | 9개 언어 | [4-bit](https://huggingface.co/aufklarer/CosyVoice3-0.5B-MLX-4bit) 1.2 GB |
-| Kokoro-82M | 텍스트 → 음성 | 아니오 | 10개 언어 | [CoreML](https://huggingface.co/aufklarer/Kokoro-82M-CoreML) ~325 MB |
+| Kokoro-82M | 텍스트 → 음성 | 아니오 | 10개 언어 | [CoreML](https://huggingface.co/aufklarer/Kokoro-82M-CoreML) ~170 MB |
 | Qwen3.5-0.8B Chat | Text → Text (LLM) | Yes (streaming) | Multi | [MLX INT4](https://huggingface.co/aufklarer/Qwen3.5-0.8B-Chat-MLX) 418 MB · [CoreML INT8](https://huggingface.co/aufklarer/Qwen3.5-0.8B-Chat-CoreML) 981 MB |
 | PersonaPlex-7B | 음성 → 음성 | 예 (~2초 청크) | EN | [4-bit](https://huggingface.co/aufklarer/PersonaPlex-7B-MLX-4bit) 4.9 GB · [8-bit](https://huggingface.co/aufklarer/PersonaPlex-7B-MLX-8bit) 9.1 GB |
 | FireRedVAD | 음성 활동 감지 | 아니오 (오프라인) | 100개 이상 언어 | [CoreML](https://huggingface.co/aufklarer/FireRedVAD-CoreML) ~1.2 MB |
@@ -75,7 +75,7 @@ Mac과 iOS를 위한 온디바이스 음성 인식, 합성 및 이해. Apple Sil
 | Qwen3-TTS-1.7B (4-bit, MLX) | 2,300 MB | ~4–6 GB |
 | Qwen3-TTS-0.6B (4-bit, MLX) | 977 MB | ~2 GB |
 | CosyVoice3-0.5B (4-bit, MLX) | 732 MB | ~2.5 GB |
-| Kokoro-82M (CoreML) | 325 MB | ~350 MB |
+| Kokoro-82M (CoreML) | 170 MB | ~200 MB |
 | Qwen3.5-Chat-0.8B (INT4, MLX) | 418 MB | ~700 MB |
 | Qwen3.5-Chat-0.8B (INT8, CoreML) | 981 MB | ~1.2 GB |
 | PersonaPlex-7B (8-bit, MLX) | 9,100 MB | ~11 GB |
@@ -90,7 +90,7 @@ Mac과 iOS를 위한 온디바이스 음성 인식, 합성 및 이해. Apple Sil
 
 - **Qwen3-TTS**: 최고 품질, 스트리밍 (~120ms), 9개 내장 화자, 10개 언어, 배치 합성
 - **CosyVoice TTS**: 스트리밍 (~150ms), 9개 언어, 음성 복제 (CAM++ 화자 인코더), 다화자 대화 (`[S1] ... [S2] ...`), 인라인 감정/스타일 태그 (`(happy)`, `(whispers)`), DiT flow matching + HiFi-GAN 보코더
-- **Kokoro TTS**: iOS에 적합한 경량 TTS (82M 파라미터), CoreML/Neural Engine, 50개 음색, 10개 언어, 비자기회귀 (단일 순전파)
+- **Kokoro TTS**: iOS에 적합한 경량 TTS (82M 파라미터), CoreML/Neural Engine, 54개 음색, 10개 언어, 비자기회귀 (3단계 파이프라인)
 - **PersonaPlex**: 전이중 음성-음성 (오디오 입력 → 오디오 출력), 스트리밍 (~2초 청크), 18개 음색 프리셋, Moshi 아키텍처 기반
 
 ## 설치
@@ -282,7 +282,7 @@ swift build -c release
 ...
 ```
 
-비자기회귀 — 단일 순전파, 샘플링 루프 없음. 아키텍처 상세 내용은 [Forced Aligner](docs/inference/forced-aligner.md)를 참조하세요.
+비자기회귀 — 3단계 파이프라인, 샘플링 루프 없음. 아키텍처 상세 내용은 [Forced Aligner](docs/inference/forced-aligner.md)를 참조하세요.
 
 ## 텍스트-음성 변환 (TTS) — Swift로 음성 생성하기
 
@@ -664,14 +664,14 @@ import KokoroTTS
 import AudioCommon  // WAVWriter 사용
 
 let tts = try await KokoroTTSModel.fromPretrained()
-// 첫 실행 시 ~325 MB 다운로드 (CoreML 모델 + 음색 임베딩 + 사전)
+// 첫 실행 시 ~170 MB 다운로드 (CoreML 모델 + 음색 임베딩 + 사전)
 
 let audio = try tts.synthesize(text: "Hello world", voice: "af_heart")
 // 출력은 24kHz 모노 float 샘플
 try WAVWriter.write(samples: audio, sampleRate: 24000, to: outputURL)
 ```
 
-10개 언어에 걸쳐 50개 프리셋 음색을 제공합니다. 비자기회귀 — 단일 CoreML 순전파, 샘플링 루프 없음. Neural Engine에서 실행되어 GPU를 완전히 확보합니다.
+10개 언어에 걸쳐 54개 프리셋 음색을 제공합니다. 비자기회귀 — 3단계 CoreML 파이프라인, 샘플링 루프 없음. Neural Engine에서 실행되어 GPU를 완전히 확보합니다.
 
 ### Kokoro TTS CLI
 
@@ -1044,10 +1044,10 @@ ws.send(JSON.stringify({
 | 모델 | 프레임워크 | 짧은 (1초) | 중간 (3초) | 긴 (6초) | 스트리밍 첫 패킷 |
 |-------|-----------|-----------|-------------|------------|----------------------|
 | Qwen3-TTS-0.6B (4-bit) | MLX Swift (release) | 1.6s (RTF 1.2) | 2.3s (RTF 0.7) | 3.9s (RTF 0.7) | ~120ms (1-frame) |
-| Kokoro-82M | CoreML (Neural Engine) | ~45ms | ~45ms | ~45ms | N/A (비자기회귀) |
+| Kokoro-82M | CoreML (Neural Engine) | ~1.4s (RTFx 0.7) | ~4.3s (RTFx 0.7) | ~8.6s (RTFx 0.7) | N/A (비자기회귀) |
 | Apple `AVSpeechSynthesizer` | AVFoundation | 0.08s | 0.08s | 0.17s (RTF 0.02) | N/A |
 
-> Qwen3-TTS는 운율과 감정이 담긴 자연스럽고 표현력 있는 음성을 생성하며, **실시간보다 빠르게** (RTF < 1.0) 실행됩니다. 스트리밍 합성은 첫 오디오 청크를 ~120ms에 전달합니다. Kokoro-82M은 단일 순전파로 Neural Engine에서 완전히 실행됩니다 — 출력 길이와 관계없이 ~45ms, iOS에 이상적입니다. Apple 내장 TTS는 더 빠르지만 기계적이고 단조로운 음성을 생성합니다.
+> Qwen3-TTS는 운율과 감정이 담긴 자연스럽고 표현력 있는 음성을 생성하며, **실시간보다 빠르게** (RTF < 1.0) 실행됩니다. 스트리밍 합성은 첫 오디오 청크를 ~120ms에 전달합니다. Kokoro-82M은 3단계 파이프라인으로 Neural Engine에서 완전히 실행됩니다 (RTFx ~0.7), iOS에 이상적입니다. Apple 내장 TTS는 더 빠르지만 기계적이고 단조로운 음성을 생성합니다.
 
 ### PersonaPlex (음성-음성)
 
@@ -1209,9 +1209,9 @@ PERSONAPLEX_E2E=1 swift test --filter PersonaPlexE2ETests
 |---|---|---|---|---|
 | **품질** | 뉴럴, 표현력 있음 | 뉴럴, 자연스러움 | 기계적, 단조로움 | 뉴럴, 최고 품질 |
 | **런타임** | 온디바이스 (MLX) | 온디바이스 (CoreML) | 온디바이스 | 클라우드 전용 |
-| **스트리밍** | 예 (첫 청크 ~120ms) | 아니오 (단일 패스, ~45ms) | 아니오 | 예 |
+| **스트리밍** | 예 (첫 청크 ~120ms) | 아니오 (3단계 파이프라인) | 아니오 | 예 |
 | **음성 복제** | 예 | 아니오 | 아니오 | 예 |
-| **음색** | 9개 내장 + 아무 음성 복제 | 50개 프리셋 음색 | ~50개 시스템 음색 | 1000+ |
+| **음색** | 9개 내장 + 아무 음성 복제 | 54개 프리셋 음색 | ~50개 시스템 음색 | 1000+ |
 | **언어** | 10 | 10 | 60+ | 30+ |
 | **iOS 지원** | macOS 전용 | iOS + macOS | iOS + macOS | 아무 플랫폼 (API) |
 | **비용** | 무료 (Apache 2.0) | 무료 (Apache 2.0) | 무료 | 글자당 과금 |

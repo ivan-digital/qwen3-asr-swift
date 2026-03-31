@@ -15,7 +15,7 @@ Mac और iOS के लिए ऑन-डिवाइस स्पीच रि
 - **Qwen3-ForcedAligner** — शब्द-स्तरीय टाइमस्टैम्प अलाइनमेंट (ऑडियो + टेक्स्ट → टाइमस्टैम्प)
 - **Qwen3-TTS** — टेक्स्ट-टू-स्पीच सिंथेसिस (सर्वोच्च गुणवत्ता, स्ट्रीमिंग, कस्टम स्पीकर, 10 भाषाएँ)
 - **CosyVoice TTS** — स्ट्रीमिंग, वॉयस क्लोनिंग, मल्टी-स्पीकर डायलॉग, और इमोशन टैग के साथ टेक्स्ट-टू-स्पीच (9 भाषाएँ, DiT flow matching, CAM++ speaker encoder)
-- **Kokoro TTS** — ऑन-डिवाइस टेक्स्ट-टू-स्पीच (82M params, CoreML/Neural Engine, 50 वॉयस, iOS-ready, 10 भाषाएँ)
+- **Kokoro TTS** — ऑन-डिवाइस टेक्स्ट-टू-स्पीच (82M params, CoreML/Neural Engine, 54 वॉयस, iOS-ready, 10 भाषाएँ)
 - **Qwen3.5-Chat** — ऑन-डिवाइस LLM चैट (0.8B, MLX + CoreML, INT4 + CoreML INT8, DeltaNet हाइब्रिड, स्ट्रीमिंग टोकन)
 - **PersonaPlex** — फुल-डुप्लेक्स स्पीच-टू-स्पीच वार्तालाप (7B, ऑडियो इन → ऑडियो आउट, 18 वॉयस प्रीसेट)
 - **DeepFilterNet3** — स्पीच एन्हांसमेंट / नॉइज़ सप्रेशन (2.1M params, रियल-टाइम 48kHz)
@@ -50,7 +50,7 @@ Mac और iOS के लिए ऑन-डिवाइस स्पीच रि
 | Qwen3-TTS-0.6B CustomVoice | Text → Speech | Yes (~120ms) | 10 languages | [4-bit](https://huggingface.co/aufklarer/Qwen3-TTS-12Hz-0.6B-CustomVoice-MLX-4bit) 1.7 GB |
 | Qwen3-TTS-1.7B Base | Text → Speech | Yes (~120ms) | 10 languages | [4-bit](https://huggingface.co/aufklarer/Qwen3-TTS-12Hz-1.7B-Base-MLX-4bit) 3.2 GB · [8-bit](https://huggingface.co/aufklarer/Qwen3-TTS-12Hz-1.7B-Base-MLX-8bit) 4.8 GB |
 | CosyVoice3-0.5B | Text → Speech | Yes (~150ms) | 9 languages | [4-bit](https://huggingface.co/aufklarer/CosyVoice3-0.5B-MLX-4bit) 1.2 GB |
-| Kokoro-82M | Text → Speech | No | 10 languages | [CoreML](https://huggingface.co/aufklarer/Kokoro-82M-CoreML) ~325 MB |
+| Kokoro-82M | Text → Speech | No | 10 languages | [CoreML](https://huggingface.co/aufklarer/Kokoro-82M-CoreML) ~170 MB |
 | Qwen3.5-0.8B Chat | Text → Text (LLM) | Yes (streaming) | Multi | [MLX INT4](https://huggingface.co/aufklarer/Qwen3.5-0.8B-Chat-MLX) 418 MB · [CoreML INT8](https://huggingface.co/aufklarer/Qwen3.5-0.8B-Chat-CoreML) 981 MB |
 | PersonaPlex-7B | Speech → Speech | Yes (~2s chunks) | EN | [4-bit](https://huggingface.co/aufklarer/PersonaPlex-7B-MLX-4bit) 4.9 GB · [8-bit](https://huggingface.co/aufklarer/PersonaPlex-7B-MLX-8bit) 9.1 GB |
 | FireRedVAD | Voice Activity Detection | No (offline) | 100+ languages | [CoreML](https://huggingface.co/aufklarer/FireRedVAD-CoreML) ~1.2 MB |
@@ -75,7 +75,7 @@ Mac और iOS के लिए ऑन-डिवाइस स्पीच रि
 | Qwen3-TTS-1.7B (4-bit, MLX) | 2,300 MB | ~4–6 GB |
 | Qwen3-TTS-0.6B (4-bit, MLX) | 977 MB | ~2 GB |
 | CosyVoice3-0.5B (4-bit, MLX) | 732 MB | ~2.5 GB |
-| Kokoro-82M (CoreML) | 325 MB | ~350 MB |
+| Kokoro-82M (CoreML) | 170 MB | ~200 MB |
 | Qwen3.5-Chat-0.8B (INT4, MLX) | 418 MB | ~700 MB |
 | Qwen3.5-Chat-0.8B (INT8, CoreML) | 981 MB | ~1.2 GB |
 | PersonaPlex-7B (8-bit, MLX) | 9,100 MB | ~11 GB |
@@ -90,7 +90,7 @@ Mac और iOS के लिए ऑन-डिवाइस स्पीच रि
 
 - **Qwen3-TTS**: सर्वोत्तम गुणवत्ता, स्ट्रीमिंग (~120ms), 9 बिल्ट-इन स्पीकर, 10 भाषाएँ, बैच सिंथेसिस
 - **CosyVoice TTS**: स्ट्रीमिंग (~150ms), 9 भाषाएँ, वॉयस क्लोनिंग (CAM++ speaker encoder), मल्टी-स्पीकर डायलॉग (`[S1] ... [S2] ...`), इनलाइन इमोशन/स्टाइल टैग (`(happy)`, `(whispers)`), DiT flow matching + HiFi-GAN vocoder
-- **Kokoro TTS**: हल्का iOS-ready TTS (82M params), CoreML/Neural Engine, 50 वॉयस, 10 भाषाएँ, नॉन-ऑटोरिग्रेसिव (सिंगल फ़ॉरवर्ड पास)
+- **Kokoro TTS**: हल्का iOS-ready TTS (82M params), CoreML/Neural Engine, 54 वॉयस, 10 भाषाएँ, नॉन-ऑटोरिग्रेसिव (3-स्टेज पाइपलाइन)
 - **PersonaPlex**: फुल-डुप्लेक्स स्पीच-टू-स्पीच (ऑडियो इन → ऑडियो आउट), स्ट्रीमिंग (~2s chunks), 18 वॉयस प्रीसेट, Moshi आर्किटेक्चर पर आधारित
 
 ## इंस्टॉलेशन
@@ -282,7 +282,7 @@ swift build -c release
 ...
 ```
 
-नॉन-ऑटोरिग्रेसिव — सिंगल फ़ॉरवर्ड पास, कोई सैंपलिंग लूप नहीं। आर्किटेक्चर विवरण के लिए [Forced Aligner](docs/inference/forced-aligner.md) देखें।
+नॉन-ऑटोरिग्रेसिव — 3-स्टेज पाइपलाइन, कोई सैंपलिंग लूप नहीं। आर्किटेक्चर विवरण के लिए [Forced Aligner](docs/inference/forced-aligner.md) देखें।
 
 ## टेक्स्ट-टू-स्पीच (TTS) — Swift में स्पीच जनरेट करें
 
@@ -664,14 +664,14 @@ import KokoroTTS
 import AudioCommon  // WAVWriter के लिए
 
 let tts = try await KokoroTTSModel.fromPretrained()
-// पहली बार चलाने पर ~325 MB डाउनलोड होता है (CoreML मॉडल + voice embeddings + dictionaries)
+// पहली बार चलाने पर ~170 MB डाउनलोड होता है (CoreML मॉडल + voice embeddings + dictionaries)
 
 let audio = try tts.synthesize(text: "Hello world", voice: "af_heart")
 // आउटपुट 24kHz मोनो float सैंपल है
 try WAVWriter.write(samples: audio, sampleRate: 24000, to: outputURL)
 ```
 
-10 भाषाओं में 50 प्रीसेट वॉयस। नॉन-ऑटोरिग्रेसिव — सिंगल CoreML फ़ॉरवर्ड पास, कोई सैंपलिंग लूप नहीं। Neural Engine पर चलता है, GPU पूरी तरह फ़्री रहता है।
+10 भाषाओं में 54 प्रीसेट वॉयस। नॉन-ऑटोरिग्रेसिव — 3-स्टेज CoreML पाइपलाइन, कोई सैंपलिंग लूप नहीं। Neural Engine पर चलता है, GPU पूरी तरह फ़्री रहता है।
 
 ### Kokoro TTS CLI
 
@@ -1044,10 +1044,10 @@ ws.send(JSON.stringify({
 | Model | Framework | छोटा (1s) | मध्यम (3s) | लंबा (6s) | स्ट्रीमिंग फ़र्स्ट-पैकेट |
 |-------|-----------|-----------|-------------|------------|----------------------|
 | Qwen3-TTS-0.6B (4-bit) | MLX Swift (release) | 1.6s (RTF 1.2) | 2.3s (RTF 0.7) | 3.9s (RTF 0.7) | ~120ms (1-frame) |
-| Kokoro-82M | CoreML (Neural Engine) | ~45ms | ~45ms | ~45ms | N/A (non-autoregressive) |
+| Kokoro-82M | CoreML (Neural Engine) | ~1.4s (RTFx 0.7) | ~4.3s (RTFx 0.7) | ~8.6s (RTFx 0.7) | N/A (non-autoregressive) |
 | Apple `AVSpeechSynthesizer` | AVFoundation | 0.08s | 0.08s | 0.17s (RTF 0.02) | N/A |
 
-> Qwen3-TTS प्रोसोडी और इमोशन के साथ प्राकृतिक, अभिव्यक्तिपूर्ण स्पीच जनरेट करता है, **रियल-टाइम से तेज़** (RTF < 1.0) चलता है। स्ट्रीमिंग सिंथेसिस पहला ऑडियो चंक ~120ms में देता है। Kokoro-82M पूरी तरह Neural Engine पर सिंगल फ़ॉरवर्ड पास से चलता है — आउटपुट लंबाई की परवाह किए बिना ~45ms, iOS के लिए आदर्श। Apple का बिल्ट-इन TTS तेज़ है लेकिन रोबोटिक, एकस्वरीय स्पीच उत्पन्न करता है।
+> Qwen3-TTS प्रोसोडी और इमोशन के साथ प्राकृतिक, अभिव्यक्तिपूर्ण स्पीच जनरेट करता है, **रियल-टाइम से तेज़** (RTF < 1.0) चलता है। स्ट्रीमिंग सिंथेसिस पहला ऑडियो चंक ~120ms में देता है। Kokoro-82M पूरी तरह Neural Engine पर 3-स्टेज पाइपलाइन से चलता है (RTFx ~0.7), iOS के लिए आदर्श। Apple का बिल्ट-इन TTS तेज़ है लेकिन रोबोटिक, एकस्वरीय स्पीच उत्पन्न करता है।
 
 ### PersonaPlex (स्पीच-टू-स्पीच)
 
@@ -1209,9 +1209,9 @@ PERSONAPLEX_E2E=1 swift test --filter PersonaPlexE2ETests
 |---|---|---|---|---|
 | **गुणवत्ता** | न्यूरल, अभिव्यक्तिपूर्ण | न्यूरल, प्राकृतिक | रोबोटिक, एकस्वरीय | न्यूरल, सर्वोच्च गुणवत्ता |
 | **रनटाइम** | ऑन-डिवाइस (MLX) | ऑन-डिवाइस (CoreML) | ऑन-डिवाइस | केवल क्लाउड |
-| **स्ट्रीमिंग** | हाँ (पहला चंक ~120ms) | नहीं (सिंगल पास, ~45ms) | नहीं | हाँ |
+| **स्ट्रीमिंग** | हाँ (पहला चंक ~120ms) | नहीं (3-स्टेज पाइपलाइन) | नहीं | हाँ |
 | **वॉयस क्लोनिंग** | हाँ | नहीं | नहीं | हाँ |
-| **वॉयस** | 9 बिल्ट-इन + कोई भी क्लोन करें | 50 प्रीसेट वॉयस | ~50 सिस्टम वॉयस | 1000+ |
+| **वॉयस** | 9 बिल्ट-इन + कोई भी क्लोन करें | 54 प्रीसेट वॉयस | ~50 सिस्टम वॉयस | 1000+ |
 | **भाषाएँ** | 10 | 10 | 60+ | 30+ |
 | **iOS सपोर्ट** | केवल macOS | iOS + macOS | iOS + macOS | कोई भी (API) |
 | **लागत** | मुफ़्त (Apache 2.0) | मुफ़्त (Apache 2.0) | मुफ़्त | प्रति अक्षर भुगतान |
