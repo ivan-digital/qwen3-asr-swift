@@ -11,6 +11,8 @@ AI speech models for Apple Silicon (MLX Swift). ASR, TTS, speech-to-speech, VAD,
 
 - Never mention Claude, AI, or any AI tool in commit messages, PR descriptions, or co-author tags
 - No `Co-Authored-By` lines in commits
+- **Never amend commits or force push** unless the user explicitly asks for it
+- Always use branches and PRs — commit history must be preserved
 
 ## Build
 
