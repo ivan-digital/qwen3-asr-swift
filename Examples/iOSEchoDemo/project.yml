@@ -5,7 +5,7 @@ options:
     iOS: "18.0"
 
 packages:
-  qwen3-asr-swift:
+  Qwen3Speech:
     path: ../..
 
 targets:
@@ -25,15 +25,13 @@ targets:
       CODE_SIGN_STYLE: Automatic
       OTHER_LDFLAGS: ["-Wl,-undefined,dynamic_lookup"]
     dependencies:
-      - package: qwen3-asr-swift
+      - package: Qwen3Speech
         product: KokoroTTS
-      - package: qwen3-asr-swift
-        product: Qwen3TTSCoreML
-      - package: qwen3-asr-swift
+      - package: Qwen3Speech
         product: ParakeetASR
-      - package: qwen3-asr-swift
+      - package: Qwen3Speech
         product: SpeechVAD
-      - package: qwen3-asr-swift
+      - package: Qwen3Speech
         product: SpeechCore
-      - package: qwen3-asr-swift
+      - package: Qwen3Speech
         product: AudioCommon

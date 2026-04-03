@@ -158,7 +158,8 @@ let package = Package(
         ),
         .binaryTarget(
             name: "CSpeechCore",
-            path: "../speech-core/dist/SpeechCore.xcframework"
+            url: "https://github.com/soniqo/speech-core/releases/download/v0.0.5/SpeechCore.xcframework.zip",
+            checksum: "ec87ae9191875390e19cd2aa74bfdbd8f314c4a0e83dfe012eed4d1ca30c4a5d"
         ),
         .target(
             name: "SpeechCore",

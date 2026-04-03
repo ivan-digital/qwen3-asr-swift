@@ -4,7 +4,6 @@ import Foundation
 import os
 import Observation
 import KokoroTTS
-import Qwen3TTSCoreML
 import ParakeetASR
 import SpeechVAD
 import SpeechCore
@@ -344,6 +343,7 @@ final class CompanionChatViewModel {
             isSpeaking = true
             lastResponseAudioDuration += Double(samples.count) / 24000.0
             pipelineState = "speaking..."
+            dbg("audioDelta: \(samples.count) samples (\(String(format: "%.2f", Double(samples.count)/24000))s)")
             do { try player.play(samples: samples, sampleRate: 24000) }
             catch { dbg("playback error: \(error)") }
 

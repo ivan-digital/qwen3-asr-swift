@@ -11,12 +11,11 @@ let package = Package(
         .executableTarget(
             name: "iOSEchoDemo",
             dependencies: [
-                .product(name: "KokoroTTS", package: "qwen3-asr-swift"),
-                .product(name: "Qwen3TTSCoreML", package: "qwen3-asr-swift"),
-                .product(name: "ParakeetASR", package: "qwen3-asr-swift"),
-                .product(name: "SpeechVAD", package: "qwen3-asr-swift"),
-                .product(name: "SpeechCore", package: "qwen3-asr-swift"),
-                .product(name: "AudioCommon", package: "qwen3-asr-swift"),
+                .product(name: "KokoroTTS", package: "Qwen3Speech"),
+                .product(name: "ParakeetASR", package: "Qwen3Speech"),
+                .product(name: "SpeechVAD", package: "Qwen3Speech"),
+                .product(name: "SpeechCore", package: "Qwen3Speech"),
+                .product(name: "AudioCommon", package: "Qwen3Speech"),
             ],
             path: "iOSEchoDemo",
             exclude: ["Info.plist"]
