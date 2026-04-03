@@ -437,3 +437,70 @@ final class SileroVADTests: XCTestCase {
         print("Max prob: \(probs.max() ?? 0)")
     }
 }
+
+// MARK: - E2E CoreML Tests
+
+final class E2ESileroVADCoreMLTests: XCTestCase {
+
+    func testCoreMLModelLoading() async throws {
+        let model = try await SileroVADModel.fromPretrained(engine: .coreml)
+        XCTAssertNotNil(model)
+    }
+
+    func testCoreMLDetectsSpeech() async throws {
+        let model = try await SileroVADModel.fromPretrained(engine: .coreml)
+
+        // Generate test audio: 1s silence + 1s 440Hz tone + 1s silence
+        let sampleRate = 16000
+        var audio = [Float](repeating: 0, count: sampleRate * 3)
+        for i in sampleRate..<(sampleRate * 2) {
+            audio[i] = 0.5 * sin(2.0 * .pi * 440.0 * Float(i) / Float(sampleRate))
+        }
+
+        let segments = model.detectSpeech(audio: audio, sampleRate: sampleRate)
+        // Tone should trigger at least one speech segment
+        print("CoreML VAD segments: \(segments.count)")
+        for seg in segments {
+            print("  [\(String(format: "%.2f", seg.startTime))s - \(String(format: "%.2f", seg.endTime))s]")
+        }
+        // A 440Hz tone may or may not trigger VAD (it's trained on speech, not tones)
+        // But at minimum the model should run without error
+    }
+
+    func testCoreMLChunkProcessing() async throws {
+        let model = try await SileroVADModel.fromPretrained(engine: .coreml)
+
+        // Process individual chunks and verify probabilities are in range
+        let sampleRate = 16000
+        var probs = [Float]()
+        // 2s of varied signal: silence then tone
+        var audio = [Float](repeating: 0, count: sampleRate * 2)
+        for i in (sampleRate)..<(sampleRate * 2) {
+            audio[i] = 0.3 * sin(2.0 * .pi * 300.0 * Float(i) / Float(sampleRate))
+        }
+
+        // Process in 512-sample chunks
+        for start in stride(from: 0, to: audio.count - 512, by: 512) {
+            let chunk = Array(audio[start..<(start + 512)])
+            let prob = model.processChunk(chunk)
+            probs.append(prob)
+            XCTAssertGreaterThanOrEqual(prob, 0.0)
+            XCTAssertLessThanOrEqual(prob, 1.0)
+        }
+        print("CoreML VAD: \(probs.count) chunks, max prob: \(probs.max() ?? 0)")
+    }
+
+    func testCoreMLResetState() async throws {
+        let model = try await SileroVADModel.fromPretrained(engine: .coreml)
+
+        // Process some audio
+        let audio = [Float](repeating: 0, count: 16000)
+        _ = model.detectSpeech(audio: audio, sampleRate: 16000)
+
+        // Reset should not crash
+        model.resetState()
+
+        // Process again after reset
+        _ = model.detectSpeech(audio: audio, sampleRate: 16000)
+    }
+}

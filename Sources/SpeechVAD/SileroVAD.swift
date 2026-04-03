@@ -59,10 +59,8 @@ public final class SileroVADModel {
     #if canImport(CoreML)
     /// CoreML compiled model (nil when using MLX engine).
     var coremlModel: MLModel?
-    /// CoreML LSTM hidden state
-    var coremlH: MLMultiArray?
-    /// CoreML LSTM cell state
-    var coremlC: MLMultiArray?
+    /// MLState for LSTM h/c state, managed by CoreML.
+    var coremlState: MLState?
     #endif
 
     /// Context buffer: last 64 samples from previous chunk
@@ -149,8 +147,7 @@ public final class SileroVADModel {
         h = nil
         c = nil
         #if canImport(CoreML)
-        coremlH = nil
-        coremlC = nil
+        coremlState = nil
         #endif
         context = [Float](repeating: 0, count: Self.contextSize)
     }
