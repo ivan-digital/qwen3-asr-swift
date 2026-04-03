@@ -7,7 +7,10 @@ import MLXNN
 
 public protocol KVCache: AnyObject {
     var offset: Int { get }
+    var keysArray: MLXArray? { get }
+    var valuesArray: MLXArray? { get }
     func update(keys: MLXArray, values: MLXArray) -> (MLXArray, MLXArray)
+    func replaceArrays(keys: MLXArray, values: MLXArray)
     func trim(_ count: Int)
 }
 
@@ -56,6 +59,68 @@ public final class KVCacheSimple: KVCache {
     }
 }
 
+// MARK: - Pre-allocated KV Cache (fixed-capacity, O(1) per step)
+
+/// Pre-allocates a fixed-size buffer on first use and writes new KV pairs
+/// at the current offset via scatter. Avoids the O(n) concatenation cost
+/// of KVCacheSimple, reducing total decode cost from O(n²) to O(n).
+public final class KVCachePreAllocated: KVCache {
+    private var keys: MLXArray?
+    private var values: MLXArray?
+    private let capacity: Int
+    private var currentOffset: Int = 0
+
+    public init(capacity: Int) {
+        self.capacity = capacity
+    }
+
+    public var offset: Int { currentOffset }
+
+    public var keysArray: MLXArray? { keys }
+    public var valuesArray: MLXArray? { values }
+
+    public func replaceArrays(keys newK: MLXArray, values newV: MLXArray) {
+        keys = newK
+        values = newV
+    }
+
+    public func update(keys newK: MLXArray, values newV: MLXArray) -> (MLXArray, MLXArray) {
+        let t = newK.shape[2]
+
+        if keys == nil {
+            let b = newK.shape[0], h = newK.shape[1], d = newK.shape[3]
+            keys = MLXArray.zeros([b, h, capacity, d], dtype: newK.dtype)
+            values = MLXArray.zeros([b, h, capacity, d], dtype: newV.dtype)
+        }
+
+        // Scatter write at current position — O(1), no allocation
+        let end = min(currentOffset + t, capacity)
+        keys![0..., 0..., currentOffset..<end, 0...] = newK
+        values![0..., 0..., currentOffset..<end, 0...] = newV
+        currentOffset = end
+
+        // Return valid slice (view, no copy)
+        let k = keys![0..., 0..., 0..<currentOffset, 0...]
+        let v = values![0..., 0..., 0..<currentOffset, 0...]
+        return (k, v)
+    }
+
+    public func trim(_ count: Int) {
+        if count >= currentOffset {
+            keys = nil
+            values = nil
+            currentOffset = 0
+        } else if count > 0 {
+            currentOffset -= count
+            // Shift remaining data to front
+            if let k = keys, let v = values {
+                keys = k[0..., 0..., count..<(currentOffset + count), 0...]
+                values = v[0..., 0..., count..<(currentOffset + count), 0...]
+            }
+        }
+    }
+}
+
 // MARK: - Ring KV Cache (fixed-size circular buffer for bounded context)
 
 public final class RingKVCache: KVCache {
@@ -70,6 +135,13 @@ public final class RingKVCache: KVCache {
     }
 
     public var offset: Int { totalWritten }
+    public var keysArray: MLXArray? { keys }
+    public var valuesArray: MLXArray? { values }
+
+    public func replaceArrays(keys newK: MLXArray, values newV: MLXArray) {
+        keys = newK
+        values = newV
+    }
 
     /// How many valid entries are in the buffer
     public var length: Int { min(totalWritten, capacity) }

@@ -27,14 +27,13 @@ final class EchoViewModel {
     private var pipeline: VoicePipeline?
     private var audioEngine: AVAudioEngine?
     private let player = StreamingAudioPlayer()
-    private var debugRecordBuffer: [Float] = []
+    private var debugMicBuffer: [Float] = []
     private var debugTTSBuffer: [Float] = []
-    private var isRecordingDebug = false
     private var speechStartTime: Date?
-    private var isSpeaking = false
 
     var modelsLoaded: Bool { vad != nil && asr != nil && tts != nil }
-    var isPlaying: Bool { player.isPlaying }
+
+    // MARK: - Model Loading
 
     func loadModels() async {
         isLoading = true
@@ -43,13 +42,11 @@ final class EchoViewModel {
 
         do {
             loadingStatus = "Loading VAD (CoreML)..."
-            appendLog("Loading Silero VAD (CoreML)...")
             vad = try await Task.detached {
                 try await SileroVADModel.fromPretrained(engine: .coreml)
             }.value
 
             loadingStatus = "Loading ASR (Parakeet CoreML)..."
-            appendLog("Loading Parakeet TDT (CoreML)...")
             asr = try await Task.detached {
                 let model = try await ParakeetASRModel.fromPretrained()
                 try model.warmUp()
@@ -57,26 +54,20 @@ final class EchoViewModel {
             }.value
 
             loadingStatus = "Loading TTS (Qwen3 Base)..."
-            appendLog("Loading Qwen3-TTS (Base)...")
             tts = try await Task.detached {
-                let model = try await Qwen3TTSModel.fromPretrained(
+                try await Qwen3TTSModel.fromPretrained(
                     modelId: TTSModelVariant.base.rawValue)
-                // Larger chunks (4s) with more decoder context (20 frames)
-                // to reduce chunk boundary artifacts while streaming progressively
-                model.defaultStreamingConfig = StreamingConfig(
-                    firstChunkFrames: 50, chunkFrames: 50, decoderLeftContext: 20)
-                return model
             }.value
 
             appendLog("All models loaded.")
             loadingStatus = ""
         } catch {
             errorMessage = "Load failed: \(error.localizedDescription)"
-            appendLog("ERROR: \(error.localizedDescription)")
         }
-
         isLoading = false
     }
+
+    // MARK: - Pipeline Lifecycle
 
     func startPipeline() {
         guard let vad, let asr, let tts else { return }
@@ -85,69 +76,41 @@ final class EchoViewModel {
         var config = PipelineConfig()
         config.mode = .echo
         config.allowInterruptions = false
-        config.minSilenceDuration = 1.0
+        config.minSilenceDuration = 0.6
         config.eagerSTT = false
-        config.maxResponseDuration = 30.0
+        config.maxResponseDuration = 15.0
 
         pipeline = VoicePipeline(
-            stt: asr,
-            tts: tts,
-            vad: vad,
-            config: config,
+            stt: asr, tts: tts, vad: vad, config: config,
             onEvent: { [weak self] event in
-                DispatchQueue.main.async {
-                    self?.handleEvent(event)
-                }
+                DispatchQueue.main.async { self?.handleEvent(event) }
             }
         )
 
-        player.preBufferDuration = 0  // Start playback on first chunk
-
         player.onPlaybackFinished = { [weak self] in
-            self?.playbackDidFinish()
+            guard let self, self.isRunning else { return }
+            self.pipeline?.resumeListening()
+            self.pipelineState = "listening"
+            self.appendLog("Listening...")
         }
+
         pipeline?.start()
         isRunning = true
-        isRecordingDebug = true
-        debugRecordBuffer = []
+        debugMicBuffer = []
+        debugTTSBuffer = []
         pipelineState = "listening"
         appendLog("Pipeline started — speak into the mic...")
         startMicrophone()
     }
 
     func stopPipeline() {
-        isRecordingDebug = false
         stopMicrophone()
         pipeline?.stop()
         pipeline = nil
         isRunning = false
         pipelineState = "idle"
-        saveDebugRecording()
+        saveDebugFiles()
         appendLog("Pipeline stopped.")
-    }
-
-    private func saveDebugRecording() {
-        let tmpDir = FileManager.default.temporaryDirectory
-        if !debugRecordBuffer.isEmpty {
-            let url = tmpDir.appendingPathComponent("echo_debug_mic.wav")
-            do {
-                try WAVWriter.write(samples: debugRecordBuffer, sampleRate: 16000, to: url)
-                appendLog("[Debug] Saved mic: \(url.path) (\(String(format: "%.1f", Double(debugRecordBuffer.count) / 16000.0))s)")
-            } catch {
-                appendLog("[Debug] Failed to save mic: \(error)")
-            }
-            debugRecordBuffer = []
-        }
-        if !debugTTSBuffer.isEmpty {
-            let url = tmpDir.appendingPathComponent("echo_debug_tts.wav")
-            do {
-                try WAVWriter.write(samples: debugTTSBuffer, sampleRate: 24000, to: url)
-                appendLog("[Debug] Saved TTS: \(url.path) (\(String(format: "%.1f", Double(debugTTSBuffer.count) / 24000.0))s)")
-            } catch {
-                appendLog("[Debug] Failed to save TTS: \(error)")
-            }
-            debugTTSBuffer = []
-        }
     }
 
     // MARK: - Event Handling
@@ -157,50 +120,36 @@ final class EchoViewModel {
         case .sessionCreated:
             break
         case .speechStarted:
-            if pipelineState != "speech detected" {
-                appendLog("[VAD] Speech started")
-            }
             pipelineState = "speech detected"
             speechStartTime = Date()
+            appendLog("[VAD] Speech started")
         case .speechEnded:
-            let dur = Date().timeIntervalSince(speechStartTime ?? Date())
-            if dur > 13 {
-                appendLog("[VAD] Speech ended (\(Int(dur))s — max duration reached, phrase may be cut)")
+            pipelineState = "transcribing..."
+            let duration = Date().timeIntervalSince(speechStartTime ?? Date())
+            if duration > 13 {
+                appendLog("[VAD] Speech ended (\(String(format: "%.0f", duration))s — max duration may have cut your phrase)")
             } else {
                 appendLog("[VAD] Speech ended")
             }
-            pipelineState = "transcribing..."
         case .transcriptionCompleted(let text, let language, _):
-            if !text.isEmpty {
-                pipelineState = "synthesizing (mic muted)..."
-                isSpeaking = true  // Mute mic — TTS is about to start
-                lastTranscription = text
-                lastLanguage = language ?? ""
-                let langTag = language.map { " [\($0)]" } ?? ""
-                appendLog("[STT\(langTag)] \(text)")
-            }
-            // Empty STT — don't mute mic, don't update UI
+            pipelineState = "synthesizing..."
+            lastTranscription = text
+            lastLanguage = language ?? ""
+            appendLog("[STT\(language.map { " [\($0)]" } ?? "")] \(text)")
         case .responseCreated:
-            pipelineState = "speaking (mic muted)..."
+            pipelineState = "speaking..."
             player.resetGeneration()
         case .responseInterrupted:
             player.stop()
-            pipelineState = "interrupted → listening"
-            appendLog("[Interrupted] Stopping playback")
+            pipelineState = "listening"
         case .responseAudioDelta(let samples):
-            if isRecordingDebug { debugTTSBuffer.append(contentsOf: samples) }
-            do {
-                try player.play(samples: samples, sampleRate: 24000)
-            } catch {
-                appendLog("[ERROR] Playback: \(error.localizedDescription)")
-            }
+            debugTTSBuffer.append(contentsOf: samples)
+            try? player.play(samples: samples, sampleRate: 24000)
         case .responseDone:
             appendLog("[TTS] Done")
             player.markGenerationComplete()
-        case .toolCallStarted(let name):
-            appendLog("[Tool] \(name) started")
-        case .toolCallCompleted(let name, let result):
-            appendLog("[Tool] \(name) → \(result.prefix(100))")
+        case .toolCallStarted, .toolCallCompleted:
+            break
         case .error(let msg):
             pipelineState = "error"
             appendLog("[ERROR] \(msg)")
@@ -208,147 +157,78 @@ final class EchoViewModel {
         }
     }
 
-    func playbackDidFinish() {
-        guard isRunning else { return }
-        isSpeaking = false
-        pipeline?.resumeListening()
-        pipelineState = "listening"
-        appendLog("Listening...")
-    }
-
-    // MARK: - Microphone (Full-duplex with AEC)
-
-    private var aecEnabled = false
+    // MARK: - Microphone
 
     private func startMicrophone() {
         let engine = AVAudioEngine()
         let inputNode = engine.inputNode
 
-        // Enable Apple's AEC BEFORE starting engine and BEFORE reading format.
-        // This removes the agent's speaker output from the mic signal,
-        // enabling full-duplex: user can interrupt while agent speaks.
-        do {
-            try inputNode.setVoiceProcessingEnabled(true)
-            aecEnabled = true
-            appendLog("[AEC] Voice processing enabled")
-        } catch {
-            aecEnabled = false
-            appendLog("[AEC] Failed: \(error.localizedDescription)")
-        }
+        try? inputNode.setVoiceProcessingEnabled(true)
 
-        // Voice processing changes the format — must read AFTER enabling.
-        let hwFormat = inputNode.outputFormat(forBus: 0)
-        appendLog("[Mic] Input format: \(Int(hwFormat.sampleRate))Hz, \(hwFormat.channelCount)ch, \(hwFormat.commonFormat.rawValue)")
-
-        // If VP gave us an invalid format, fall back
-        if hwFormat.sampleRate < 1 || hwFormat.channelCount < 1 {
-            appendLog("[Mic] Invalid format — disabling voice processing")
-            try? inputNode.setVoiceProcessingEnabled(false)
-            aecEnabled = false
-        }
-
-        // VP produces multi-channel (e.g., 9ch). Extract ch0 then resample to 16kHz.
         let vpFormat = inputNode.outputFormat(forBus: 0)
-        let vpRate = vpFormat.sampleRate
-        appendLog("[Mic] Tap format: \(Int(vpRate))Hz, \(vpFormat.channelCount)ch")
-
-        // Mono intermediate format at VP sample rate
-        guard let monoFormat = AVAudioFormat(
-            commonFormat: .pcmFormatFloat32,
-            sampleRate: vpRate,
-            channels: 1,
-            interleaved: false
-        ) else { return }
-
-        guard let targetFormat = AVAudioFormat(
-            commonFormat: .pcmFormatFloat32,
-            sampleRate: 16000,
-            channels: 1,
-            interleaved: false
-        ) else { return }
-
-        guard let resampler = AVAudioConverter(from: monoFormat, to: targetFormat) else {
-            appendLog("[Mic] Cannot create resampler")
+        guard vpFormat.sampleRate > 0, vpFormat.channelCount > 0 else {
+            appendLog("[Mic] Invalid format")
             return
         }
 
-        var sampleCounter = 0
+        guard let monoFormat = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32, sampleRate: vpFormat.sampleRate,
+            channels: 1, interleaved: false
+        ), let targetFormat = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32, sampleRate: 16000,
+            channels: 1, interleaved: false
+        ), let resampler = AVAudioConverter(from: monoFormat, to: targetFormat) else {
+            appendLog("[Mic] Cannot create audio formats")
+            return
+        }
+
+        var bufCount = 0
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: vpFormat) { [weak self] buffer, _ in
-            guard let self else { return }
-            guard let srcData = buffer.floatChannelData else { return }
+            guard let self, let srcData = buffer.floatChannelData else { return }
             let frameLen = Int(buffer.frameLength)
             guard frameLen > 0 else { return }
 
-            // Extract channel 0 (echo-cancelled signal) into a mono buffer
-            guard let monoBuffer = AVAudioPCMBuffer(pcmFormat: monoFormat, frameCapacity: buffer.frameCapacity) else { return }
-            monoBuffer.frameLength = buffer.frameLength
-            memcpy(monoBuffer.floatChannelData![0], srcData[0], frameLen * MemoryLayout<Float>.size)
+            guard let mono = AVAudioPCMBuffer(pcmFormat: monoFormat, frameCapacity: buffer.frameCapacity) else { return }
+            mono.frameLength = buffer.frameLength
+            memcpy(mono.floatChannelData![0], srcData[0], frameLen * MemoryLayout<Float>.size)
 
-            // Resample mono to 16kHz
-            let outFrameCount = AVAudioFrameCount(Double(frameLen) * 16000.0 / vpRate)
-            guard outFrameCount > 0, let outBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: outFrameCount) else { return }
+            let outCount = AVAudioFrameCount(Double(frameLen) * 16000.0 / vpFormat.sampleRate)
+            guard outCount > 0, let out = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: outCount) else { return }
+            var err: NSError?
+            resampler.convert(to: out, error: &err) { _, status in status.pointee = .haveData; return mono }
+            guard err == nil, let outData = out.floatChannelData, out.frameLength > 0 else { return }
 
-            var error: NSError?
-            resampler.convert(to: outBuffer, error: &error) { _, outStatus in
-                outStatus.pointee = .haveData
-                return monoBuffer
-            }
-            if error != nil { return }
-
-            guard let outData = outBuffer.floatChannelData else { return }
-            let count = Int(outBuffer.frameLength)
-            guard count > 0 else { return }
+            let count = Int(out.frameLength)
             let samples = Array(UnsafeBufferPointer(start: outData[0], count: count))
+            let rms = sqrt(samples.reduce(0) { $0 + $1 * $1 } / Float(count))
 
-            let rms = sqrt(samples.map { $0 * $0 }.reduce(0, +) / Float(count))
-
-            let bufNum = sampleCounter + 1
-            sampleCounter = bufNum
-            if bufNum <= 3 {
+            bufCount += 1
+            if bufCount <= 3 {
                 DispatchQueue.main.async {
-                    self.appendLog("[Mic] Buffer #\(bufNum): \(count) samples, RMS=\(String(format: "%.6f", rms))")
+                    self.appendLog("[Mic] Buffer #\(bufCount): \(count) samples, RMS=\(String(format: "%.6f", rms))")
                 }
             }
-
-            // Update VAD level indicator (RMS scaled for visual, capped at 1.0)
-            // Speech is typically RMS > 0.01, scale so 0.05 = full bar
-            let level = min(rms / 0.05, 1.0)
-            if bufNum % 5 == 0 {  // throttle UI updates
-                DispatchQueue.main.async { self.vadLevel = level }
+            if bufCount % 5 == 0 {
+                DispatchQueue.main.async { self.vadLevel = min(rms / 0.05, 1.0) }
             }
 
-            // Record for debug
-            if self.isRecordingDebug {
-                self.debugRecordBuffer.append(contentsOf: samples)
-            }
-
-            // Don't push audio during TTS — prevents queued VAD events
-            // that cause stuck state after empty STT cycles
-            guard !self.isSpeaking else { return }
+            self.debugMicBuffer.append(contentsOf: samples)
             self.pipeline?.pushAudio(samples)
         }
 
         do {
             try engine.start()
             audioEngine = engine
-            appendLog("[Mic] Engine started")
 
-            // Attach TTS player AFTER engine starts — VP constrains the graph.
-            // Use mono format at engine sample rate — AVAudioEngine auto-upmixes
-            // mono→stereo at the mixer. This avoids one-channel-only playback.
-            let mixerFormat = engine.mainMixerNode.outputFormat(forBus: 0)
-            let engineRate = mixerFormat.sampleRate
-            guard let playerFormat = AVAudioFormat(
-                commonFormat: .pcmFormatFloat32,
-                sampleRate: engineRate,
-                channels: 1,
-                interleaved: false
+            let mixerRate = engine.mainMixerNode.outputFormat(forBus: 0).sampleRate
+            guard let playerFmt = AVAudioFormat(
+                commonFormat: .pcmFormatFloat32, sampleRate: mixerRate,
+                channels: 1, interleaved: false
             ) else { return }
-            appendLog("[Player] Mixer: \(Int(engineRate))Hz, \(mixerFormat.channelCount)ch → Player: mono \(Int(engineRate))Hz")
-            player.attach(to: engine, format: playerFormat)
-            appendLog("[Player] Attached to shared engine")
+            player.attach(to: engine, format: playerFmt)
+            appendLog("[Mic] Started (\(Int(vpFormat.sampleRate))Hz, \(vpFormat.channelCount)ch)")
         } catch {
-            appendLog("[Mic] Engine error: \(error.localizedDescription)")
+            appendLog("[Mic] Error: \(error.localizedDescription)")
         }
     }
 
@@ -361,6 +241,22 @@ final class EchoViewModel {
         audioEngine = nil
     }
 
+    // MARK: - Debug
+
+    private func saveDebugFiles() {
+        let tmp = FileManager.default.temporaryDirectory
+        for (buf, name, sr) in [
+            (debugMicBuffer, "echo_debug_mic.wav", 16000),
+            (debugTTSBuffer, "echo_debug_tts.wav", 24000),
+        ] where !buf.isEmpty {
+            let url = tmp.appendingPathComponent(name)
+            try? WAVWriter.write(samples: buf, sampleRate: sr, to: url)
+            appendLog("[Debug] Saved \(name) (\(String(format: "%.1f", Double(buf.count) / Double(sr)))s)")
+        }
+        debugMicBuffer = []
+        debugTTSBuffer = []
+    }
+
     private static let logFileURL: URL = {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echo_debug.log")
         try? "".write(to: url, atomically: true, encoding: .utf8)
@@ -369,9 +265,7 @@ final class EchoViewModel {
 
     private func appendLog(_ message: String) {
         log.append(message)
-        if log.count > 50 {
-            log.removeFirst(log.count - 50)
-        }
+        if log.count > 50 { log.removeFirst(log.count - 50) }
         let line = "[\(Date())] \(message)\n"
         if let handle = try? FileHandle(forWritingTo: Self.logFileURL) {
             handle.seekToEndOfFile()

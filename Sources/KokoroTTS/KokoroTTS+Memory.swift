@@ -12,7 +12,7 @@ extension KokoroTTSModel: ModelMemoryManageable {
 
     public var memoryFootprint: Int {
         guard _isLoaded else { return 0 }
-        // ~86 MB for INT8 quantized model
-        return 86 * 1024 * 1024
+        // ~163 MB for 3-stage pipeline (duration 39 + prosody 17 + decoder 107)
+        return 163 * 1024 * 1024
     }
 }

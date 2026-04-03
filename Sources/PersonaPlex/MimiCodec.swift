@@ -20,8 +20,8 @@ public final class Mimi: Module {
     @ModuleInfo public var downsample: ConvDownsample1d
     @ModuleInfo public var upsample: ConvTrUpsample1d
 
-    public private(set) var encoderCache: [KVCacheSimple]
-    public private(set) var decoderCache: [KVCacheSimple]
+    public private(set) var encoderCache: [any KVCache]
+    public private(set) var decoderCache: [any KVCache]
 
     private let downsampleStride: Int
 

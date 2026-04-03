@@ -1,0 +1,39 @@
+name: iOSEchoDemo
+options:
+  bundleIdPrefix: audio.soniqo
+  deploymentTarget:
+    iOS: "18.0"
+
+packages:
+  qwen3-asr-swift:
+    path: ../..
+
+targets:
+  iOSEchoDemo:
+    type: application
+    platform: iOS
+    sources:
+      - iOSEchoDemo
+    info:
+      path: iOSEchoDemo/Info.plist
+      properties:
+        UILaunchScreen: {}
+        NSMicrophoneUsageDescription: Microphone access for speech echo demo
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: audio.soniqo.iOSEchoDemo
+      INFOPLIST_KEY_NSMicrophoneUsageDescription: "Microphone access for speech echo demo"
+      CODE_SIGN_STYLE: Automatic
+      OTHER_LDFLAGS: ["-Wl,-undefined,dynamic_lookup"]
+    dependencies:
+      - package: qwen3-asr-swift
+        product: KokoroTTS
+      - package: qwen3-asr-swift
+        product: Qwen3TTSCoreML
+      - package: qwen3-asr-swift
+        product: ParakeetASR
+      - package: qwen3-asr-swift
+        product: SpeechVAD
+      - package: qwen3-asr-swift
+        product: SpeechCore
+      - package: qwen3-asr-swift
+        product: AudioCommon

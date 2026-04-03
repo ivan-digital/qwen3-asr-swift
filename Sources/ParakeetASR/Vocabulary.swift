@@ -1,3 +1,4 @@
+import AudioCommon
 import Foundation
 
 /// SentencePiece-based vocabulary for Parakeet TDT.
@@ -52,5 +53,45 @@ public struct ParakeetVocabulary: Sendable {
         let joined = pieces.joined()
         // Trim leading space that comes from the first token's ▁ prefix
         return joined.trimmingCharacters(in: .whitespaces)
+    }
+
+    /// Decode token IDs into words with per-word confidence scores.
+    ///
+    /// Groups consecutive tokens into words using SentencePiece `▁` boundaries.
+    /// Each word's confidence is exp(mean log-prob of its tokens), clamped to 0–1.
+    public func decodeWords(_ tokenIds: [Int], logProbs: [Float]) -> [WordConfidence] {
+        guard tokenIds.count == logProbs.count else {
+            return [WordConfidence(word: decode(tokenIds), confidence: 0)]
+        }
+
+        var words = [WordConfidence]()
+        var currentWord = ""
+        var currentLogProbs = [Float]()
+
+        for (i, id) in tokenIds.enumerated() {
+            guard let token = idToToken[id] else { continue }
+
+            let startsNewWord = token.hasPrefix("\u{2581}")
+            let text = token.replacingOccurrences(of: "\u{2581}", with: "")
+
+            if startsNewWord && !currentWord.isEmpty {
+                // Flush previous word
+                let meanLP = currentLogProbs.reduce(0, +) / Float(currentLogProbs.count)
+                words.append(WordConfidence(word: currentWord, confidence: min(1.0, exp(meanLP))))
+                currentWord = ""
+                currentLogProbs = []
+            }
+
+            currentWord += text
+            currentLogProbs.append(logProbs[i])
+        }
+
+        // Flush last word
+        if !currentWord.isEmpty {
+            let meanLP = currentLogProbs.reduce(0, +) / Float(currentLogProbs.count)
+            words.append(WordConfidence(word: currentWord, confidence: min(1.0, exp(meanLP))))
+        }
+
+        return words
     }
 }

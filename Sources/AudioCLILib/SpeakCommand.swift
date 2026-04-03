@@ -3,6 +3,7 @@ import AVFoundation
 import ArgumentParser
 import Qwen3TTS
 import CosyVoiceTTS
+import Qwen3TTSCoreML
 import AudioCommon
 
 public struct SpeakCommand: ParsableCommand {
@@ -14,7 +15,7 @@ public struct SpeakCommand: ParsableCommand {
     @Argument(help: "Text to synthesize (omit when using --list-speakers or --batch-file)")
     public var text: String?
 
-    @Option(name: .long, help: "TTS engine: qwen3 (default) or cosyvoice")
+    @Option(name: .long, help: "TTS engine: qwen3 (default), cosyvoice, or coreml")
     public var engine: String = "qwen3"
 
     @Option(name: .shortAndLong, help: "Output WAV file path")
@@ -97,8 +98,8 @@ public struct SpeakCommand: ParsableCommand {
 
     public func validate() throws {
         let eng = engine.lowercased()
-        guard eng == "qwen3" || eng == "cosyvoice" else {
-            throw ValidationError("--engine must be 'qwen3' or 'cosyvoice'")
+        guard eng == "qwen3" || eng == "cosyvoice" || eng == "coreml" else {
+            throw ValidationError("--engine must be 'qwen3', 'cosyvoice', or 'coreml'")
         }
         if text == nil && batchFile == nil && !listSpeakers {
             throw ValidationError("Either a text argument, --batch-file, or --list-speakers must be provided")
@@ -108,6 +109,8 @@ public struct SpeakCommand: ParsableCommand {
     public func run() throws {
         if engine.lowercased() == "cosyvoice" {
             try runCosyVoice()
+        } else if engine.lowercased() == "coreml" {
+            try runCoreML()
         } else {
             try runQwen3()
         }
@@ -332,6 +335,52 @@ public struct SpeakCommand: ParsableCommand {
             print("Saved \(audio.count) samples (\(formatDuration(audio.count))s) to \(output)")
         } else {
             playAudio(samples: audio, sampleRate: 24000)
+        }
+    }
+
+    // MARK: - CoreML engine
+
+    private func runCoreML() throws {
+        guard let text else {
+            throw ValidationError("Text is required for CoreML TTS")
+        }
+        try runAsync {
+            // If modelId looks like a local path, use it directly
+            let localDir: String? = self.modelId.hasPrefix("/") ? self.modelId : nil
+            let model = try await Qwen3TTSCoreMLModel.fromPretrained(
+                localPath: localDir
+            ) { progress, status in
+                print("\r  [\(Int(progress * 100))%] \(status)", terminator: "")
+                fflush(stdout)
+            }
+            print()
+
+            let lang = self.language ?? "english"
+            // CoreML backend needs higher temperature (0.8) — low temp is degenerate
+            let coremlTemp: Float = self.temperature == 0.3 ? 0.8 : self.temperature
+            print("Synthesizing with CoreML engine (language: \(lang))...")
+            let start = CFAbsoluteTimeGetCurrent()
+            let audio = try model.synthesize(
+                text: text, language: lang,
+                temperature: coremlTemp, topK: Int(self.topK),
+                maxTokens: self.maxTokens)
+            let elapsed = CFAbsoluteTimeGetCurrent() - start
+            let duration = Double(audio.count) / 24000.0
+
+            print(String(format: "  Generated %.2fs audio in %.1fs (RTF: %.2f)",
+                         duration, elapsed, elapsed / max(duration, 0.01)))
+
+            let outputURL = URL(fileURLWithPath: self.output)
+            try WAVWriter.write(samples: audio, sampleRate: 24000, to: outputURL)
+            print("  Saved: \(outputURL.path)")
+
+            if self.play {
+                let player = try AVAudioPlayer(contentsOf: outputURL)
+                player.play()
+                while player.isPlaying { Thread.sleep(forTimeInterval: 0.1) }
+            }
+
+            model.unload()
         }
     }
 

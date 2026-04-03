@@ -355,6 +355,7 @@ public extension Qwen3ASRModel {
             try WeightLoader.loadTextDecoderWeights(into: textDecoder, from: cacheDir)
         }
 
+        MetalBudget.pinMemory()
         progressHandler?(1.0, "Ready")
 
         return model

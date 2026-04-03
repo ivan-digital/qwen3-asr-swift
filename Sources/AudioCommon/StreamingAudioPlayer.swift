@@ -104,9 +104,6 @@ public final class StreamingAudioPlayer: @unchecked Sendable {
     private var playbackStarted = false
     private var generationComplete = false
     private var isFirstChunk = true
-    /// Tail of previous chunk for cross-fade at chunk boundaries
-    private var prevChunkTail: [Float] = []
-    private let crossFadeSamples = 480  // 10ms at 48kHz, 20ms at 24kHz
     private var upsampler: AVAudioConverter?
     private var preBufferSamples: Int = 0
     public private(set) var totalWritten: Int = 0
@@ -206,7 +203,7 @@ public final class StreamingAudioPlayer: @unchecked Sendable {
             var sumSq: Float = 0
             for s in samples { sumSq += s * s }
             let rms = sqrt(sumSq / Float(samples.count))
-            if rms < 0.02 { return }  // Drop codec warmup noise
+            if rms < 0.005 { return }  // Only drop near-silence (codec init noise)
             isFirstChunk = false
             // 5ms fade-in to prevent pop
             if let fmt = format {
@@ -215,24 +212,6 @@ public final class StreamingAudioPlayer: @unchecked Sendable {
                     output[i] *= Float(i) / Float(fadeFrames)
                 }
             }
-        }
-
-        // Cross-fade at chunk boundaries to eliminate discontinuities.
-        // Blend the tail of the previous chunk with the head of this chunk.
-        if !prevChunkTail.isEmpty && output.count >= crossFadeSamples {
-            let fadeLen = min(prevChunkTail.count, crossFadeSamples, output.count)
-            for i in 0..<fadeLen {
-                let t = Float(i) / Float(fadeLen)  // 0→1
-                output[i] = prevChunkTail[i] * (1.0 - t) + output[i] * t
-            }
-        }
-
-        // Save tail for next chunk's cross-fade
-        if output.count > crossFadeSamples {
-            prevChunkTail = Array(output[(output.count - crossFadeSamples)...])
-            output = Array(output[0..<(output.count - crossFadeSamples)])
-        } else {
-            prevChunkTail = []
         }
 
         lock.lock()
@@ -288,39 +267,78 @@ public final class StreamingAudioPlayer: @unchecked Sendable {
     /// Signal that TTS generation is complete — no more chunks will arrive.
     /// The render callback will drain remaining samples, then fire onPlaybackFinished.
     public func markGenerationComplete() {
-        // Flush any remaining cross-fade tail
-        if !prevChunkTail.isEmpty {
-            lock.lock()
-            ringBuffer?.write(prevChunkTail)
-            totalWritten += prevChunkTail.count
-            lock.unlock()
-            prevChunkTail = []
-        }
-
         lock.lock()
         generationComplete = true
         playbackStarted = true
         let hasEngine = sourceNode != nil
         let empty = (ringBuffer?.availableToRead ?? 0) == 0
+        let written = totalWritten
         lock.unlock()
 
         // No engine or nothing was written — fire immediately
-        if !hasEngine || (empty && totalWritten == 0) {
+        if !hasEngine || (empty && written == 0) {
             guard !playbackFinishedFired else { return }
             playbackFinishedFired = true
             isPlaying = false
             onPlaybackFinished?()
+            return
         }
+
+        // Start polling: the render callback normally fires onPlaybackFinished
+        // when the buffer drains, but if the render thread isn't running (e.g.
+        // simulator, or audio route change), we poll the buffer to detect
+        // completion reliably. Works on both device and simulator.
+        startCompletionPolling()
+    }
+
+    private var completionPollTimer: DispatchSourceTimer?
+
+    private func startCompletionPolling() {
+        completionPollTimer?.cancel()
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now() + 0.2, repeating: 0.2)
+        timer.setEventHandler { [weak self] in
+            guard let self else { return }
+            // Already fired by render callback — stop polling
+            guard !self.playbackFinishedFired else {
+                self.completionPollTimer?.cancel()
+                self.completionPollTimer = nil
+                return
+            }
+            self.lock.lock()
+            let complete = self.generationComplete
+            let remaining = self.ringBuffer?.availableToRead ?? 0
+            let read = self.totalRead
+            let written = self.totalWritten
+            self.lock.unlock()
+
+            // All samples consumed (or render thread never started reading)
+            let drained = remaining == 0 && read >= written && written > 0
+            // Render thread never started — audio engine not running
+            let stalled = complete && read == 0 && written > 0
+
+            if complete && (drained || stalled) {
+                self.completionPollTimer?.cancel()
+                self.completionPollTimer = nil
+                guard !self.playbackFinishedFired else { return }
+                self.playbackFinishedFired = true
+                self.isPlaying = false
+                self.onPlaybackFinished?()
+            }
+        }
+        completionPollTimer = timer
+        timer.resume()
     }
 
     /// Reset for a new generation cycle.
     public func resetGeneration() {
+        completionPollTimer?.cancel()
+        completionPollTimer = nil
         lock.lock()
         generationComplete = false
         playbackFinishedFired = false
         playbackStarted = false
         isFirstChunk = true
-        prevChunkTail = []
         totalWritten = 0
         totalRead = 0
         ringBuffer?.reset()
@@ -349,6 +367,8 @@ public final class StreamingAudioPlayer: @unchecked Sendable {
 
     /// Stop and release resources.
     public func stop() {
+        completionPollTimer?.cancel()
+        completionPollTimer = nil
         if let eng = engine, let node = sourceNode {
             eng.disconnectNodeOutput(node)
             eng.detach(node)

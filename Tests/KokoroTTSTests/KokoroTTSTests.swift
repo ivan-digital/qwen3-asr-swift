@@ -3,6 +3,12 @@ import XCTest
 
 final class KokoroTTSTests: XCTestCase {
 
+    // MARK: - Model ID Tests
+
+    func testDefaultModelId() {
+        XCTAssertEqual(KokoroTTSModel.defaultModelId, "aufklarer/Kokoro-82M-CoreML")
+    }
+
     // MARK: - Configuration Tests
 
     func testDefaultConfig() {
@@ -10,7 +16,7 @@ final class KokoroTTSTests: XCTestCase {
         XCTAssertEqual(config.sampleRate, 24000)
         XCTAssertEqual(config.maxPhonemeLength, 510)
         XCTAssertEqual(config.styleDim, 256)
-        XCTAssertEqual(config.numPhases, 9)
+        XCTAssertEqual(config.samplesPerFrame, 600)
         XCTAssertEqual(config.languages.count, 8)
         XCTAssertTrue(config.languages.contains("en"))
         XCTAssertTrue(config.languages.contains("ja"))
@@ -23,7 +29,7 @@ final class KokoroTTSTests: XCTestCase {
         XCTAssertEqual(decoded.sampleRate, config.sampleRate)
         XCTAssertEqual(decoded.maxPhonemeLength, config.maxPhonemeLength)
         XCTAssertEqual(decoded.styleDim, config.styleDim)
-        XCTAssertEqual(decoded.numPhases, config.numPhases)
+        XCTAssertEqual(decoded.samplesPerFrame, config.samplesPerFrame)
     }
 
     // MARK: - Model Bucket Tests

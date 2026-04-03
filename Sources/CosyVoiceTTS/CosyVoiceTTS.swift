@@ -104,6 +104,7 @@ public final class CosyVoiceTTSModel {
         progressHandler?(0.98, "Warming up...")
         model.warmUp()
 
+        MetalBudget.pinMemory()
         progressHandler?(1.0, "Model loaded")
         return model
     }

@@ -4,100 +4,85 @@ import AudioCommon
 
 /// CoreML wrapper for Kokoro-82M end-to-end TTS inference.
 ///
-/// Each model variant is a single end-to-end model that takes:
-/// - `input_ids` [1, N]: phoneme token IDs
-/// - `attention_mask` [1, N]: 1 for real tokens, 0 for padding
-/// - `ref_s` [1, 256]: voice style embedding
-/// - `random_phases` [1, 9]: random phases for iSTFTNet vocoder
-///
-/// And outputs:
-/// - `audio` [1, 1, S]: generated waveform at 24kHz
-/// - `audio_length_samples` [1]: actual valid sample count
-/// - `pred_dur` [1, N]: predicted phoneme durations
+/// Loads a single pre-compiled `kokoro_5s.mlmodelc` that runs the full pipeline
+/// (BERT → duration → alignment → prosody → decoder) in one CoreML call.
 class KokoroNetwork {
 
-    private var models: [ModelBucket: MLModel]
+    private let e2eModel: MLModel
 
-    /// Load CoreML models from cache directory.
+    /// Load E2E CoreML model from cache directory.
     init(directory: URL, computeUnits: MLComputeUnits = .all) throws {
         let config = MLModelConfiguration()
         config.computeUnits = computeUnits
 
-        var loaded = [ModelBucket: MLModel]()
-        for bucket in ModelBucket.allCases {
-            let url = directory.appendingPathComponent("\(bucket.modelName).mlmodelc", isDirectory: true)
+        let e2eNames = ["kokoro_5s", "kokoro_10s", "kokoro_15s", "kokoro"]
+        var loaded: MLModel?
+        for name in e2eNames {
+            let url = directory.appendingPathComponent("\(name).mlmodelc", isDirectory: true)
             if FileManager.default.fileExists(atPath: url.path) {
-                loaded[bucket] = try MLModel(contentsOf: url, configuration: config)
+                loaded = try MLModel(contentsOf: url, configuration: config)
+                break
             }
         }
 
-        guard !loaded.isEmpty else {
+        guard let model = loaded else {
             throw AudioModelError.modelLoadFailed(
                 modelId: "kokoro",
-                reason: "No Kokoro CoreML models found in \(directory.path)")
+                reason: "No Kokoro E2E model found in \(directory.path)")
         }
-
-        self.models = loaded
+        e2eModel = model
     }
 
-    /// Run end-to-end TTS inference.
-    ///
-    /// - Parameters:
-    ///   - inputIds: Phoneme token IDs [1, N]
-    ///   - attentionMask: Attention mask [1, N]
-    ///   - refS: Voice style embedding [1, 256]
-    ///   - randomPhases: Random phases [1, 9]
-    ///   - bucket: Which model variant to use
-    /// - Returns: Inference output with audio, length, and predicted durations
-    func predict(
+    // MARK: - E2E Inference
+
+    struct E2EOutput {
+        let audio: MLMultiArray
+        let audioLengthSamples: Int
+        let predDur: MLMultiArray
+    }
+
+    func predictE2E(
         inputIds: MLMultiArray,
         attentionMask: MLMultiArray,
         refS: MLMultiArray,
-        randomPhases: MLMultiArray,
-        bucket: ModelBucket
-    ) throws -> InferenceOutput {
-        guard let model = models[bucket] else {
-            throw AudioModelError.inferenceFailed(
-                operation: "kokoro",
-                reason: "No model loaded for bucket \(bucket.modelName)")
-        }
+        speed: MLMultiArray? = nil
+    ) throws -> E2EOutput {
+        let randomPhases = try MLMultiArray(shape: [1, 9], dataType: .float32)
+        for i in 0..<9 { randomPhases[i] = NSNumber(value: Float.random(in: 0..<1)) }
 
-        let input = try MLDictionaryFeatureProvider(dictionary: [
+        let speedInput = speed ?? {
+            let s = try! MLMultiArray(shape: [1], dataType: .float32)
+            s[0] = NSNumber(value: Float(1.0))
+            return s
+        }()
+
+        let dict: [String: MLFeatureValue] = [
             "input_ids": MLFeatureValue(multiArray: inputIds),
             "attention_mask": MLFeatureValue(multiArray: attentionMask),
             "ref_s": MLFeatureValue(multiArray: refS),
             "random_phases": MLFeatureValue(multiArray: randomPhases),
-        ])
+            "speed": MLFeatureValue(multiArray: speedInput),
+        ]
 
-        let output = try model.prediction(from: input)
+        let input = try MLDictionaryFeatureProvider(dictionary: dict)
+        let output = try e2eModel.prediction(from: input)
 
-        guard let audio = output.featureValue(for: "audio")?.multiArrayValue else {
+        guard let audio = output.featureValue(for: "audio")?.multiArrayValue,
+              let audioLen = output.featureValue(for: "audio_length_samples")?.multiArrayValue,
+              let predDur = output.featureValue(for: "pred_dur")?.multiArrayValue else {
             throw AudioModelError.inferenceFailed(
-                operation: "kokoro", reason: "Missing audio output")
+                operation: "kokoro-e2e", reason: "Missing output tensors")
         }
 
-        let audioLength = output.featureValue(for: "audio_length_samples")?.multiArrayValue
-        let predDur = output.featureValue(for: "pred_dur")?.multiArrayValue
+        let lengthSamples: Int
+        if audioLen.dataType == .float16 {
+            lengthSamples = Int(Float(audioLen.dataPointer.assumingMemoryBound(to: Float16.self).pointee))
+        } else if audioLen.dataType == .int32 {
+            lengthSamples = Int(audioLen.dataPointer.assumingMemoryBound(to: Int32.self).pointee)
+        } else {
+            lengthSamples = Int(audioLen.dataPointer.assumingMemoryBound(to: Float.self).pointee)
+        }
 
-        return InferenceOutput(
-            audio: audio,
-            audioLengthSamples: audioLength,
-            predictedDurations: predDur
-        )
-    }
-
-    /// Available model buckets.
-    var availableBuckets: [ModelBucket] {
-        ModelBucket.allCases.filter { models[$0] != nil }
-    }
-
-    /// Inference output from the end-to-end model.
-    struct InferenceOutput {
-        /// Audio waveform [1, 1, S].
-        let audio: MLMultiArray
-        /// Actual valid sample count [1] (optional).
-        let audioLengthSamples: MLMultiArray?
-        /// Predicted phoneme durations [1, N] (optional).
-        let predictedDurations: MLMultiArray?
+        return E2EOutput(audio: audio, audioLengthSamples: lengthSamples, predDur: predDur)
     }
 }

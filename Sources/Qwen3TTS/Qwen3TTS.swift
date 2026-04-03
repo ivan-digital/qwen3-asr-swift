@@ -1651,6 +1651,7 @@ public extension Qwen3TTSModel {
         progressHandler?(0.95, "Warming up model...")
         model.warmUp()
 
+        MetalBudget.pinMemory()
         progressHandler?(1.0, "Ready")
         return model
     }

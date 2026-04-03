@@ -15,7 +15,8 @@
 - **Qwen3-ForcedAligner** — Выравнивание временных меток на уровне слов (аудио + текст → временные метки)
 - **Qwen3-TTS** — Синтез речи из текста (наивысшее качество, потоковый режим, пользовательские голоса, 10 языков)
 - **CosyVoice TTS** — Синтез речи с потоковой генерацией, клонированием голоса, многоголосым диалогом и тегами эмоций (9 языков, DiT flow matching, CAM++ speaker encoder)
-- **Kokoro TTS** — Синтез речи на устройстве (82M параметров, CoreML/Neural Engine, 50 голосов, готов для iOS, 10 языков)
+- **Kokoro TTS** — Синтез речи на устройстве (82M параметров, CoreML/Neural Engine, 54 голоса, готов для iOS, 10 языков)
+- **Qwen3-TTS CoreML** — Синтез речи (0.6B, CoreML-пайплайн из 6 моделей, W8A16, iOS/macOS)
 - **Qwen3.5-Chat** — Локальный чат на базе LLM (0.8B, MLX + CoreML, INT4/INT8, гибридная архитектура DeltaNet, потоковая генерация токенов)
 - **PersonaPlex** — Полнодуплексная генерация речи из речи (7B, аудио на входе → аудио на выходе, 18 голосовых пресетов)
 - **DeepFilterNet3** — Улучшение речи / подавление шума (2.1M параметров, реальное время 48kHz)
@@ -44,13 +45,13 @@
 |--------|--------|-----------------|-------|---------|
 | Qwen3-ASR-0.6B | Речь → Текст | Нет | 52 языка | [4-bit](https://huggingface.co/aufklarer/Qwen3-ASR-0.6B-MLX-4bit) 680 MB · [8-bit](https://huggingface.co/aufklarer/Qwen3-ASR-0.6B-MLX-8bit) 1.0 GB · [CoreML](https://huggingface.co/aufklarer/Qwen3-ASR-CoreML) 180 MB |
 | Qwen3-ASR-1.7B | Речь → Текст | Нет | 52 языка | [4-bit](https://huggingface.co/aufklarer/Qwen3-ASR-1.7B-MLX-4bit) 2.1 GB · [8-bit](https://huggingface.co/aufklarer/Qwen3-ASR-1.7B-MLX-8bit) 3.2 GB |
-| Parakeet-TDT-0.6B | Речь → Текст | Нет | 25 европейских языков | [CoreML INT4](https://huggingface.co/aufklarer/Parakeet-TDT-v3-CoreML-INT4) 315 MB · [CoreML INT8](https://huggingface.co/aufklarer/Parakeet-TDT-v3-CoreML-INT8) 500 MB |
+| Parakeet-TDT-0.6B | Речь → Текст | Нет | 25 европейских языков | [CoreML INT8](https://huggingface.co/aufklarer/Parakeet-TDT-v3-CoreML-INT8) 500 MB |
 | Qwen3-ForcedAligner-0.6B | Аудио + Текст → Временные метки | Нет | Мульти | [4-bit](https://huggingface.co/aufklarer/Qwen3-ForcedAligner-0.6B-4bit) 979 MB · [8-bit](https://huggingface.co/aufklarer/Qwen3-ForcedAligner-0.6B-8bit) 1.4 GB · [CoreML INT4](https://huggingface.co/aufklarer/Qwen3-ForcedAligner-0.6B-CoreML-INT4) 630 MB · [CoreML INT8](https://huggingface.co/aufklarer/Qwen3-ForcedAligner-0.6B-CoreML-INT8) 1.0 GB |
-| Qwen3-TTS-0.6B Base | Текст → Речь | Да (~120мс) | 10 языков | [4-bit](https://huggingface.co/aufklarer/Qwen3-TTS-12Hz-0.6B-Base-MLX-4bit) 1.7 GB · [8-bit](https://huggingface.co/aufklarer/Qwen3-TTS-12Hz-0.6B-Base-MLX-8bit) 2.4 GB |
+| Qwen3-TTS-0.6B Base | Текст → Речь | Да (~120мс) | 10 языков | [4-bit](https://huggingface.co/aufklarer/Qwen3-TTS-12Hz-0.6B-Base-MLX-4bit) 1.7 GB · [8-bit](https://huggingface.co/aufklarer/Qwen3-TTS-12Hz-0.6B-Base-MLX-8bit) 2.4 GB · [CoreML](https://huggingface.co/aufklarer/Qwen3-TTS-CoreML) 1.0 GB |
 | Qwen3-TTS-0.6B CustomVoice | Текст → Речь | Да (~120мс) | 10 языков | [4-bit](https://huggingface.co/aufklarer/Qwen3-TTS-12Hz-0.6B-CustomVoice-MLX-4bit) 1.7 GB |
 | Qwen3-TTS-1.7B Base | Текст → Речь | Да (~120мс) | 10 языков | [4-bit](https://huggingface.co/aufklarer/Qwen3-TTS-12Hz-1.7B-Base-MLX-4bit) 3.2 GB · [8-bit](https://huggingface.co/aufklarer/Qwen3-TTS-12Hz-1.7B-Base-MLX-8bit) 4.8 GB |
 | CosyVoice3-0.5B | Текст → Речь | Да (~150мс) | 9 языков | [4-bit](https://huggingface.co/aufklarer/CosyVoice3-0.5B-MLX-4bit) 1.2 GB |
-| Kokoro-82M | Текст → Речь | Нет | 10 языков | [CoreML](https://huggingface.co/aufklarer/Kokoro-82M-CoreML) ~325 MB |
+| Kokoro-82M | Текст → Речь | Нет | 10 языков | [CoreML](https://huggingface.co/aufklarer/Kokoro-82M-CoreML) ~170 MB |
 | Qwen3.5-0.8B Chat | Text → Text (LLM) | Yes (streaming) | Multi | [MLX INT4](https://huggingface.co/aufklarer/Qwen3.5-0.8B-Chat-MLX) 418 MB · [CoreML INT8](https://huggingface.co/aufklarer/Qwen3.5-0.8B-Chat-CoreML) 981 MB |
 | PersonaPlex-7B | Речь → Речь | Да (~2с фрагменты) | EN | [4-bit](https://huggingface.co/aufklarer/PersonaPlex-7B-MLX-4bit) 4.9 GB · [8-bit](https://huggingface.co/aufklarer/PersonaPlex-7B-MLX-8bit) 9.1 GB |
 | FireRedVAD | Обнаружение голосовой активности | Нет (офлайн) | 100+ языков | [CoreML](https://huggingface.co/aufklarer/FireRedVAD-CoreML) ~1.2 MB |
@@ -75,7 +76,7 @@
 | Qwen3-TTS-1.7B (4-bit, MLX) | 2,300 MB | ~4–6 GB |
 | Qwen3-TTS-0.6B (4-bit, MLX) | 977 MB | ~2 GB |
 | CosyVoice3-0.5B (4-bit, MLX) | 732 MB | ~2.5 GB |
-| Kokoro-82M (CoreML) | 325 MB | ~350 MB |
+| Kokoro-82M (CoreML) | 170 MB | ~200 MB |
 | Qwen3.5-Chat-0.8B (INT4, MLX) | 418 MB | ~700 MB |
 | Qwen3.5-Chat-0.8B (INT8, CoreML) | 981 MB | ~1.2 GB |
 | PersonaPlex-7B (8-bit, MLX) | 9,100 MB | ~11 GB |
@@ -90,7 +91,7 @@
 
 - **Qwen3-TTS**: Лучшее качество, потоковый режим (~120мс), 9 встроенных голосов, 10 языков, пакетный синтез
 - **CosyVoice TTS**: Потоковый режим (~150мс), 9 языков, клонирование голоса (CAM++ speaker encoder), многоголосый диалог (`[S1] ... [S2] ...`), встроенные теги эмоций/стиля (`(happy)`, `(whispers)`), DiT flow matching + HiFi-GAN вокодер
-- **Kokoro TTS**: Лёгкий TTS для iOS (82M параметров), CoreML/Neural Engine, 50 голосов, 10 языков, неавторегрессионный (один прямой проход)
+- **Kokoro TTS**: Лёгкий TTS для iOS (82M параметров), CoreML/Neural Engine, 54 голоса, 10 языков, сквозная модель
 - **PersonaPlex**: Полнодуплексная генерация речи из речи (аудио на входе → аудио на выходе), потоковый режим (~2с фрагменты), 18 голосовых пресетов, на базе архитектуры Moshi
 
 ## Установка
@@ -109,6 +110,7 @@ brew install speech
 ```bash
 audio transcribe recording.wav
 audio speak "Hello world"
+audio speak "Hello world" --engine coreml                      # CoreML (нейронный движок)
 audio speak "Hallo Welt" --engine cosyvoice --language german
 audio respond --input question.wav --transcript
 ```
@@ -282,7 +284,7 @@ swift build -c release
 ...
 ```
 
-Неавторегрессионный — один прямой проход, без цикла сэмплирования. Подробнее об архитектуре см. [Forced Aligner](docs/inference/forced-aligner.md).
+Сквозная модель, неавторегрессионная, без цикла сэмплирования. Подробнее об архитектуре см. [Forced Aligner](docs/inference/forced-aligner.md).
 
 ## Синтез речи (TTS) — генерация речи на Swift
 
@@ -664,14 +666,14 @@ import KokoroTTS
 import AudioCommon  // для WAVWriter
 
 let tts = try await KokoroTTSModel.fromPretrained()
-// Загружает ~325 MB при первом запуске (CoreML-модели + голосовые эмбеддинги + словари)
+// Загружает ~170 MB при первом запуске (CoreML-модели + голосовые эмбеддинги + словари)
 
 let audio = try tts.synthesize(text: "Hello world", voice: "af_heart")
 // Выход: моно-сэмплы float 24kHz
 try WAVWriter.write(samples: audio, sampleRate: 24000, to: outputURL)
 ```
 
-50 предустановленных голосов на 10 языках. Неавторегрессионный — один прямой проход CoreML, без цикла сэмплирования. Работает на Neural Engine, полностью освобождая GPU.
+54 предустановленных голоса на 10 языках. Сквозная модель CoreML, неавторегрессионная, без цикла сэмплирования. Работает на Neural Engine, полностью освобождая GPU.
 
 ### CLI для Kokoro TTS
 
@@ -686,6 +688,15 @@ make build
 
 # Список доступных голосов
 .build/release/audio kokoro --list-voices
+```
+
+### Qwen3-TTS CoreML
+
+Авторегрессионный пайплайн из 6 моделей, работающий на CoreML. Палетизированные веса W8A16.
+
+```bash
+.build/release/audio qwen3-tts-coreml "Hello, how are you?" --output hello.wav
+.build/release/audio qwen3-tts-coreml "Guten Tag" --language german --output guten.wav
 ```
 
 ## Qwen3 Chat (локальный LLM)
@@ -1027,7 +1038,7 @@ ws.send(JSON.stringify({
 | Qwen3-ASR-0.6B (4-bit) | MLX | ~0.06 | ~0.6с |
 | Qwen3-ASR-0.6B (INT8) | CoreML + MLX | ~0.09 | ~0.9с |
 | Qwen3-ASR-1.7B (8-bit) | MLX | ~0.11 | ~1.1с |
-| Parakeet-TDT-0.6B (INT4) | CoreML (Neural Engine) | ~0.12 холодный, ~0.03 прогретый | ~1.2с / ~0.3с |
+| Parakeet-TDT-0.6B (INT8) | CoreML (Neural Engine) | ~0.09 холодный, ~0.03 прогретый | ~0.9с / ~0.3с |
 | Whisper-large-v3 | whisper.cpp (Q5_0) | ~0.10 | ~1.0с |
 | Whisper-small | whisper.cpp (Q5_0) | ~0.04 | ~0.4с |
 
@@ -1044,10 +1055,10 @@ ws.send(JSON.stringify({
 | Модель | Фреймворк | Короткий (1с) | Средний (3с) | Длинный (6с) | Потоковый первый пакет |
 |--------|-----------|---------------|--------------|--------------|----------------------|
 | Qwen3-TTS-0.6B (4-bit) | MLX Swift (release) | 1.6с (RTF 1.2) | 2.3с (RTF 0.7) | 3.9с (RTF 0.7) | ~120мс (1 кадр) |
-| Kokoro-82M | CoreML (Neural Engine) | ~45мс | ~45мс | ~45мс | Н/Д (неавторегрессионный) |
+| Kokoro-82M | CoreML (Neural Engine) | ~1.4с (RTFx 0.7) | ~4.3с (RTFx 0.7) | ~8.6с (RTFx 0.7) | Н/Д (неавторегрессионный) |
 | Apple `AVSpeechSynthesizer` | AVFoundation | 0.08с | 0.08с | 0.17с (RTF 0.02) | Н/Д |
 
-> Qwen3-TTS генерирует естественную, выразительную речь с просодией и эмоциями, работая **быстрее реального времени** (RTF < 1.0). Потоковый синтез выдаёт первый аудиофрагмент за ~120мс. Kokoro-82M работает полностью на Neural Engine за один прямой проход — ~45мс вне зависимости от длины, идеально для iOS. Встроенный TTS от Apple быстрее, но производит роботизированную, монотонную речь.
+> Qwen3-TTS генерирует естественную, выразительную речь с просодией и эмоциями, работая **быстрее реального времени** (RTF < 1.0). Потоковый синтез выдаёт первый аудиофрагмент за ~120мс. Kokoro-82M работает полностью на Neural Engine со сквозной моделью (RTFx ~0.7), идеально для iOS. Встроенный TTS от Apple быстрее, но производит роботизированную, монотонную речь.
 
 ### PersonaPlex (генерация речи из речи)
 
@@ -1209,9 +1220,9 @@ PERSONAPLEX_E2E=1 swift test --filter PersonaPlexE2ETests
 |---|---|---|---|---|
 | **Качество** | Нейросетевое, выразительное | Нейросетевое, естественное | Роботизированное, монотонное | Нейросетевое, наивысшее качество |
 | **Среда выполнения** | На устройстве (MLX) | На устройстве (CoreML) | На устройстве | Только облако |
-| **Потоковый режим** | Да (~120мс первый фрагмент) | Нет (один проход, ~45мс) | Нет | Да |
+| **Потоковый режим** | Да (~120мс первый фрагмент) | Нет (сквозная модель) | Нет | Да |
 | **Клонирование голоса** | Да | Нет | Нет | Да |
-| **Голоса** | 9 встроенных + клонирование | 50 предустановленных | ~50 системных | 1000+ |
+| **Голоса** | 9 встроенных + клонирование | 54 предустановленных | ~50 системных | 1000+ |
 | **Языки** | 10 | 10 | 60+ | 30+ |
 | **Поддержка iOS** | Только macOS | iOS + macOS | iOS + macOS | Любая платформа (API) |
 | **Стоимость** | Бесплатно (Apache 2.0) | Бесплатно (Apache 2.0) | Бесплатно | Оплата за символ |

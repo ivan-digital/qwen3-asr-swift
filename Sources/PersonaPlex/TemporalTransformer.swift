@@ -45,7 +45,7 @@ public final class TemporalAttention: Module {
         self.scale = 1.0 / Float(Double(cfg.headDim).squareRoot())
     }
 
-    public func callAsFunction(_ xs: MLXArray, cache: KVCacheSimple, offset: Int) -> MLXArray {
+    public func callAsFunction(_ xs: MLXArray, cache: any KVCache, offset: Int) -> MLXArray {
         let b = xs.shape[0]
         let t = xs.shape[1]
 
@@ -163,7 +163,7 @@ public final class TemporalTransformerLayer: Module {
         self._gating = ModuleInfo(wrappedValue: TemporalFFN(cfg: cfg))
     }
 
-    public func callAsFunction(_ xs: MLXArray, cache: KVCacheSimple, offset: Int) -> MLXArray {
+    public func callAsFunction(_ xs: MLXArray, cache: any KVCache, offset: Int) -> MLXArray {
         var x = xs
         x = x + self_attn(norm1(x), cache: cache, offset: offset)
         x = x + gating(norm2(x))
@@ -198,7 +198,7 @@ public final class TemporalTransformer: Module {
     // Output heads
     @ModuleInfo public var text_linear: Linear     // text logit head
 
-    public private(set) var cache: [KVCacheSimple]
+    public private(set) var cache: [any KVCache]
 
     /// Compiled temporal step function for Metal kernel fusion.
     /// Input: [hidden, offset, K0, V0, K1, V1, ..., K31, V31]
@@ -330,7 +330,7 @@ public final class TemporalTransformer: Module {
     }
 
     /// Execute a single autoregressive step through the compiled temporal transformer.
-    /// Manages KVCacheSimple objects, delegating to compiled function when available.
+    /// Manages KVCache objects, delegating to compiled function when available.
     /// - Parameters:
     ///   - hidden: [B, 1, dim] pre-computed embedding sum
     ///   - offset: RoPE position offset
@@ -368,7 +368,7 @@ public final class TemporalTransformer: Module {
 
         let out = compiled(flatInputs)
 
-        // Update KVCacheSimple objects from compiled output
+        // Update KVCache objects from compiled output
         for i in 0..<cfg.numLayers {
             cache[i].replaceArrays(keys: out[2 + i * 2], values: out[3 + i * 2])
         }

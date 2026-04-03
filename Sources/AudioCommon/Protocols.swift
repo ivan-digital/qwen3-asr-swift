@@ -116,6 +116,18 @@ extension SpeechGenerationModel {
 
 // MARK: - Speech Recognition (STT)
 
+/// A word with its confidence score.
+public struct WordConfidence: Sendable {
+    public let word: String
+    /// Confidence score (0.0–1.0) derived from mean token log-probability.
+    public let confidence: Float
+
+    public init(word: String, confidence: Float) {
+        self.word = word
+        self.confidence = confidence
+    }
+}
+
 /// Result of speech recognition including detected language.
 public struct TranscriptionResult: Sendable {
     public let text: String
@@ -124,11 +136,14 @@ public struct TranscriptionResult: Sendable {
     /// Confidence score (0.0–1.0). Higher = more confident transcription.
     /// Derived from average token log-probability. 0.0 if model doesn't provide.
     public let confidence: Float
+    /// Per-word confidence scores. Nil if model doesn't provide.
+    public let words: [WordConfidence]?
 
-    public init(text: String, language: String? = nil, confidence: Float = 0.0) {
+    public init(text: String, language: String? = nil, confidence: Float = 0.0, words: [WordConfidence]? = nil) {
         self.text = text
         self.language = language
         self.confidence = confidence
+        self.words = words
     }
 }
 

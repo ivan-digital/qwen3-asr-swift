@@ -1643,6 +1643,7 @@ public final class PersonaPlexModel: Module {
         }
 
         model.train(false)
+        MetalBudget.pinMemory()
         progressHandler?(1.0, "PersonaPlex ready")
         return model
     }

@@ -219,7 +219,7 @@ public final class MimiTransformer: Module {
         return x
     }
 
-    public func makeCache() -> [KVCacheSimple] {
+    public func makeCache() -> [any KVCache] {
         (0..<cfg.numLayers).map { _ in KVCacheSimple() }
     }
 }
@@ -270,5 +270,5 @@ public final class ProjectedTransformer: Module {
         }
     }
 
-    public func makeCache() -> [KVCacheSimple] { transformer.makeCache() }
+    public func makeCache() -> [any KVCache] { transformer.makeCache() }
 }

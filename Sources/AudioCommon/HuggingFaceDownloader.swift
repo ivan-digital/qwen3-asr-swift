@@ -98,13 +98,25 @@ public enum HuggingFaceDownloader {
         let hub = makeHubApi(for: modelId, repoDir: directory)
         let repo = Hub.Repo(id: modelId)
 
-        do {
-            try await hub.snapshot(from: repo, matching: globs) { progress in
-                progressHandler?(progress.fractionCompleted)
+        // Retry with exponential backoff — HuggingFace can timeout on
+        // slow connections or rate-limit. 3 attempts: 0s, 5s, 15s delays.
+        let maxRetries = 3
+        var lastError: Error?
+        for attempt in 1...maxRetries {
+            do {
+                try await hub.snapshot(from: repo, matching: globs) { progress in
+                    progressHandler?(progress.fractionCompleted)
+                }
+                return  // Success
+            } catch {
+                lastError = error
+                if attempt < maxRetries {
+                    let delay = attempt == 1 ? 5 : 15
+                    try await Task.sleep(for: .seconds(delay))
+                }
             }
-        } catch {
-            throw DownloadError.failedToDownload("\(modelId): \(error.localizedDescription)")
         }
+        throw DownloadError.failedToDownload("\(modelId): \(lastError?.localizedDescription ?? "unknown")")
     }
 
     // MARK: - Security Helpers (kept for backward compat + security tests)

@@ -49,6 +49,10 @@ let package = Package(
             targets: ["KokoroTTS"]
         ),
         .library(
+            name: "Qwen3TTSCoreML",
+            targets: ["Qwen3TTSCoreML"]
+        ),
+        .library(
             name: "Qwen3Chat",
             targets: ["Qwen3Chat"]
         ),
@@ -105,6 +109,12 @@ let package = Package(
             ]
         ),
         .target(
+            name: "Qwen3TTSCoreML",
+            dependencies: [
+                "AudioCommon",
+            ]
+        ),
+        .target(
             name: "CosyVoiceTTS",
             dependencies: [
                 "AudioCommon",
@@ -148,8 +158,7 @@ let package = Package(
         ),
         .binaryTarget(
             name: "CSpeechCore",
-            url: "https://github.com/soniqo/speech-core/releases/download/v0.0.4/SpeechCore.xcframework.zip",
-            checksum: "5e48d536134d147ac0162c67df39d59a60bdfc0f9c2793e81e4bb6046f06d15f"
+            path: "../speech-core/dist/SpeechCore.xcframework"
         ),
         .target(
             name: "SpeechCore",
@@ -180,6 +189,7 @@ let package = Package(
                 "Qwen3ASR",
                 "Qwen3TTS",
                 "CosyVoiceTTS",
+                "Qwen3TTSCoreML",
                 "PersonaPlex",
                 "SpeechVAD",
                 "SpeechEnhancement",
@@ -230,6 +240,10 @@ let package = Package(
             dependencies: ["Qwen3TTS", "Qwen3ASR", "AudioCommon"]
         ),
         .testTarget(
+            name: "Qwen3TTSCoreMLTests",
+            dependencies: ["Qwen3TTSCoreML", "Qwen3ASR", "AudioCommon"]
+        ),
+        .testTarget(
             name: "CosyVoiceTTSTests",
             dependencies: ["CosyVoiceTTS", "AudioCommon"]
         ),
@@ -245,7 +259,8 @@ let package = Package(
             name: "ParakeetASRTests",
             dependencies: ["ParakeetASR", "AudioCommon"],
             resources: [
-                .copy("Resources/test_audio.wav")
+                .copy("Resources/test_audio.wav"),
+                .copy("Resources/test_audio_german.wav")
             ]
         ),
         .testTarget(
@@ -287,6 +302,16 @@ let package = Package(
             name: "AudioServerTests",
             dependencies: [
                 "AudioServer"
+            ]
+        ),
+        .testTarget(
+            name: "SpeechCoreTests",
+            dependencies: [
+                "SpeechCore",
+                "AudioCommon",
+                "SpeechVAD",
+                "KokoroTTS",
+                "ParakeetASR"
             ]
         )
     ]

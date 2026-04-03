@@ -90,7 +90,7 @@ public final class DepformerAttention: Module {
     }
 
     public func callAsFunction(
-        _ xs: MLXArray, step: Int, cache: KVCacheSimple
+        _ xs: MLXArray, step: Int, cache: any KVCache
     ) -> MLXArray {
         let b = xs.shape[0]
         let t = xs.shape[1]
@@ -175,7 +175,7 @@ public final class DepformerLayer: Module {
         self._gating = ModuleInfo(wrappedValue: DepformerFFN(cfg: cfg))
     }
 
-    public func callAsFunction(_ xs: MLXArray, step: Int, cache: KVCacheSimple) -> MLXArray {
+    public func callAsFunction(_ xs: MLXArray, step: Int, cache: any KVCache) -> MLXArray {
         var x = xs
         x = x + self_attn(norm1(x), step: step, cache: cache)
         x = x + gating(norm2(x), step: step)
@@ -258,7 +258,7 @@ public final class Depformer: Module {
 
         // Create KV caches ONCE for this temporal step — all codebook steps
         // share the same caches so step k can attend to steps 0..k-1
-        let caches = (0..<cfg.numLayers).map { _ in KVCacheSimple() }
+        let caches: [any KVCache] = (0..<cfg.numLayers).map { _ in KVCacheSimple() }
 
         for k in 0..<cfg.numSteps {
             // Project temporal hidden to depformer dim

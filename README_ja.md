@@ -15,7 +15,8 @@ Mac・iOS向けのオンデバイス音声認識・合成・理解。Apple Silic
 - **Qwen3-ForcedAligner** — 単語レベルのタイムスタンプ整列 (音声 + テキスト → タイムスタンプ)
 - **Qwen3-TTS** — テキスト読み上げ (最高品質、ストリーミング、カスタムスピーカー、10言語対応)
 - **CosyVoice TTS** — ストリーミング対応テキスト読み上げ、音声クローン、マルチスピーカー対話、感情タグ (9言語、DiT flow matching、CAM++話者エンコーダー)
-- **Kokoro TTS** — オンデバイステキスト読み上げ (82Mパラメーター、CoreML/Neural Engine、50種類の声、iOS対応、10言語)
+- **Kokoro TTS** — オンデバイステキスト読み上げ (82Mパラメーター、CoreML/Neural Engine、54種類の声、iOS対応、10言語)
+- **Qwen3-TTS CoreML** — テキスト読み上げ (0.6B、CoreML 6モデルパイプライン、W8A16、iOS/macOS)
 - **Qwen3.5-Chat** — オンデバイスLLMチャット (0.8B、MLX + CoreML、INT4/INT8、DeltaNetハイブリッド、ストリーミングトークン)
 - **PersonaPlex** — 全二重音声間会話 (7B、音声入力 → 音声出力、18種類のボイスプリセット)
 - **DeepFilterNet3** — 音声強調 / ノイズ抑制 (2.1Mパラメーター、リアルタイム48kHz)
@@ -44,13 +45,13 @@ Mac・iOS向けのオンデバイス音声認識・合成・理解。Apple Silic
 |-------|------|-----------|-----------|-------|
 | Qwen3-ASR-0.6B | 音声 → テキスト | なし | 52言語 | [4-bit](https://huggingface.co/aufklarer/Qwen3-ASR-0.6B-MLX-4bit) 680 MB · [8-bit](https://huggingface.co/aufklarer/Qwen3-ASR-0.6B-MLX-8bit) 1.0 GB · [CoreML](https://huggingface.co/aufklarer/Qwen3-ASR-CoreML) 180 MB |
 | Qwen3-ASR-1.7B | 音声 → テキスト | なし | 52言語 | [4-bit](https://huggingface.co/aufklarer/Qwen3-ASR-1.7B-MLX-4bit) 2.1 GB · [8-bit](https://huggingface.co/aufklarer/Qwen3-ASR-1.7B-MLX-8bit) 3.2 GB |
-| Parakeet-TDT-0.6B | 音声 → テキスト | なし | ヨーロッパ25言語 | [CoreML INT4](https://huggingface.co/aufklarer/Parakeet-TDT-v3-CoreML-INT4) 315 MB · [CoreML INT8](https://huggingface.co/aufklarer/Parakeet-TDT-v3-CoreML-INT8) 500 MB |
+| Parakeet-TDT-0.6B | 音声 → テキスト | なし | ヨーロッパ25言語 | [CoreML INT8](https://huggingface.co/aufklarer/Parakeet-TDT-v3-CoreML-INT8) 500 MB |
 | Qwen3-ForcedAligner-0.6B | 音声 + テキスト → タイムスタンプ | なし | 多言語 | [4-bit](https://huggingface.co/aufklarer/Qwen3-ForcedAligner-0.6B-4bit) 979 MB · [8-bit](https://huggingface.co/aufklarer/Qwen3-ForcedAligner-0.6B-8bit) 1.4 GB · [CoreML INT4](https://huggingface.co/aufklarer/Qwen3-ForcedAligner-0.6B-CoreML-INT4) 630 MB · [CoreML INT8](https://huggingface.co/aufklarer/Qwen3-ForcedAligner-0.6B-CoreML-INT8) 1.0 GB |
-| Qwen3-TTS-0.6B Base | テキスト → 音声 | あり (~120ms) | 10言語 | [4-bit](https://huggingface.co/aufklarer/Qwen3-TTS-12Hz-0.6B-Base-MLX-4bit) 1.7 GB · [8-bit](https://huggingface.co/aufklarer/Qwen3-TTS-12Hz-0.6B-Base-MLX-8bit) 2.4 GB |
+| Qwen3-TTS-0.6B Base | テキスト → 音声 | あり (~120ms) | 10言語 | [4-bit](https://huggingface.co/aufklarer/Qwen3-TTS-12Hz-0.6B-Base-MLX-4bit) 1.7 GB · [8-bit](https://huggingface.co/aufklarer/Qwen3-TTS-12Hz-0.6B-Base-MLX-8bit) 2.4 GB · [CoreML](https://huggingface.co/aufklarer/Qwen3-TTS-CoreML) 1.0 GB |
 | Qwen3-TTS-0.6B CustomVoice | テキスト → 音声 | あり (~120ms) | 10言語 | [4-bit](https://huggingface.co/aufklarer/Qwen3-TTS-12Hz-0.6B-CustomVoice-MLX-4bit) 1.7 GB |
 | Qwen3-TTS-1.7B Base | テキスト → 音声 | あり (~120ms) | 10言語 | [4-bit](https://huggingface.co/aufklarer/Qwen3-TTS-12Hz-1.7B-Base-MLX-4bit) 3.2 GB · [8-bit](https://huggingface.co/aufklarer/Qwen3-TTS-12Hz-1.7B-Base-MLX-8bit) 4.8 GB |
 | CosyVoice3-0.5B | テキスト → 音声 | あり (~150ms) | 9言語 | [4-bit](https://huggingface.co/aufklarer/CosyVoice3-0.5B-MLX-4bit) 1.2 GB |
-| Kokoro-82M | テキスト → 音声 | なし | 10言語 | [CoreML](https://huggingface.co/aufklarer/Kokoro-82M-CoreML) ~325 MB |
+| Kokoro-82M | テキスト → 音声 | なし | 10言語 | [CoreML](https://huggingface.co/aufklarer/Kokoro-82M-CoreML) ~170 MB |
 | Qwen3.5-0.8B Chat | Text → Text (LLM) | Yes (streaming) | Multi | [MLX INT4](https://huggingface.co/aufklarer/Qwen3.5-0.8B-Chat-MLX) 418 MB · [CoreML INT8](https://huggingface.co/aufklarer/Qwen3.5-0.8B-Chat-CoreML) 981 MB |
 | PersonaPlex-7B | 音声 → 音声 | あり (~2秒チャンク) | EN | [4-bit](https://huggingface.co/aufklarer/PersonaPlex-7B-MLX-4bit) 4.9 GB · [8-bit](https://huggingface.co/aufklarer/PersonaPlex-7B-MLX-8bit) 9.1 GB |
 | FireRedVAD | 音声区間検出 | なし (オフライン) | 100以上の言語 | [CoreML](https://huggingface.co/aufklarer/FireRedVAD-CoreML) ~1.2 MB |
@@ -75,7 +76,7 @@ Mac・iOS向けのオンデバイス音声認識・合成・理解。Apple Silic
 | Qwen3-TTS-1.7B (4-bit, MLX) | 2,300 MB | ~4–6 GB |
 | Qwen3-TTS-0.6B (4-bit, MLX) | 977 MB | ~2 GB |
 | CosyVoice3-0.5B (4-bit, MLX) | 732 MB | ~2.5 GB |
-| Kokoro-82M (CoreML) | 325 MB | ~350 MB |
+| Kokoro-82M (CoreML) | 170 MB | ~200 MB |
 | Qwen3.5-Chat-0.8B (INT4, MLX) | 418 MB | ~700 MB |
 | Qwen3.5-Chat-0.8B (INT8, CoreML) | 981 MB | ~1.2 GB |
 | PersonaPlex-7B (8-bit, MLX) | 9,100 MB | ~11 GB |
@@ -90,7 +91,7 @@ Mac・iOS向けのオンデバイス音声認識・合成・理解。Apple Silic
 
 - **Qwen3-TTS**: 最高品質、ストリーミング (~120ms)、9種類の内蔵スピーカー、10言語、バッチ合成
 - **CosyVoice TTS**: ストリーミング (~150ms)、9言語、音声クローン (CAM++話者エンコーダー)、マルチスピーカー対話 (`[S1] ... [S2] ...`)、インライン感情・スタイルタグ (`(happy)`, `(whispers)`)、DiT flow matching + HiFi-GANボコーダー
-- **Kokoro TTS**: 軽量iOS対応TTS (82Mパラメーター)、CoreML/Neural Engine、50種類の声、10言語、非自己回帰型 (単一フォワードパス)
+- **Kokoro TTS**: 軽量iOS対応TTS (82Mパラメーター)、CoreML/Neural Engine、54種類の声、10言語、エンドツーエンドモデル
 - **PersonaPlex**: 全二重音声間変換 (音声入力 → 音声出力)、ストリーミング (~2秒チャンク)、18種類のボイスプリセット、Moshiアーキテクチャベース
 
 ## インストール
@@ -109,6 +110,7 @@ brew install speech
 ```bash
 audio transcribe recording.wav
 audio speak "Hello world"
+audio speak "Hello world" --engine coreml                      # CoreML（ニューラルエンジン）
 audio speak "Hallo Welt" --engine cosyvoice --language german
 audio respond --input question.wav --transcript
 ```
@@ -282,7 +284,7 @@ swift build -c release
 ...
 ```
 
-非自己回帰型 — 単一フォワードパスでサンプリングループなし。アーキテクチャの詳細は[強制アラインメント](docs/inference/forced-aligner.md)を参照。
+エンドツーエンドモデル、非自己回帰型でサンプリングループなし。アーキテクチャの詳細は[強制アラインメント](docs/inference/forced-aligner.md)を参照。
 
 ## テキスト読み上げ (TTS) — Swiftで音声を生成
 
@@ -664,14 +666,14 @@ import KokoroTTS
 import AudioCommon  // WAVWriter用
 
 let tts = try await KokoroTTSModel.fromPretrained()
-// 初回実行時に~325 MBをダウンロード (CoreMLモデル + ボイス埋め込み + 辞書)
+// 初回実行時に~170 MBをダウンロード (CoreMLモデル + ボイス埋め込み + 辞書)
 
 let audio = try tts.synthesize(text: "Hello world", voice: "af_heart")
 // 出力は24kHzモノラルfloatサンプル
 try WAVWriter.write(samples: audio, sampleRate: 24000, to: outputURL)
 ```
 
-10言語で50種類のプリセットボイス。非自己回帰型 — 単一CoreMLフォワードパスでサンプリングループなし。Neural Engine上で動作し、GPUを完全に解放します。
+10言語で54種類のプリセットボイス。エンドツーエンドCoreMLモデル、非自己回帰型でサンプリングループなし。Neural Engine上で動作し、GPUを完全に解放します。
 
 ### Kokoro TTS CLI
 
@@ -686,6 +688,15 @@ make build
 
 # 利用可能なボイスを一覧表示
 .build/release/audio kokoro --list-voices
+```
+
+### Qwen3-TTS CoreML
+
+CoreML上で動作する6モデル自己回帰パイプライン。W8A16パレタイズ重み。
+
+```bash
+.build/release/audio qwen3-tts-coreml "Hello, how are you?" --output hello.wav
+.build/release/audio qwen3-tts-coreml "Guten Tag" --language german --output guten.wav
 ```
 
 ## Qwen3 Chat (オンデバイスLLM)
@@ -1027,7 +1038,7 @@ ws.send(JSON.stringify({
 | Qwen3-ASR-0.6B (4-bit) | MLX | ~0.06 | ~0.6s |
 | Qwen3-ASR-0.6B (INT8) | CoreML + MLX | ~0.09 | ~0.9s |
 | Qwen3-ASR-1.7B (8-bit) | MLX | ~0.11 | ~1.1s |
-| Parakeet-TDT-0.6B (INT4) | CoreML (Neural Engine) | ~0.12 cold, ~0.03 warm | ~1.2s / ~0.3s |
+| Parakeet-TDT-0.6B (INT8) | CoreML (Neural Engine) | ~0.09 cold, ~0.03 warm | ~0.9s / ~0.3s |
 | Whisper-large-v3 | whisper.cpp (Q5_0) | ~0.10 | ~1.0s |
 | Whisper-small | whisper.cpp (Q5_0) | ~0.04 | ~0.4s |
 
@@ -1044,10 +1055,10 @@ ws.send(JSON.stringify({
 | モデル | フレームワーク | 短い (1s) | 中程度 (3s) | 長い (6s) | ストリーミング最初のパケット |
 |-------|-----------|-----------|-------------|------------|----------------------|
 | Qwen3-TTS-0.6B (4-bit) | MLX Swift (release) | 1.6s (RTF 1.2) | 2.3s (RTF 0.7) | 3.9s (RTF 0.7) | ~120ms (1-frame) |
-| Kokoro-82M | CoreML (Neural Engine) | ~45ms | ~45ms | ~45ms | N/A (非自己回帰型) |
+| Kokoro-82M | CoreML (Neural Engine) | ~1.4s (RTFx 0.7) | ~4.3s (RTFx 0.7) | ~8.6s (RTFx 0.7) | N/A (非自己回帰型) |
 | Apple `AVSpeechSynthesizer` | AVFoundation | 0.08s | 0.08s | 0.17s (RTF 0.02) | N/A |
 
-> Qwen3-TTSは韻律と感情を備えた自然で表現力豊かな音声を生成し、**リアルタイムより高速** (RTF < 1.0) で動作します。ストリーミング合成は最初の音声チャンクを~120msで配信します。Kokoro-82MはNeural Engine上で単一フォワードパスで動作 — 出力長に関係なく~45ms、iOS向けに最適です。Appleの内蔵TTSはより高速ですが、機械的で単調な音声を生成します。
+> Qwen3-TTSは韻律と感情を備えた自然で表現力豊かな音声を生成し、**リアルタイムより高速** (RTF < 1.0) で動作します。ストリーミング合成は最初の音声チャンクを~120msで配信します。Kokoro-82MはNeural Engine上でエンドツーエンドモデルとして動作（RTFx約0.7）、iOS向けに最適です。Appleの内蔵TTSはより高速ですが、機械的で単調な音声を生成します。
 
 ### PersonaPlex (音声間変換)
 
@@ -1209,9 +1220,9 @@ PERSONAPLEX_E2E=1 swift test --filter PersonaPlexE2ETests
 |---|---|---|---|---|
 | **品質** | ニューラル、表現力豊か | ニューラル、自然 | 機械的、単調 | ニューラル、最高品質 |
 | **ランタイム** | オンデバイス (MLX) | オンデバイス (CoreML) | オンデバイス | クラウドのみ |
-| **ストリーミング** | あり (最初のチャンク~120ms) | なし (単一パス、~45ms) | なし | あり |
+| **ストリーミング** | あり (最初のチャンク~120ms) | なし (エンドツーエンドモデル) | なし | あり |
 | **音声クローン** | あり | なし | なし | あり |
-| **ボイス** | 9種類内蔵 + 任意のクローン | 50種類のプリセット | ~50種類のシステムボイス | 1000以上 |
+| **ボイス** | 9種類内蔵 + 任意のクローン | 54種類のプリセット | ~50種類のシステムボイス | 1000以上 |
 | **対応言語** | 10 | 10 | 60以上 | 30以上 |
 | **iOS対応** | macOSのみ | iOS + macOS | iOS + macOS | あり (API) |
 | **コスト** | 無料 (Apache 2.0) | 無料 (Apache 2.0) | 無料 | 文字単位課金 |
