@@ -3,6 +3,9 @@ import MLXCommon
 import MLX
 import MLXNN
 import AudioCommon
+import os.log
+
+private let log = OSLog(subsystem: "com.soniqo.qwen3chat", category: "MLX")
 
 // MARK: - MLX Generator for Qwen3.5 Chat
 
@@ -24,8 +27,8 @@ import AudioCommon
 public final class Qwen35MLXChat: @unchecked Sendable {
     public static let defaultModelId = "aufklarer/Qwen3.5-0.8B-Chat-MLX"
 
-    let config: Qwen3ChatConfig
-    let tokenizer: ChatTokenizer
+    public let config: Qwen3ChatConfig
+    public let tokenizer: ChatTokenizer
     let model: Qwen35MLXModel
     var state: Qwen35MLXModel.InferenceState
     var _isLoaded = true
@@ -265,6 +268,19 @@ public final class Qwen35MLXChat: @unchecked Sendable {
         let decodeMs = (CFAbsoluteTimeGetCurrent() - decodeStart) * 1000
         metrics.decodeTimeMs = decodeMs
         metrics.decodeTokens = generatedTokens.count
+
+        var memInfo = mach_task_basic_info()
+        var memCount = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size) / 4
+        withUnsafeMutablePointer(to: &memInfo) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(memCount)) {
+                task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), $0, &memCount)
+            }
+        }
+        let memMB = Double(memInfo.resident_size) / 1024 / 1024
+        let tps = decodeMs > 0 ? Double(generatedTokens.count) / (decodeMs / 1000.0) : 0
+        os_log(.info, log: log,
+               "Generate done: prefill=%.0fms (%d tokens), decode=%.0fms (%d tokens, %.1f tok/s), memory=%.0f MB",
+               metrics.prefillTimeMs, promptTokens.count, decodeMs, generatedTokens.count, tps, memMB)
 
         let responseTokens = ChatTemplate.stripThinking(from: generatedTokens)
         return tokenizer.decode(responseTokens)

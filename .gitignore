@@ -49,3 +49,5 @@ Frameworks/
 benchmarks/
 !docs/benchmarks/
 .claude/worktrees/
+*.xcodeproj/project.pbxproj
+.DS_Store

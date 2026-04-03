@@ -234,14 +234,16 @@ public class ParakeetASRModel {
 
         // Step 5: Load CoreML models (encoder, decoder, joint — no preprocessor)
         progressHandler?(0.80, "Loading CoreML models...")
+        // Use cpuAndGPU for encoder — ANE compilation fails on some devices
+        // (iPhone 17 Pro "Unknown aneSubType") causing memory spike + fallback anyway
         let encoder = try loadCoreMLModel(
-            name: "encoder", from: cacheDir, computeUnits: .all)
+            name: "encoder", from: cacheDir, computeUnits: .cpuAndGPU)
         progressHandler?(0.90, "Loading decoder...")
         let decoder = try loadCoreMLModel(
-            name: "decoder", from: cacheDir, computeUnits: .cpuAndNeuralEngine)
+            name: "decoder", from: cacheDir, computeUnits: .cpuAndGPU)
         progressHandler?(0.95, "Loading joint network...")
         let joint = try loadCoreMLModel(
-            name: "joint", from: cacheDir, computeUnits: .cpuAndNeuralEngine)
+            name: "joint", from: cacheDir, computeUnits: .cpuAndGPU)
 
         progressHandler?(1.0, "Model loaded")
         AudioLog.modelLoading.info("Parakeet model loaded successfully")

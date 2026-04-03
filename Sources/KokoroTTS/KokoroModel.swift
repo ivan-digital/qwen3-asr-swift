@@ -2,221 +2,87 @@ import CoreML
 import Foundation
 import AudioCommon
 
-/// CoreML wrapper for Kokoro-82M 3-stage TTS inference.
+/// CoreML wrapper for Kokoro-82M end-to-end TTS inference.
 ///
-/// Stage 1 - Duration:  input_ids + attention_mask + ref_s + speed → pred_dur, d_transposed, t_en
-/// Stage 2 - Prosody:   en + s → F0_pred, N_pred
-/// Stage 3 - Decoder:   asr + F0_pred + N_pred + ref_s → audio
-///
-/// Between stages 1 and 2, Swift builds an alignment matrix from predicted durations.
+/// Loads a single pre-compiled `kokoro_5s.mlmodelc` that runs the full pipeline
+/// (BERT → duration → alignment → prosody → decoder) in one CoreML call.
 class KokoroNetwork {
 
-    private var durationModel: MLModel?
-    private var prosodyModel: MLModel?
-    private var decoderModels: [DecoderBucket: MLModel]
+    private let e2eModel: MLModel
 
-    /// Load CoreML models from cache directory.
+    /// Load E2E CoreML model from cache directory.
     init(directory: URL, computeUnits: MLComputeUnits = .all) throws {
         let config = MLModelConfiguration()
         config.computeUnits = computeUnits
 
-        // Load duration model
-        let durURL = directory.appendingPathComponent("duration.mlmodelc", isDirectory: true)
-        if FileManager.default.fileExists(atPath: durURL.path) {
-            durationModel = try MLModel(contentsOf: durURL, configuration: config)
-        }
-
-        // Load prosody model
-        let prosURL = directory.appendingPathComponent("prosody.mlmodelc", isDirectory: true)
-        if FileManager.default.fileExists(atPath: prosURL.path) {
-            prosodyModel = try MLModel(contentsOf: prosURL, configuration: config)
-        }
-
-        // Load decoder buckets
-        var decoders = [DecoderBucket: MLModel]()
-        for bucket in DecoderBucket.allCases {
-            let url = directory.appendingPathComponent("\(bucket.modelName).mlmodelc", isDirectory: true)
+        let e2eNames = ["kokoro_5s", "kokoro_10s", "kokoro_15s", "kokoro"]
+        var loaded: MLModel?
+        for name in e2eNames {
+            let url = directory.appendingPathComponent("\(name).mlmodelc", isDirectory: true)
             if FileManager.default.fileExists(atPath: url.path) {
-                decoders[bucket] = try MLModel(contentsOf: url, configuration: config)
+                loaded = try MLModel(contentsOf: url, configuration: config)
+                break
             }
         }
-        decoderModels = decoders
 
-        // Require at least the duration model
-        guard durationModel != nil else {
+        guard let model = loaded else {
             throw AudioModelError.modelLoadFailed(
                 modelId: "kokoro",
-                reason: "Duration model not found in \(directory.path)")
+                reason: "No Kokoro E2E model found in \(directory.path)")
         }
+        e2eModel = model
     }
 
-    /// Available decoder buckets.
-    var availableDecoderBuckets: [DecoderBucket] {
-        DecoderBucket.allCases.filter { decoderModels[$0] != nil }
+    // MARK: - E2E Inference
+
+    struct E2EOutput {
+        let audio: MLMultiArray
+        let audioLengthSamples: Int
+        let predDur: MLMultiArray
     }
 
-    /// Whether the 3-stage pipeline is available.
-    var hasThreeStagePipeline: Bool {
-        durationModel != nil && prosodyModel != nil && !decoderModels.isEmpty
-    }
-
-    // MARK: - Stage 1: Duration
-
-    struct DurationOutput {
-        let predDur: MLMultiArray     // [1, N] predicted durations
-        let dTransposed: MLMultiArray // [1, 640, N] prosody features
-        let tEn: MLMultiArray         // [1, 512, N] text encoding
-    }
-
-    func predictDuration(
+    func predictE2E(
         inputIds: MLMultiArray,
         attentionMask: MLMultiArray,
         refS: MLMultiArray,
-        speed: MLMultiArray
-    ) throws -> DurationOutput {
-        guard let model = durationModel else {
-            throw AudioModelError.inferenceFailed(
-                operation: "kokoro-duration", reason: "Duration model not loaded")
-        }
+        speed: MLMultiArray? = nil
+    ) throws -> E2EOutput {
+        let randomPhases = try MLMultiArray(shape: [1, 9], dataType: .float32)
+        for i in 0..<9 { randomPhases[i] = NSNumber(value: Float.random(in: 0..<1)) }
 
-        let input = try MLDictionaryFeatureProvider(dictionary: [
-            "input_ids": MLFeatureValue(multiArray: inputIds),
-            "attention_mask": MLFeatureValue(multiArray: attentionMask),
-            "ref_s": MLFeatureValue(multiArray: refS),
-            "speed": MLFeatureValue(multiArray: speed),
-        ])
-        let output = try model.prediction(from: input)
+        let speedInput = speed ?? {
+            let s = try! MLMultiArray(shape: [1], dataType: .float32)
+            s[0] = NSNumber(value: Float(1.0))
+            return s
+        }()
 
-        guard let predDur = output.featureValue(for: "pred_dur")?.multiArrayValue,
-              let dTransposed = output.featureValue(for: "d_transposed")?.multiArrayValue,
-              let tEn = output.featureValue(for: "t_en")?.multiArrayValue else {
-            throw AudioModelError.inferenceFailed(
-                operation: "kokoro-duration", reason: "Missing output tensors")
-        }
-        return DurationOutput(predDur: predDur, dTransposed: dTransposed, tEn: tEn)
-    }
-
-    // MARK: - Stage 2: Prosody
-
-    struct ProsodyOutput {
-        let f0Pred: MLMultiArray  // [1, F*2]
-        let nPred: MLMultiArray   // [1, F*2]
-    }
-
-    func predictProsody(
-        en: MLMultiArray,
-        s: MLMultiArray
-    ) throws -> ProsodyOutput {
-        guard let model = prosodyModel else {
-            throw AudioModelError.inferenceFailed(
-                operation: "kokoro-prosody", reason: "Prosody model not loaded")
-        }
-
-        let input = try MLDictionaryFeatureProvider(dictionary: [
-            "en": MLFeatureValue(multiArray: en),
-            "s": MLFeatureValue(multiArray: s),
-        ])
-        let output = try model.prediction(from: input)
-
-        guard let f0 = output.featureValue(for: "F0_pred")?.multiArrayValue,
-              let n = output.featureValue(for: "N_pred")?.multiArrayValue else {
-            throw AudioModelError.inferenceFailed(
-                operation: "kokoro-prosody", reason: "Missing F0/N output")
-        }
-        return ProsodyOutput(f0Pred: f0, nPred: n)
-    }
-
-    // MARK: - Stage 3: Decoder
-
-    func decode(
-        asr: MLMultiArray,
-        f0Pred: MLMultiArray,
-        nPred: MLMultiArray,
-        refS: MLMultiArray,
-        bucket: DecoderBucket
-    ) throws -> MLMultiArray {
-        guard let model = decoderModels[bucket] else {
-            throw AudioModelError.inferenceFailed(
-                operation: "kokoro-decoder",
-                reason: "No decoder model for bucket \(bucket.modelName)")
-        }
-
-        let input = try MLDictionaryFeatureProvider(dictionary: [
-            "asr": MLFeatureValue(multiArray: asr),
-            "F0_pred": MLFeatureValue(multiArray: f0Pred),
-            "N_pred": MLFeatureValue(multiArray: nPred),
-            "ref_s": MLFeatureValue(multiArray: refS),
-        ])
-        let output = try model.prediction(from: input)
-
-        guard let audio = output.featureValue(for: "audio")?.multiArrayValue else {
-            throw AudioModelError.inferenceFailed(
-                operation: "kokoro-decoder", reason: "Missing audio output")
-        }
-        return audio
-    }
-
-    // MARK: - Legacy single-model support
-
-    private var legacyModels: [ModelBucket: MLModel]?
-
-    /// Load legacy end-to-end models (v2.1/v2.4).
-    func loadLegacyModels(directory: URL, computeUnits: MLComputeUnits = .all) throws {
-        let config = MLModelConfiguration()
-        config.computeUnits = computeUnits
-
-        var loaded = [ModelBucket: MLModel]()
-        for bucket in ModelBucket.allCases {
-            let url = directory.appendingPathComponent("\(bucket.modelName).mlmodelc", isDirectory: true)
-            if FileManager.default.fileExists(atPath: url.path) {
-                loaded[bucket] = try MLModel(contentsOf: url, configuration: config)
-            }
-        }
-        if !loaded.isEmpty {
-            legacyModels = loaded
-        }
-    }
-
-    /// Available legacy model buckets.
-    var availableBuckets: [ModelBucket] {
-        ModelBucket.allCases.filter { legacyModels?[$0] != nil }
-    }
-
-    /// Legacy end-to-end prediction.
-    func predict(
-        inputIds: MLMultiArray,
-        attentionMask: MLMultiArray,
-        refS: MLMultiArray,
-        randomPhases: MLMultiArray,
-        bucket: ModelBucket
-    ) throws -> LegacyInferenceOutput {
-        guard let model = legacyModels?[bucket] else {
-            throw AudioModelError.inferenceFailed(
-                operation: "kokoro", reason: "No legacy model for bucket \(bucket.modelName)")
-        }
-
-        let input = try MLDictionaryFeatureProvider(dictionary: [
+        let dict: [String: MLFeatureValue] = [
             "input_ids": MLFeatureValue(multiArray: inputIds),
             "attention_mask": MLFeatureValue(multiArray: attentionMask),
             "ref_s": MLFeatureValue(multiArray: refS),
             "random_phases": MLFeatureValue(multiArray: randomPhases),
-        ])
-        let output = try model.prediction(from: input)
+            "speed": MLFeatureValue(multiArray: speedInput),
+        ]
 
-        guard let audio = output.featureValue(for: "audio")?.multiArrayValue else {
+        let input = try MLDictionaryFeatureProvider(dictionary: dict)
+        let output = try e2eModel.prediction(from: input)
+
+        guard let audio = output.featureValue(for: "audio")?.multiArrayValue,
+              let audioLen = output.featureValue(for: "audio_length_samples")?.multiArrayValue,
+              let predDur = output.featureValue(for: "pred_dur")?.multiArrayValue else {
             throw AudioModelError.inferenceFailed(
-                operation: "kokoro", reason: "Missing audio output")
+                operation: "kokoro-e2e", reason: "Missing output tensors")
         }
-        return LegacyInferenceOutput(
-            audio: audio,
-            audioLengthSamples: output.featureValue(for: "audio_length_samples")?.multiArrayValue,
-            predictedDurations: output.featureValue(for: "pred_dur")?.multiArrayValue
-        )
-    }
 
-    struct LegacyInferenceOutput {
-        let audio: MLMultiArray
-        let audioLengthSamples: MLMultiArray?
-        let predictedDurations: MLMultiArray?
+        let lengthSamples: Int
+        if audioLen.dataType == .float16 {
+            lengthSamples = Int(Float(audioLen.dataPointer.assumingMemoryBound(to: Float16.self).pointee))
+        } else if audioLen.dataType == .int32 {
+            lengthSamples = Int(audioLen.dataPointer.assumingMemoryBound(to: Int32.self).pointee)
+        } else {
+            lengthSamples = Int(audioLen.dataPointer.assumingMemoryBound(to: Float.self).pointee)
+        }
+
+        return E2EOutput(audio: audio, audioLengthSamples: lengthSamples, predDur: predDur)
     }
 }

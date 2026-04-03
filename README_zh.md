@@ -16,6 +16,7 @@
 - **Qwen3-TTS** — 文本转语音合成（最高质量，流式输出，自定义说话人，10 种语言）
 - **CosyVoice TTS** — 支持流式合成、声音克隆、多说话人对话和情感标签的文本转语音（9 种语言，DiT flow matching，CAM++ 说话人编码器）
 - **Kokoro TTS** — 端侧文本转语音（82M 参数，CoreML/神经引擎，54 种音色，iOS 就绪，10 种语言）
+- **Qwen3-TTS CoreML** — 文本转语音（0.6B，CoreML 6 模型流水线，W8A16，iOS/macOS）
 - **Qwen3.5-Chat** — 端侧 LLM 对话（0.8B，MLX + CoreML，INT4/INT8，DeltaNet 混合架构，流式 token）
 - **PersonaPlex** — 全双工语音到语音对话（7B，音频输入 → 音频输出，18 种预设音色）
 - **DeepFilterNet3** — 语音增强 / 噪声抑制（2.1M 参数，实时 48kHz）
@@ -90,7 +91,7 @@
 
 - **Qwen3-TTS**：最佳质量，流式合成 (~120ms)，9 种内置说话人，10 种语言，批量合成
 - **CosyVoice TTS**：流式合成 (~150ms)，9 种语言，声音克隆（CAM++ 说话人编码器），多说话人对话（`[S1] ... [S2] ...`），行内情感/风格标签（`(happy)`、`(whispers)`），DiT flow matching + HiFi-GAN 声码器
-- **Kokoro TTS**：轻量级 iOS 就绪 TTS（82M 参数），CoreML/神经引擎，54 种音色，10 种语言，非自回归（3 阶段流水线）
+- **Kokoro TTS**：轻量级 iOS 就绪 TTS（82M 参数），CoreML/神经引擎，54 种音色，10 种语言，端到端模型
 - **PersonaPlex**：全双工语音到语音（音频输入 → 音频输出），流式 (~2s 分块)，18 种预设音色，基于 Moshi 架构
 
 ## 安装
@@ -283,7 +284,7 @@ swift build -c release
 ...
 ```
 
-非自回归——3 阶段流水线，无采样循环。架构详情请参阅[强制对齐器](docs/inference/forced-aligner.md)。
+端到端模型，非自回归，无采样循环。架构详情请参阅[强制对齐器](docs/inference/forced-aligner.md)。
 
 ## 文本转语音 (TTS)——Swift 语音合成
 
@@ -672,7 +673,7 @@ let audio = try tts.synthesize(text: "Hello world", voice: "af_heart")
 try WAVWriter.write(samples: audio, sampleRate: 24000, to: outputURL)
 ```
 
-54 种预设音色覆盖 10 种语言。非自回归——3 阶段 CoreML 流水线，无采样循环。完全在神经引擎上运行，不占用 GPU。
+54 种预设音色覆盖 10 种语言。端到端 CoreML 模型，非自回归，无采样循环。完全在神经引擎上运行，不占用 GPU。
 
 ### Kokoro TTS 命令行
 
@@ -687,6 +688,15 @@ make build
 
 # 列出可用音色
 .build/release/audio kokoro --list-voices
+```
+
+### Qwen3-TTS CoreML
+
+CoreML 上运行的 6 模型自回归流水线。W8A16 调色板量化权重。
+
+```bash
+.build/release/audio qwen3-tts-coreml "Hello, how are you?" --output hello.wav
+.build/release/audio qwen3-tts-coreml "Guten Tag" --language german --output guten.wav
 ```
 
 ## Qwen3 Chat（端侧 LLM）
@@ -1048,7 +1058,7 @@ ws.send(JSON.stringify({
 | Kokoro-82M | CoreML (神经引擎) | ~1.4s (RTFx 0.7) | ~4.3s (RTFx 0.7) | ~8.6s (RTFx 0.7) | 不适用（非自回归） |
 | Apple `AVSpeechSynthesizer` | AVFoundation | 0.08s | 0.08s | 0.17s (RTF 0.02) | 不适用 |
 
-> Qwen3-TTS 生成自然、富有表现力的语音，具备韵律和情感，运行**快于实时**（RTF < 1.0）。流式合成在约 120ms 内输出首个音频分块。Kokoro-82M 完全在神经引擎上通过 3 阶段流水线运行（RTFx 约 0.7），非常适合 iOS。Apple 内置 TTS 速度更快但语音生硬单调。
+> Qwen3-TTS 生成自然、富有表现力的语音，具备韵律和情感，运行**快于实时**（RTF < 1.0）。流式合成在约 120ms 内输出首个音频分块。Kokoro-82M 完全在神经引擎上通过端到端模型运行（RTFx 约 0.7），非常适合 iOS。Apple 内置 TTS 速度更快但语音生硬单调。
 
 ### PersonaPlex（语音到语音）
 
@@ -1210,7 +1220,7 @@ PERSONAPLEX_E2E=1 swift test --filter PersonaPlexE2ETests
 |---|---|---|---|---|
 | **质量** | 神经网络，富有表现力 | 神经网络，自然 | 机械，单调 | 神经网络，最高质量 |
 | **运行方式** | 端侧 (MLX) | 端侧 (CoreML) | 端侧 | 仅云端 |
-| **流式** | 是（首块约 120ms） | 否（3 阶段流水线） | 否 | 是 |
+| **流式** | 是（首块约 120ms） | 否（端到端模型） | 否 | 是 |
 | **声音克隆** | 是 | 否 | 否 | 是 |
 | **音色** | 9 种内置 + 克隆任意 | 54 种预设 | ~50 种系统音色 | 1000+ |
 | **语言** | 10 | 10 | 60+ | 30+ |

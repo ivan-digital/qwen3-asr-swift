@@ -62,6 +62,7 @@ Project skills in `.claude/skills/`:
 - `Sources/Qwen3TTS/` — Text-to-speech (Qwen3-TTS)
 - `Sources/CosyVoiceTTS/` — Text-to-speech (CosyVoice3, streaming)
 - `Sources/KokoroTTS/` — Text-to-speech (Kokoro-82M, CoreML, iOS-ready)
+- `Sources/Qwen3TTSCoreML/` — Text-to-speech (Qwen3-TTS 0.6B, CoreML, 6-model pipeline)
 - `Sources/PersonaPlex/` — Speech-to-speech (PersonaPlex 7B, full-duplex)
 - `Sources/SpeechVAD/` — VAD (Silero + Pyannote), speaker diarization, speaker embedding (WeSpeaker)
 - `Sources/SpeechEnhancement/` — Noise suppression (DeepFilterNet3, CoreML)
@@ -72,12 +73,12 @@ Project skills in `.claude/skills/`:
 - `Sources/AudioCLI/` — CLI entry point (`audio` binary)
 - `Tests/` — Unit and integration tests
 - `scripts/` — Model conversion (PyTorch → MLX/CoreML), benchmarking
-- `Examples/` — Demo apps (PersonaPlexDemo, SpeechDemo)
+- `Examples/` — Demo apps (PersonaPlexDemo, SpeechDemo, iOSEchoDemo)
 
 ## Key Conventions
 
 - Swift 6, macOS 14+, Apple Silicon (M-series)
-- MLX for GPU inference (Metal), CoreML for Neural Engine (DeepFilterNet3, Kokoro, Silero VAD optional)
+- MLX for GPU inference (Metal), CoreML for Neural Engine (DeepFilterNet3, Kokoro, Qwen3-TTS, Silero VAD optional)
 - Models are downloaded from HuggingFace on first use, cached in `~/Library/Caches/qwen3-speech/`
 - All audio processing uses Float32 PCM, resampled to model-specific rates internally
 - `DiarizedSegment`, `SpeechSegment`, protocol types defined in `Sources/AudioCommon/Protocols.swift`
@@ -131,6 +132,7 @@ The `audio` binary is the main entry point:
 .build/release/audio embed-speaker voice.wav           # Speaker embedding
 .build/release/audio denoise noisy.wav                 # Speech enhancement
 .build/release/audio kokoro "Hello" --voice af_heart   # Kokoro TTS (iOS)
+.build/release/audio qwen3-tts-coreml "Hello"          # Qwen3-TTS CoreML (6-model pipeline)
 ```
 
 ## Documentation
@@ -221,3 +223,5 @@ Translated READMEs live in the repo root: `README_zh.md`, `README_ja.md`, `READM
 | Performance improvement | `benchmarks/` | Landing page perf section + relevant guide |
 | Build/install change | — | `/getting-started/index.html` |
 | New CLI command | Relevant inference doc | `/cli/index.html` + new guide + landing page |
+| Build/dependency change in demo | `Examples/<Demo>/README.md` | — |
+| New demo app | `Examples/<Demo>/README.md` | Landing page + relevant guide |

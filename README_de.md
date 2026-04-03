@@ -16,6 +16,7 @@ Spracherkennung, -synthese und -verständnis auf dem Gerät für Mac und iOS. L�
 - **Qwen3-TTS** — Sprachsynthese (höchste Qualität, Streaming, benutzerdefinierte Sprecher, 10 Sprachen)
 - **CosyVoice TTS** — Sprachsynthese mit Streaming, Stimmklonen, Mehrsprecherdialog und Emotions-Tags (9 Sprachen, DiT Flow Matching, CAM++ Sprecherencoder)
 - **Kokoro TTS** — Sprachsynthese auf dem Gerät (82M Parameter, CoreML/Neural Engine, 54 Stimmen, iOS-tauglich, 10 Sprachen)
+- **Qwen3-TTS CoreML** — Sprachsynthese (0.6B, CoreML-6-Modell-Pipeline, W8A16, iOS/macOS)
 - **Qwen3.5-Chat** — LLM-Chat auf dem Gerät (0.8B, MLX + CoreML, INT4 + CoreML INT8, DeltaNet-Hybrid, Token-Streaming)
 - **PersonaPlex** — Vollduplex-Sprache-zu-Sprache-Konversation (7B, Audio rein → Audio raus, 18 Stimmvoreinstellungen)
 - **DeepFilterNet3** — Sprachverbesserung / Rauschunterdrückung (2,1M Parameter, Echtzeit 48kHz)
@@ -90,7 +91,7 @@ Gewichtsspeicher ist der GPU- (MLX) oder ANE-Speicher (CoreML), der von Modellpa
 
 - **Qwen3-TTS**: Beste Qualität, Streaming (~120ms), 9 eingebaute Sprecher, 10 Sprachen, Stapelverarbeitung
 - **CosyVoice TTS**: Streaming (~150ms), 9 Sprachen, Stimmklonen (CAM++ Sprecherencoder), Mehrsprecherdialog (`[S1] ... [S2] ...`), Inline-Emotions-/Stil-Tags (`(happy)`, `(whispers)`), DiT Flow Matching + HiFi-GAN Vocoder
-- **Kokoro TTS**: Leichtgewichtige iOS-taugliche TTS (82M Parameter), CoreML/Neural Engine, 54 Stimmen, 10 Sprachen, nicht-autoregressiv (3-stufige Pipeline)
+- **Kokoro TTS**: Leichtgewichtige iOS-taugliche TTS (82M Parameter), CoreML/Neural Engine, 54 Stimmen, 10 Sprachen, End-to-End-Modell
 - **PersonaPlex**: Vollduplex-Sprache-zu-Sprache (Audio rein → Audio raus), Streaming (~2s-Blöcke), 18 Stimmvoreinstellungen, basiert auf der Moshi-Architektur
 
 ## Installation
@@ -283,7 +284,7 @@ Ausgabe:
 ...
 ```
 
-Nicht-autoregressiv — 3-stufige Pipeline, keine Sampling-Schleife. Siehe [Forced Aligner](docs/inference/forced-aligner.md) für Architekturdetails.
+End-to-End-Modell, nicht-autoregressiv, keine Sampling-Schleife. Siehe [Forced Aligner](docs/inference/forced-aligner.md) für Architekturdetails.
 
 ## Text-zu-Sprache (TTS) — Sprachsynthese in Swift
 
@@ -672,7 +673,7 @@ let audio = try tts.synthesize(text: "Hello world", voice: "af_heart")
 try WAVWriter.write(samples: audio, sampleRate: 24000, to: outputURL)
 ```
 
-54 voreingestellte Stimmen in 10 Sprachen. Nicht-autoregressiv — 3-stufige CoreML-Pipeline, keine Sampling-Schleife. Läuft auf der Neural Engine, entlastet die GPU vollständig.
+54 voreingestellte Stimmen in 10 Sprachen. End-to-End-CoreML-Modell, nicht-autoregressiv, keine Sampling-Schleife. Läuft auf der Neural Engine, entlastet die GPU vollständig.
 
 ### Kokoro TTS CLI
 
@@ -687,6 +688,15 @@ make build
 
 # Verfügbare Stimmen auflisten
 .build/release/audio kokoro --list-voices
+```
+
+### Qwen3-TTS CoreML
+
+Autoregressive 6-Modell-Pipeline auf CoreML. W8A16-palettierte Gewichte.
+
+```bash
+.build/release/audio qwen3-tts-coreml "Hello, how are you?" --output hello.wav
+.build/release/audio qwen3-tts-coreml "Guten Tag" --language german --output guten.wav
 ```
 
 ## Qwen3 Chat (LLM auf dem Gerät)
@@ -1048,7 +1058,7 @@ Der Server ist ein separates `AudioServer`-Modul und ein eigenständiges `audio-
 | Kokoro-82M | CoreML (Neural Engine) | ~1.4s (RTFx 0.7) | ~4.3s (RTFx 0.7) | ~8.6s (RTFx 0.7) | N/A (nicht-autoregressiv) |
 | Apple `AVSpeechSynthesizer` | AVFoundation | 0.08s | 0.08s | 0.17s (RTF 0.02) | N/A |
 
-> Qwen3-TTS erzeugt natürliche, ausdrucksstarke Sprache mit Prosodie und Emotion und läuft **schneller als Echtzeit** (RTF < 1.0). Streaming-Synthese liefert den ersten Audioblock in ~120ms. Kokoro-82M läuft vollständig auf der Neural Engine mit einer 3-stufigen Pipeline (RTFx ~0.7), ideal für iOS. Apples eingebaute TTS ist schneller, erzeugt aber roboterhafte, monotone Sprache.
+> Qwen3-TTS erzeugt natürliche, ausdrucksstarke Sprache mit Prosodie und Emotion und läuft **schneller als Echtzeit** (RTF < 1.0). Streaming-Synthese liefert den ersten Audioblock in ~120ms. Kokoro-82M läuft vollständig auf der Neural Engine mit einem End-to-End-Modell (RTFx ~0.7), ideal für iOS. Apples eingebaute TTS ist schneller, erzeugt aber roboterhafte, monotone Sprache.
 
 ### PersonaPlex (Sprache-zu-Sprache)
 
@@ -1210,7 +1220,7 @@ PERSONAPLEX_E2E=1 swift test --filter PersonaPlexE2ETests
 |---|---|---|---|---|
 | **Qualität** | Neural, ausdrucksstark | Neural, natürlich | Roboterhaft, monoton | Neural, höchste Qualität |
 | **Laufzeitumgebung** | Auf dem Gerät (MLX) | Auf dem Gerät (CoreML) | Auf dem Gerät | Nur Cloud |
-| **Streaming** | Ja (~120ms erster Block) | Nein (3-stufige Pipeline) | Nein | Ja |
+| **Streaming** | Ja (~120ms erster Block) | Nein (End-to-End-Modell) | Nein | Ja |
 | **Stimmklonen** | Ja | Nein | Nein | Ja |
 | **Stimmen** | 9 eingebaut + beliebige klonen | 54 voreingestellte Stimmen | ~50 Systemstimmen | 1000+ |
 | **Sprachen** | 10 | 10 | 60+ | 30+ |

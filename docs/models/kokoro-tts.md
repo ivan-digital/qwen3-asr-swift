@@ -1,13 +1,13 @@
 # Kokoro TTS Architecture
 
-Kokoro-82M is a non-autoregressive text-to-speech model based on [StyleTTS 2](https://github.com/yl4579/StyleTTS2) with an ISTFTNet vocoder. It runs on the Neural Engine via a 3-stage CoreML pipeline, producing 24 kHz speech.
+Kokoro-82M is a non-autoregressive text-to-speech model based on [StyleTTS 2](https://github.com/yl4579/StyleTTS2) with an ISTFTNet vocoder. It runs on the Neural Engine via an end-to-end CoreML model, producing 24 kHz speech.
 
 ## Overview
 
 - **Parameters**: 82M
 - **Backend**: CoreML (Neural Engine)
 - **Output**: 24 kHz mono Float32 PCM
-- **Inference**: Non-autoregressive, 3-stage pipeline
+- **Inference**: Non-autoregressive, end-to-end model
 - **Voices**: 54 presets across 10 languages
 - **License**: Apache-2.0
 
@@ -169,7 +169,7 @@ python scripts/convert_kokoro_coreml.py --output /tmp/kokoro-coreml --quantize i
 ```
 Sources/KokoroTTS/
   Configuration.swift      Model config, phoneme/decoder bucket selection
-  KokoroModel.swift        3-stage CoreML model loading and inference
+  KokoroModel.swift        CoreML model loading (E2E preferred, 3-stage fallback)
   KokoroTTS.swift          High-level API (fromPretrained, synthesize, alignment)
   Phonemizer.swift         Text → phoneme tokenization
   KokoroTTS+Protocols.swift Protocol conformance

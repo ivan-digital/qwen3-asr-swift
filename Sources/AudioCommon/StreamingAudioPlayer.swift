@@ -272,19 +272,68 @@ public final class StreamingAudioPlayer: @unchecked Sendable {
         playbackStarted = true
         let hasEngine = sourceNode != nil
         let empty = (ringBuffer?.availableToRead ?? 0) == 0
+        let written = totalWritten
         lock.unlock()
 
         // No engine or nothing was written — fire immediately
-        if !hasEngine || (empty && totalWritten == 0) {
+        if !hasEngine || (empty && written == 0) {
             guard !playbackFinishedFired else { return }
             playbackFinishedFired = true
             isPlaying = false
             onPlaybackFinished?()
+            return
         }
+
+        // Start polling: the render callback normally fires onPlaybackFinished
+        // when the buffer drains, but if the render thread isn't running (e.g.
+        // simulator, or audio route change), we poll the buffer to detect
+        // completion reliably. Works on both device and simulator.
+        startCompletionPolling()
+    }
+
+    private var completionPollTimer: DispatchSourceTimer?
+
+    private func startCompletionPolling() {
+        completionPollTimer?.cancel()
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now() + 0.2, repeating: 0.2)
+        timer.setEventHandler { [weak self] in
+            guard let self else { return }
+            // Already fired by render callback — stop polling
+            guard !self.playbackFinishedFired else {
+                self.completionPollTimer?.cancel()
+                self.completionPollTimer = nil
+                return
+            }
+            self.lock.lock()
+            let complete = self.generationComplete
+            let remaining = self.ringBuffer?.availableToRead ?? 0
+            let read = self.totalRead
+            let written = self.totalWritten
+            self.lock.unlock()
+
+            // All samples consumed (or render thread never started reading)
+            let drained = remaining == 0 && read >= written && written > 0
+            // Render thread never started — audio engine not running
+            let stalled = complete && read == 0 && written > 0
+
+            if complete && (drained || stalled) {
+                self.completionPollTimer?.cancel()
+                self.completionPollTimer = nil
+                guard !self.playbackFinishedFired else { return }
+                self.playbackFinishedFired = true
+                self.isPlaying = false
+                self.onPlaybackFinished?()
+            }
+        }
+        completionPollTimer = timer
+        timer.resume()
     }
 
     /// Reset for a new generation cycle.
     public func resetGeneration() {
+        completionPollTimer?.cancel()
+        completionPollTimer = nil
         lock.lock()
         generationComplete = false
         playbackFinishedFired = false
@@ -318,6 +367,8 @@ public final class StreamingAudioPlayer: @unchecked Sendable {
 
     /// Stop and release resources.
     public func stop() {
+        completionPollTimer?.cancel()
+        completionPollTimer = nil
         if let eng = engine, let node = sourceNode {
             eng.disconnectNodeOutput(node)
             eng.detach(node)

@@ -81,12 +81,18 @@ Key implementation details:
 
 ## Build & Run
 
-**Important**: The metallib must be built from within the `Examples/PersonaPlexDemo` directory, not from the repo root, to use the correct MLX version.
+**Step 1**: Build from the repo root first (compiles library + metallib):
+
+```bash
+cd speech-swift   # repo root
+make build
+```
+
+**Step 2**: Build and run the demo:
 
 ```bash
 cd Examples/PersonaPlexDemo
 swift build -c release --disable-sandbox
-../../scripts/build_mlx_metallib.sh release
 ```
 
 ### As a macOS app (recommended)
@@ -96,13 +102,12 @@ SwiftUI requires an `.app` bundle for microphone permissions and proper window m
 ```bash
 cd Examples/PersonaPlexDemo
 swift build -c release --disable-sandbox
-../../scripts/build_mlx_metallib.sh release
 
 APP="/tmp/PersonaPlexDemo.app"
 rm -rf "$APP" && mkdir -p "$APP/Contents/MacOS"
 
 cp .build/release/PersonaPlexDemo "$APP/Contents/MacOS/"
-cp .build/release/mlx.metallib "$APP/Contents/MacOS/"
+cp ../../.build/release/mlx.metallib "$APP/Contents/MacOS/"
 
 cat > "$APP/Contents/Info.plist" << 'EOF'
 <?xml version="1.0" encoding="UTF-8"?>

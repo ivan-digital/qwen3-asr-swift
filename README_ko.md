@@ -16,6 +16,7 @@ Mac과 iOS를 위한 온디바이스 음성 인식, 합성 및 이해. Apple Sil
 - **Qwen3-TTS** — 텍스트-음성 변환 (최고 품질, 스트리밍, 커스텀 화자, 10개 언어)
 - **CosyVoice TTS** — 스트리밍, 음성 복제, 다화자 대화, 감정 태그를 지원하는 텍스트-음성 변환 (9개 언어, DiT flow matching, CAM++ 화자 인코더)
 - **Kokoro TTS** — 온디바이스 텍스트-음성 변환 (82M 파라미터, CoreML/Neural Engine, 54개 음색, iOS 지원, 10개 언어)
+- **Qwen3-TTS CoreML** — 텍스트-음성 변환 (0.6B, CoreML 6모델 파이프라인, W8A16, iOS/macOS)
 - **Qwen3.5-Chat** — 온디바이스 LLM 채팅 (0.8B, MLX + CoreML, INT4 + CoreML INT8, DeltaNet 하이브리드, 스트리밍 토큰)
 - **PersonaPlex** — 전이중 음성-음성 대화 (7B, 오디오 입력 → 오디오 출력, 18개 음색 프리셋)
 - **DeepFilterNet3** — 음성 향상 / 노이즈 억제 (2.1M 파라미터, 실시간 48kHz)
@@ -90,7 +91,7 @@ Mac과 iOS를 위한 온디바이스 음성 인식, 합성 및 이해. Apple Sil
 
 - **Qwen3-TTS**: 최고 품질, 스트리밍 (~120ms), 9개 내장 화자, 10개 언어, 배치 합성
 - **CosyVoice TTS**: 스트리밍 (~150ms), 9개 언어, 음성 복제 (CAM++ 화자 인코더), 다화자 대화 (`[S1] ... [S2] ...`), 인라인 감정/스타일 태그 (`(happy)`, `(whispers)`), DiT flow matching + HiFi-GAN 보코더
-- **Kokoro TTS**: iOS에 적합한 경량 TTS (82M 파라미터), CoreML/Neural Engine, 54개 음색, 10개 언어, 비자기회귀 (3단계 파이프라인)
+- **Kokoro TTS**: iOS에 적합한 경량 TTS (82M 파라미터), CoreML/Neural Engine, 54개 음색, 10개 언어, 엔드투엔드 모델
 - **PersonaPlex**: 전이중 음성-음성 (오디오 입력 → 오디오 출력), 스트리밍 (~2초 청크), 18개 음색 프리셋, Moshi 아키텍처 기반
 
 ## 설치
@@ -283,7 +284,7 @@ swift build -c release
 ...
 ```
 
-비자기회귀 — 3단계 파이프라인, 샘플링 루프 없음. 아키텍처 상세 내용은 [Forced Aligner](docs/inference/forced-aligner.md)를 참조하세요.
+엔드투엔드 모델, 비자기회귀, 샘플링 루프 없음. 아키텍처 상세 내용은 [Forced Aligner](docs/inference/forced-aligner.md)를 참조하세요.
 
 ## 텍스트-음성 변환 (TTS) — Swift로 음성 생성하기
 
@@ -672,7 +673,7 @@ let audio = try tts.synthesize(text: "Hello world", voice: "af_heart")
 try WAVWriter.write(samples: audio, sampleRate: 24000, to: outputURL)
 ```
 
-10개 언어에 걸쳐 54개 프리셋 음색을 제공합니다. 비자기회귀 — 3단계 CoreML 파이프라인, 샘플링 루프 없음. Neural Engine에서 실행되어 GPU를 완전히 확보합니다.
+10개 언어에 걸쳐 54개 프리셋 음색을 제공합니다. 엔드투엔드 CoreML 모델, 비자기회귀, 샘플링 루프 없음. Neural Engine에서 실행되어 GPU를 완전히 확보합니다.
 
 ### Kokoro TTS CLI
 
@@ -687,6 +688,15 @@ make build
 
 # 사용 가능한 음색 목록
 .build/release/audio kokoro --list-voices
+```
+
+### Qwen3-TTS CoreML
+
+CoreML에서 실행되는 6모델 자기회귀 파이프라인. W8A16 팔레타이즈 가중치.
+
+```bash
+.build/release/audio qwen3-tts-coreml "Hello, how are you?" --output hello.wav
+.build/release/audio qwen3-tts-coreml "Guten Tag" --language german --output guten.wav
 ```
 
 ## Qwen3 Chat (온디바이스 LLM)
@@ -1048,7 +1058,7 @@ ws.send(JSON.stringify({
 | Kokoro-82M | CoreML (Neural Engine) | ~1.4s (RTFx 0.7) | ~4.3s (RTFx 0.7) | ~8.6s (RTFx 0.7) | N/A (비자기회귀) |
 | Apple `AVSpeechSynthesizer` | AVFoundation | 0.08s | 0.08s | 0.17s (RTF 0.02) | N/A |
 
-> Qwen3-TTS는 운율과 감정이 담긴 자연스럽고 표현력 있는 음성을 생성하며, **실시간보다 빠르게** (RTF < 1.0) 실행됩니다. 스트리밍 합성은 첫 오디오 청크를 ~120ms에 전달합니다. Kokoro-82M은 3단계 파이프라인으로 Neural Engine에서 완전히 실행됩니다 (RTFx ~0.7), iOS에 이상적입니다. Apple 내장 TTS는 더 빠르지만 기계적이고 단조로운 음성을 생성합니다.
+> Qwen3-TTS는 운율과 감정이 담긴 자연스럽고 표현력 있는 음성을 생성하며, **실시간보다 빠르게** (RTF < 1.0) 실행됩니다. 스트리밍 합성은 첫 오디오 청크를 ~120ms에 전달합니다. Kokoro-82M은 엔드투엔드 모델로 Neural Engine에서 완전히 실행됩니다 (RTFx ~0.7), iOS에 이상적입니다. Apple 내장 TTS는 더 빠르지만 기계적이고 단조로운 음성을 생성합니다.
 
 ### PersonaPlex (음성-음성)
 
@@ -1210,7 +1220,7 @@ PERSONAPLEX_E2E=1 swift test --filter PersonaPlexE2ETests
 |---|---|---|---|---|
 | **품질** | 뉴럴, 표현력 있음 | 뉴럴, 자연스러움 | 기계적, 단조로움 | 뉴럴, 최고 품질 |
 | **런타임** | 온디바이스 (MLX) | 온디바이스 (CoreML) | 온디바이스 | 클라우드 전용 |
-| **스트리밍** | 예 (첫 청크 ~120ms) | 아니오 (3단계 파이프라인) | 아니오 | 예 |
+| **스트리밍** | 예 (첫 청크 ~120ms) | 아니오 (엔드투엔드 모델) | 아니오 | 예 |
 | **음성 복제** | 예 | 아니오 | 아니오 | 예 |
 | **음색** | 9개 내장 + 아무 음성 복제 | 54개 프리셋 음색 | ~50개 시스템 음색 | 1000+ |
 | **언어** | 10 | 10 | 60+ | 30+ |

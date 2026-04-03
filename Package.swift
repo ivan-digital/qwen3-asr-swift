@@ -49,6 +49,10 @@ let package = Package(
             targets: ["KokoroTTS"]
         ),
         .library(
+            name: "Qwen3TTSCoreML",
+            targets: ["Qwen3TTSCoreML"]
+        ),
+        .library(
             name: "Qwen3Chat",
             targets: ["Qwen3Chat"]
         ),
@@ -154,8 +158,8 @@ let package = Package(
         ),
         .binaryTarget(
             name: "CSpeechCore",
-            url: "https://github.com/soniqo/speech-core/releases/download/v0.0.4/SpeechCore.xcframework.zip",
-            checksum: "5e48d536134d147ac0162c67df39d59a60bdfc0f9c2793e81e4bb6046f06d15f"
+            url: "https://github.com/soniqo/speech-core/releases/download/v0.0.5/SpeechCore.xcframework.zip",
+            checksum: "ec87ae9191875390e19cd2aa74bfdbd8f314c4a0e83dfe012eed4d1ca30c4a5d"
         ),
         .target(
             name: "SpeechCore",
@@ -299,6 +303,16 @@ let package = Package(
             name: "AudioServerTests",
             dependencies: [
                 "AudioServer"
+            ]
+        ),
+        .testTarget(
+            name: "SpeechCoreTests",
+            dependencies: [
+                "SpeechCore",
+                "AudioCommon",
+                "SpeechVAD",
+                "KokoroTTS",
+                "ParakeetASR"
             ]
         )
     ]
