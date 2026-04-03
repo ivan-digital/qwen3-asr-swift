@@ -36,16 +36,15 @@ struct TDTGreedyDecoder {
     let decoder: MLModel
     let joint: MLModel
 
-    /// Decode encoded audio representations into token IDs.
+    /// Decode encoded audio representations into token IDs with per-token log-probabilities.
     ///
     /// - Parameters:
     ///   - encoded: Encoder output as MLMultiArray, shape `[1, T, encoderHidden]`
     ///   - encodedLength: Number of valid encoder frames
-    /// - Returns: Tuple of (token IDs, confidence 0.0–1.0)
-    func decode(encoded: MLMultiArray, encodedLength: Int) throws -> (tokens: [Int], confidence: Float) {
+    /// - Returns: Tuple of (token IDs, per-token log-probs, overall confidence 0.0–1.0)
+    func decode(encoded: MLMultiArray, encodedLength: Int) throws -> (tokens: [Int], tokenLogProbs: [Float], confidence: Float) {
         var tokens = [Int]()
-        var logProbSum: Float = 0
-        var logProbCount: Int = 0
+        var tokenLogProbs = [Float]()
 
         // Initialize LSTM state
         let hShape = [config.decoderLayers, 1, config.decoderHidden] as [NSNumber]
@@ -105,10 +104,9 @@ struct TDTGreedyDecoder {
             } else {
                 if tokenId >= firstTextTokenId {
                     tokens.append(tokenId)
-                    // Accumulate log-prob for confidence: log(softmax(logit_max))
-                    let logitMax = tokenLogits[tokenId].floatValue
-                    logProbSum += logitMax
-                    logProbCount += 1
+                    // Compute log-softmax: log_prob = logit[id] - log(sum(exp(logits)))
+                    let logProb = logSoftmax(tokenLogits, tokenId: tokenId, count: config.vocabSize + 1, floatBuf: argmaxBuf)
+                    tokenLogProbs.append(logProb)
                 }
 
                 let durationIdx = argmax(durationLogits, count: config.numDurationBins, floatBuf: nil)
@@ -129,18 +127,46 @@ struct TDTGreedyDecoder {
             }
         }
 
-        // Confidence: sigmoid of mean logit (maps to 0–1 range)
+        // Overall confidence: exp(mean log-prob) maps to 0–1
         let confidence: Float
-        if logProbCount > 0 {
-            let meanLogit = logProbSum / Float(logProbCount)
-            confidence = 1.0 / (1.0 + exp(-meanLogit * 0.1))  // scaled sigmoid
+        if !tokenLogProbs.isEmpty {
+            let meanLogProb = tokenLogProbs.reduce(0, +) / Float(tokenLogProbs.count)
+            confidence = min(1.0, exp(meanLogProb))
         } else {
             confidence = 0.0
         }
-        return (tokens, confidence)
+        return (tokens, tokenLogProbs, confidence)
     }
 
     // MARK: - Array Operations
+
+    /// Compute log-softmax for a specific token: log_prob = logit[id] - log(sum(exp(logits)))
+    /// Uses vDSP for efficient log-sum-exp over the vocabulary.
+    private func logSoftmax(_ array: MLMultiArray, tokenId: Int, count: Int, floatBuf: UnsafeMutablePointer<Float>) -> Float {
+        let ptr = array.dataPointer.assumingMemoryBound(to: Float16.self)
+        for i in 0..<count { floatBuf[i] = Float(ptr[i]) }
+
+        // log-sum-exp: find max, subtract, exp, sum, log, add max back
+        var maxVal: Float = 0
+        var maxIdx: vDSP_Length = 0
+        vDSP_maxvi(floatBuf, 1, &maxVal, &maxIdx, vDSP_Length(count))
+
+        // Subtract max for numerical stability
+        var negMax = -maxVal
+        vDSP_vsadd(floatBuf, 1, &negMax, floatBuf, 1, vDSP_Length(count))
+
+        // exp in-place
+        var n = Int32(count)
+        vvexpf(floatBuf, floatBuf, &n)
+
+        // sum
+        var sumExp: Float = 0
+        vDSP_sve(floatBuf, 1, &sumExp, vDSP_Length(count))
+
+        let logSumExp = log(sumExp) + maxVal
+        let logit = Float(ptr[tokenId])
+        return logit - logSumExp
+    }
 
     /// Copy encoder frame at time `t` into the slice buffer using memcpy.
     private func copyEncoderFrame(from encoded: MLMultiArray, at t: Int, to slice: MLMultiArray) {

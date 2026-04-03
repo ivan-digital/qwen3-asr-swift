@@ -6,18 +6,15 @@ import AudioCommon
 ///
 /// Uses a FastConformer encoder with a Token-and-Duration Transducer (TDT) decoder.
 /// Mel preprocessing is done in Swift using Accelerate/vDSP. The encoder, decoder, and
-/// joint network run on CoreML with INT4-quantized encoder for Neural Engine acceleration.
+/// joint network run on CoreML with INT8-quantized encoder for Neural Engine acceleration.
 ///
 /// - Warning: This class is not thread-safe. Create separate instances for concurrent use.
 public class ParakeetASRModel {
     /// Model configuration.
     public let config: ParakeetConfig
 
-    /// Default HuggingFace model ID (INT4 quantized encoder).
-    public static let defaultModelId = "aufklarer/Parakeet-TDT-v3-CoreML-INT4"
-
-    /// INT8 quantized variant (higher accuracy, larger size).
-    public static let int8ModelId = "aufklarer/Parakeet-TDT-v3-CoreML-INT8"
+    /// Default HuggingFace model ID (INT8 quantized encoder).
+    public static let defaultModelId = "aufklarer/Parakeet-TDT-v3-CoreML-INT8"
 
     /// Whether the model is loaded and ready for inference.
     var _isLoaded = true
@@ -29,6 +26,8 @@ public class ParakeetASRModel {
     private let vocabulary: ParakeetVocabulary
     /// Confidence from the last transcription (0.0–1.0).
     public private(set) var lastConfidence: Float = 0
+    /// Per-word confidence scores from the last transcription.
+    public private(set) var lastWordConfidences: [WordConfidence]?
 
     private init(
         config: ParakeetConfig,
@@ -96,12 +95,13 @@ public class ParakeetASRModel {
         // Step 3: TDT greedy decode
         let tdtDecoder = TDTGreedyDecoder(config: config, decoder: decoder!, joint: joint!)
         let tDec0 = CFAbsoluteTimeGetCurrent()
-        let (tokenIds, confidence) = try tdtDecoder.decode(encoded: encoded, encodedLength: encodedLength)
+        let (tokenIds, tokenLogProbs, confidence) = try tdtDecoder.decode(encoded: encoded, encodedLength: encodedLength)
         let tDec1 = CFAbsoluteTimeGetCurrent()
 
-        // Step 4: Vocabulary decode
+        // Step 4: Vocabulary decode with per-word confidence
         let text = vocabulary.decode(tokenIds)
         lastConfidence = confidence
+        lastWordConfidences = vocabulary.decodeWords(tokenIds, logProbs: tokenLogProbs)
 
         let melMs = (tMel1 - tMel0) * 1000
         let encMs = (tEnc1 - tEnc0) * 1000

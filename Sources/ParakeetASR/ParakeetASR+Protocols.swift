@@ -17,7 +17,7 @@ extension ParakeetASRModel: SpeechRecognitionModel {
         let text = transcribe(audio: audio, sampleRate: sampleRate, language: language)
         guard !text.isEmpty else { return TranscriptionResult(text: text) }
         let ttsLang = detectLanguage(text)
-        return TranscriptionResult(text: text, language: ttsLang, confidence: lastConfidence)
+        return TranscriptionResult(text: text, language: ttsLang, confidence: lastConfidence, words: lastWordConfidences)
     }
 
     /// Use Apple NLLanguageRecognizer to detect language, mapped to TTS language name.

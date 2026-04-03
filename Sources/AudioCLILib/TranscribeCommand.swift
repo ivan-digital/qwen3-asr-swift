@@ -204,12 +204,9 @@ public struct TranscribeCommand: ParsableCommand {
             let duration = Float(audio.count) / 16000.0
             print("  Loaded \(audio.count) samples (\(String(format: "%.2f", duration))s)")
 
-            let parakeetModelId = model.lowercased().contains("8")
-                ? ParakeetASRModel.int8ModelId
-                : ParakeetASRModel.defaultModelId
-            print("Loading Parakeet-TDT model: \(parakeetModelId)")
+            print("Loading Parakeet-TDT model: \(ParakeetASRModel.defaultModelId)")
             let parakeetModel = try await ParakeetASRModel.fromPretrained(
-                modelId: parakeetModelId, progressHandler: reportProgress)
+                progressHandler: reportProgress)
 
             print("Warming up CoreML...")
             let warmupStart = CFAbsoluteTimeGetCurrent()

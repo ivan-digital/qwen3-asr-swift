@@ -44,7 +44,7 @@ Consultez la [discussion Feuille de route](https://github.com/soniqo/speech-swif
 |--------|-------|-----------|---------|---------|
 | Qwen3-ASR-0.6B | Parole → Texte | Non | 52 langues | [4-bit](https://huggingface.co/aufklarer/Qwen3-ASR-0.6B-MLX-4bit) 680 MB · [8-bit](https://huggingface.co/aufklarer/Qwen3-ASR-0.6B-MLX-8bit) 1.0 GB · [CoreML](https://huggingface.co/aufklarer/Qwen3-ASR-CoreML) 180 MB |
 | Qwen3-ASR-1.7B | Parole → Texte | Non | 52 langues | [4-bit](https://huggingface.co/aufklarer/Qwen3-ASR-1.7B-MLX-4bit) 2.1 GB · [8-bit](https://huggingface.co/aufklarer/Qwen3-ASR-1.7B-MLX-8bit) 3.2 GB |
-| Parakeet-TDT-0.6B | Parole → Texte | Non | 25 langues europeennes | [CoreML INT4](https://huggingface.co/aufklarer/Parakeet-TDT-v3-CoreML-INT4) 315 MB · [CoreML INT8](https://huggingface.co/aufklarer/Parakeet-TDT-v3-CoreML-INT8) 500 MB |
+| Parakeet-TDT-0.6B | Parole → Texte | Non | 25 langues europeennes | [CoreML INT8](https://huggingface.co/aufklarer/Parakeet-TDT-v3-CoreML-INT8) 500 MB |
 | Qwen3-ForcedAligner-0.6B | Audio + Texte → Horodatages | Non | Multi | [4-bit](https://huggingface.co/aufklarer/Qwen3-ForcedAligner-0.6B-4bit) 979 MB · [8-bit](https://huggingface.co/aufklarer/Qwen3-ForcedAligner-0.6B-8bit) 1.4 GB · [CoreML INT4](https://huggingface.co/aufklarer/Qwen3-ForcedAligner-0.6B-CoreML-INT4) 630 MB · [CoreML INT8](https://huggingface.co/aufklarer/Qwen3-ForcedAligner-0.6B-CoreML-INT8) 1.0 GB |
 | Qwen3-TTS-0.6B Base | Texte → Parole | Oui (~120ms) | 10 langues | [4-bit](https://huggingface.co/aufklarer/Qwen3-TTS-12Hz-0.6B-Base-MLX-4bit) 1.7 GB · [8-bit](https://huggingface.co/aufklarer/Qwen3-TTS-12Hz-0.6B-Base-MLX-8bit) 2.4 GB · [CoreML](https://huggingface.co/aufklarer/Qwen3-TTS-CoreML) 1.0 GB |
 | Qwen3-TTS-0.6B CustomVoice | Texte → Parole | Oui (~120ms) | 10 langues | [4-bit](https://huggingface.co/aufklarer/Qwen3-TTS-12Hz-0.6B-CustomVoice-MLX-4bit) 1.7 GB |
@@ -1028,7 +1028,7 @@ Le serveur est un module `AudioServer` separe et un executable `audio-server` --
 | Qwen3-ASR-0.6B (4-bit) | MLX | ~0.06 | ~0.6s |
 | Qwen3-ASR-0.6B (INT8) | CoreML + MLX | ~0.09 | ~0.9s |
 | Qwen3-ASR-1.7B (8-bit) | MLX | ~0.11 | ~1.1s |
-| Parakeet-TDT-0.6B (INT4) | CoreML (Neural Engine) | ~0.12 a froid, ~0.03 a chaud | ~1.2s / ~0.3s |
+| Parakeet-TDT-0.6B (INT8) | CoreML (Neural Engine) | ~0.09 a froid, ~0.03 a chaud | ~0.9s / ~0.3s |
 | Whisper-large-v3 | whisper.cpp (Q5_0) | ~0.10 | ~1.0s |
 | Whisper-small | whisper.cpp (Q5_0) | ~0.04 | ~0.4s |
 

@@ -27,8 +27,7 @@ final class ParakeetASRTests: XCTestCase {
     }
 
     func testModelVariantConstants() {
-        XCTAssertEqual(ParakeetASRModel.defaultModelId, "aufklarer/Parakeet-TDT-v3-CoreML-INT4")
-        XCTAssertEqual(ParakeetASRModel.int8ModelId, "aufklarer/Parakeet-TDT-v3-CoreML-INT8")
+        XCTAssertEqual(ParakeetASRModel.defaultModelId, "aufklarer/Parakeet-TDT-v3-CoreML-INT8")
     }
 
     func testConfigCodable() throws {
@@ -101,7 +100,11 @@ final class ParakeetASRTests: XCTestCase {
         XCTAssertEqual(text, "")
     }
 
-    // MARK: - Integration Tests
+}
+
+// MARK: - E2E Tests (require model download)
+
+final class E2EParakeetASRTests: XCTestCase {
 
     func testModelLoading() async throws {
         // Skip if model is not cached locally
@@ -153,6 +156,94 @@ final class ParakeetASRTests: XCTestCase {
         XCTAssertTrue(lower.contains("guarantee"), "Should contain 'guarantee', got: \(result)")
         XCTAssertTrue(lower.contains("replacement"), "Should contain 'replacement', got: \(result)")
         XCTAssertTrue(lower.contains("shipped"), "Should contain 'shipped', got: \(result)")
+    }
+
+    func testWordConfidenceFromRealAudio() async throws {
+        let modelId = ParakeetASRModel.defaultModelId
+        let cacheDir: URL
+        do {
+            cacheDir = try HuggingFaceDownloader.getCacheDirectory(for: modelId)
+        } catch {
+            throw XCTSkip("Cannot resolve cache directory: \(error)")
+        }
+
+        let encoderPath = cacheDir.appendingPathComponent("encoder.mlmodelc")
+        guard FileManager.default.fileExists(atPath: encoderPath.path) else {
+            throw XCTSkip("Parakeet model not cached at \(cacheDir.path)")
+        }
+
+        let model = try await ParakeetASRModel.fromPretrained(modelId: modelId)
+
+        guard let audioURL = Bundle.module.url(forResource: "test_audio", withExtension: "wav") else {
+            throw XCTSkip("test_audio.wav not found in test resources")
+        }
+
+        let audio = try AudioFileLoader.load(url: audioURL, targetSampleRate: 16000)
+        let result = model.transcribeWithLanguage(audio: audio, sampleRate: 16000, language: nil)
+
+        // Verify overall confidence
+        XCTAssertGreaterThan(result.confidence, 0.5, "Overall confidence should be high for clean English audio")
+        XCTAssertLessThanOrEqual(result.confidence, 1.0, "Confidence must be <= 1.0")
+
+        // Verify per-word confidences exist
+        XCTAssertNotNil(result.words, "Should return per-word confidences")
+        guard let words = result.words else { return }
+
+        XCTAssertGreaterThan(words.count, 3, "Should have multiple words")
+        print("Word confidences:")
+        for w in words {
+            print("  \(w.word): \(String(format: "%.3f", w.confidence))")
+            // Each word confidence must be in [0, 1]
+            XCTAssertGreaterThanOrEqual(w.confidence, 0.0)
+            XCTAssertLessThanOrEqual(w.confidence, 1.0)
+        }
+
+        // Clean English audio should have mostly high-confidence words
+        let highConfWords = words.filter { $0.confidence > 0.5 }
+        XCTAssertGreaterThan(highConfWords.count, words.count / 2,
+            "Most words should have confidence > 0.5 for clean audio")
+
+        // Verify key words are present with reasonable confidence
+        let guaranteeWord = words.first { $0.word.lowercased().contains("guarantee") }
+        XCTAssertNotNil(guaranteeWord, "Should find 'guarantee' in word list")
+        if let g = guaranteeWord {
+            XCTAssertGreaterThan(g.confidence, 0.3, "'guarantee' should have decent confidence")
+        }
+    }
+
+    func testGermanTranscription() async throws {
+        let model = try await loadParakeetModel()
+
+        guard let audioURL = Bundle.module.url(forResource: "test_audio_german", withExtension: "wav") else {
+            throw XCTSkip("test_audio_german.wav not found in test resources")
+        }
+
+        let audio = try AudioFileLoader.load(url: audioURL, targetSampleRate: 16000)
+        let result = try model.transcribeAudio(audio, sampleRate: 16000)
+
+        XCTAssertFalse(result.isEmpty, "German transcription should not be empty")
+        let lower = result.lowercased()
+        // Parakeet v3 supports 25 European languages including German
+        // TTS-generated audio — Parakeet should at least get "guten tag"
+        XCTAssertTrue(lower.contains("guten tag"), "Should contain 'guten tag', got: \(result)")
+        print("German transcription: \(result)")
+    }
+
+    // MARK: - Helpers
+
+    private func loadParakeetModel() async throws -> ParakeetASRModel {
+        let modelId = ParakeetASRModel.defaultModelId
+        let cacheDir: URL
+        do {
+            cacheDir = try HuggingFaceDownloader.getCacheDirectory(for: modelId)
+        } catch {
+            throw XCTSkip("Cannot resolve cache directory: \(error)")
+        }
+        let encoderPath = cacheDir.appendingPathComponent("encoder.mlmodelc")
+        guard FileManager.default.fileExists(atPath: encoderPath.path) else {
+            throw XCTSkip("Parakeet model not cached at \(cacheDir.path)")
+        }
+        return try await ParakeetASRModel.fromPretrained(modelId: modelId)
     }
 
     func testWarmup() async throws {
@@ -247,7 +338,11 @@ final class ParakeetASRTests: XCTestCase {
         print("Parakeet latency: avg=\(String(format: "%.0f", avg * 1000))ms, best=\(String(format: "%.0f", best * 1000))ms, RTF=\(String(format: "%.3f", rtf))")
     }
 
-    // MARK: - Mel Preprocessing Tests
+}
+
+// MARK: - Unit Tests (continued, no model download)
+
+final class ParakeetASRUnitTests: XCTestCase {
 
     func testMelNormalization() throws {
         let config = ParakeetConfig.default
@@ -275,7 +370,7 @@ final class ParakeetASRTests: XCTestCase {
 
     func testTranscriptionResultHasConfidence() {
         let result = TranscriptionResult(text: "hello", confidence: 0.85)
-        XCTAssertEqual(result.confidence, 0.85, accuracy: 0.001)
+        XCTAssertEqual(Double(result.confidence), 0.85, accuracy: 0.01)
     }
 
     func testTranscriptionResultDefaultConfidence() {
@@ -283,12 +378,144 @@ final class ParakeetASRTests: XCTestCase {
         XCTAssertEqual(result.confidence, 0.0)
     }
 
-    func testConfidenceSigmoidRange() {
-        // Simulate the sigmoid confidence calculation from TDT decoder
-        for meanLogit: Float in [-10, -1, 0, 1, 5, 10, 50] {
-            let confidence = 1.0 / (1.0 + exp(-meanLogit * 0.1))
-            XCTAssertGreaterThanOrEqual(confidence, 0.0, "Confidence must be >= 0")
-            XCTAssertLessThanOrEqual(confidence, 1.0, "Confidence must be <= 1")
+    func testConfidenceExpRange() {
+        // exp(mean log-prob) confidence — must be in [0, 1]
+        for logProb: Float in [-10, -5, -1, -0.1, 0] {
+            let confidence = min(1.0, exp(logProb))
+            XCTAssertGreaterThanOrEqual(confidence, 0.0)
+            XCTAssertLessThanOrEqual(confidence, 1.0)
         }
+    }
+
+    // MARK: - Per-Word Confidence Tests
+
+    func testDecodeWordsBasic() {
+        let vocab = ParakeetVocabulary(idToToken: [
+            0: "\u{2581}the",
+            1: "\u{2581}cat",
+            2: "\u{2581}sat",
+        ])
+        let logProbs: [Float] = [-0.1, -0.5, -0.2]
+        let words = vocab.decodeWords([0, 1, 2], logProbs: logProbs)
+
+        XCTAssertEqual(words.count, 3)
+        XCTAssertEqual(words[0].word, "the")
+        XCTAssertEqual(words[1].word, "cat")
+        XCTAssertEqual(words[2].word, "sat")
+
+        // Each word's confidence should be exp(log_prob)
+        XCTAssertEqual(Double(words[0].confidence), Double(exp(Float(-0.1))), accuracy: 0.01)
+        XCTAssertEqual(Double(words[1].confidence), Double(exp(Float(-0.5))), accuracy: 0.01)
+        XCTAssertEqual(Double(words[2].confidence), Double(exp(Float(-0.2))), accuracy: 0.01)
+    }
+
+    func testDecodeWordsSubword() {
+        let vocab = ParakeetVocabulary(idToToken: [
+            0: "\u{2581}un",
+            1: "believ",
+            2: "able",
+            3: "\u{2581}word",
+        ])
+        let logProbs: [Float] = [-0.3, -0.5, -0.2, -0.1]
+        let words = vocab.decodeWords([0, 1, 2, 3], logProbs: logProbs)
+
+        XCTAssertEqual(words.count, 2)
+        XCTAssertEqual(words[0].word, "unbelievable")
+        XCTAssertEqual(words[1].word, "word")
+
+        // "unbelievable" confidence = exp(mean(-0.3, -0.5, -0.2))
+        let expectedConf: Float = exp((-0.3 + -0.5 + -0.2) / 3.0)
+        XCTAssertEqual(Double(words[0].confidence), Double(expectedConf), accuracy: 0.01)
+    }
+
+    func testDecodeWordsEmpty() {
+        let vocab = ParakeetVocabulary(idToToken: [:])
+        let words = vocab.decodeWords([], logProbs: [])
+        XCTAssertTrue(words.isEmpty)
+    }
+
+    func testDecodeWordsMismatchedLengths() {
+        let vocab = ParakeetVocabulary(idToToken: [0: "\u{2581}hi"])
+        // Mismatched token/logProb counts — should return single word with 0 confidence
+        let words = vocab.decodeWords([0], logProbs: [])
+        XCTAssertEqual(words.count, 1)
+        XCTAssertEqual(words[0].word, "hi")
+        XCTAssertEqual(words[0].confidence, 0)
+    }
+
+    func testTranscriptionResultWithWords() {
+        let words = [
+            WordConfidence(word: "hello", confidence: 0.95),
+            WordConfidence(word: "world", confidence: 0.88),
+        ]
+        let result = TranscriptionResult(text: "hello world", confidence: 0.91, words: words)
+        XCTAssertEqual(result.words?.count, 2)
+        XCTAssertEqual(result.words?[0].word, "hello")
+        XCTAssertEqual(Double(result.words?[1].confidence ?? 0), 0.88, accuracy: 0.01)
+    }
+
+    func testTranscriptionResultWithoutWords() {
+        let result = TranscriptionResult(text: "hello")
+        XCTAssertNil(result.words)
+    }
+
+    func testTranscriptionResultBackwardCompat() {
+        // Existing callers that don't pass words should still work
+        let result = TranscriptionResult(text: "test", language: "english", confidence: 0.9)
+        XCTAssertNil(result.words)
+        XCTAssertEqual(result.text, "test")
+        XCTAssertEqual(Double(result.confidence), 0.9, accuracy: 0.01)
+    }
+
+    func testLogSoftmaxKnownValues() {
+        // Verify log-softmax math: for logits [2, 1, 0],
+        // log_softmax[0] = 2 - log(e^2 + e^1 + e^0) = 2 - log(7.389 + 2.718 + 1) ≈ 2 - 2.408 ≈ -0.408
+        // This tests the same math used in TDTGreedyDecoder.logSoftmax
+        let logits: [Float] = [2.0, 1.0, 0.0]
+        let maxVal = logits.max()!
+        let sumExp = logits.map { exp($0 - maxVal) }.reduce(0, +)
+        let logSumExp = log(sumExp) + maxVal
+
+        let logProb0 = logits[0] - logSumExp
+        let logProb1 = logits[1] - logSumExp
+        let logProb2 = logits[2] - logSumExp
+
+        // Softmax probs should sum to ~1
+        let probSum = exp(logProb0) + exp(logProb1) + exp(logProb2)
+        XCTAssertEqual(Double(probSum), 1.0, accuracy: 0.001)
+
+        // log_softmax values should be negative
+        XCTAssertLessThan(logProb0, 0)
+        XCTAssertLessThan(logProb1, 0)
+        XCTAssertLessThan(logProb2, 0)
+
+        // Highest logit should have highest log-prob
+        XCTAssertGreaterThan(logProb0, logProb1)
+        XCTAssertGreaterThan(logProb1, logProb2)
+
+        // exp(log_softmax) ≈ known softmax values
+        XCTAssertEqual(Double(exp(logProb0)), 0.665, accuracy: 0.01) // e^2 / sum
+        XCTAssertEqual(Double(exp(logProb1)), 0.245, accuracy: 0.01) // e^1 / sum
+        XCTAssertEqual(Double(exp(logProb2)), 0.090, accuracy: 0.01) // e^0 / sum
+    }
+
+    func testWordConfidenceRange() {
+        // All word confidences from decodeWords must be in [0, 1]
+        let vocab = ParakeetVocabulary(idToToken: [
+            0: "\u{2581}high",
+            1: "\u{2581}medium",
+            2: "\u{2581}low",
+        ])
+        // Range of log-probs: near-0 (high conf) to very negative (low conf)
+        let logProbs: [Float] = [-0.01, -1.0, -5.0]
+        let words = vocab.decodeWords([0, 1, 2], logProbs: logProbs)
+
+        for word in words {
+            XCTAssertGreaterThanOrEqual(word.confidence, 0.0, "\(word.word) confidence < 0")
+            XCTAssertLessThanOrEqual(word.confidence, 1.0, "\(word.word) confidence > 1")
+        }
+        // Higher log-prob → higher confidence
+        XCTAssertGreaterThan(words[0].confidence, words[1].confidence)
+        XCTAssertGreaterThan(words[1].confidence, words[2].confidence)
     }
 }

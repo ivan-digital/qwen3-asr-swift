@@ -13,7 +13,7 @@ extension ParakeetASRModel: ModelMemoryManageable {
 
     public var memoryFootprint: Int {
         guard _isLoaded else { return 0 }
-        // Parakeet-TDT CoreML INT4: ~315 MB encoder + decoder + joint
-        return 315 * 1024 * 1024
+        // Parakeet-TDT CoreML INT8: ~500 MB encoder + decoder + joint
+        return 500 * 1024 * 1024
     }
 }

@@ -256,7 +256,8 @@ let package = Package(
             name: "ParakeetASRTests",
             dependencies: ["ParakeetASR", "AudioCommon"],
             resources: [
-                .copy("Resources/test_audio.wav")
+                .copy("Resources/test_audio.wav"),
+                .copy("Resources/test_audio_german.wav")
             ]
         ),
         .testTarget(

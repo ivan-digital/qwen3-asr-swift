@@ -86,6 +86,8 @@ codec_head (Linear -> 3072 vocab) -> logits
     |
     v
 Sampling: temperature=0.9, top_k=50, top_p=1.0, repetition_penalty=1.05
+    NOTE: Higher temperature (0.8–0.9) is critical for non-English quality.
+          Low temperature (≤0.3) produces degenerate/looping output.
     |
     v
 First codebook token sequence (until codec_eos = 2150)

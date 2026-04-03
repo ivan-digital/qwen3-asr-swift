@@ -147,13 +147,10 @@ public struct TranscribeBatchCommand: ParsableCommand {
             }
             print("Found \(files.count) audio files")
 
-            let parakeetModelId = model.lowercased().contains("8")
-                ? ParakeetASRModel.int8ModelId
-                : ParakeetASRModel.defaultModelId
-            print("Loading Parakeet-TDT model: \(parakeetModelId)")
+            print("Loading Parakeet-TDT model: \(ParakeetASRModel.defaultModelId)")
             let loadStart = CFAbsoluteTimeGetCurrent()
             let parakeet = try await ParakeetASRModel.fromPretrained(
-                modelId: parakeetModelId, progressHandler: reportProgress)
+                progressHandler: reportProgress)
             let loadTime = CFAbsoluteTimeGetCurrent() - loadStart
 
             print("Warming up CoreML...")

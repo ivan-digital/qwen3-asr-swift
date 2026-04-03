@@ -44,7 +44,7 @@
 |------|------|------|------|------|
 | Qwen3-ASR-0.6B | 语音 → 文本 | 否 | 52 种语言 | [4-bit](https://huggingface.co/aufklarer/Qwen3-ASR-0.6B-MLX-4bit) 680 MB · [8-bit](https://huggingface.co/aufklarer/Qwen3-ASR-0.6B-MLX-8bit) 1.0 GB · [CoreML](https://huggingface.co/aufklarer/Qwen3-ASR-CoreML) 180 MB |
 | Qwen3-ASR-1.7B | 语音 → 文本 | 否 | 52 种语言 | [4-bit](https://huggingface.co/aufklarer/Qwen3-ASR-1.7B-MLX-4bit) 2.1 GB · [8-bit](https://huggingface.co/aufklarer/Qwen3-ASR-1.7B-MLX-8bit) 3.2 GB |
-| Parakeet-TDT-0.6B | 语音 → 文本 | 否 | 25 种欧洲语言 | [CoreML INT4](https://huggingface.co/aufklarer/Parakeet-TDT-v3-CoreML-INT4) 315 MB · [CoreML INT8](https://huggingface.co/aufklarer/Parakeet-TDT-v3-CoreML-INT8) 500 MB |
+| Parakeet-TDT-0.6B | 语音 → 文本 | 否 | 25 种欧洲语言 | [CoreML INT8](https://huggingface.co/aufklarer/Parakeet-TDT-v3-CoreML-INT8) 500 MB |
 | Qwen3-ForcedAligner-0.6B | 音频 + 文本 → 时间戳 | 否 | 多语言 | [4-bit](https://huggingface.co/aufklarer/Qwen3-ForcedAligner-0.6B-4bit) 979 MB · [8-bit](https://huggingface.co/aufklarer/Qwen3-ForcedAligner-0.6B-8bit) 1.4 GB · [CoreML INT4](https://huggingface.co/aufklarer/Qwen3-ForcedAligner-0.6B-CoreML-INT4) 630 MB · [CoreML INT8](https://huggingface.co/aufklarer/Qwen3-ForcedAligner-0.6B-CoreML-INT8) 1.0 GB |
 | Qwen3-TTS-0.6B Base | 文本 → 语音 | 是 (~120ms) | 10 种语言 | [4-bit](https://huggingface.co/aufklarer/Qwen3-TTS-12Hz-0.6B-Base-MLX-4bit) 1.7 GB · [8-bit](https://huggingface.co/aufklarer/Qwen3-TTS-12Hz-0.6B-Base-MLX-8bit) 2.4 GB · [CoreML](https://huggingface.co/aufklarer/Qwen3-TTS-CoreML) 1.0 GB |
 | Qwen3-TTS-0.6B CustomVoice | 文本 → 语音 | 是 (~120ms) | 10 种语言 | [4-bit](https://huggingface.co/aufklarer/Qwen3-TTS-12Hz-0.6B-CustomVoice-MLX-4bit) 1.7 GB |
@@ -1028,7 +1028,7 @@ ws.send(JSON.stringify({
 | Qwen3-ASR-0.6B (4-bit) | MLX | ~0.06 | ~0.6s |
 | Qwen3-ASR-0.6B (INT8) | CoreML + MLX | ~0.09 | ~0.9s |
 | Qwen3-ASR-1.7B (8-bit) | MLX | ~0.11 | ~1.1s |
-| Parakeet-TDT-0.6B (INT4) | CoreML (神经引擎) | ~0.12 冷启动, ~0.03 热启动 | ~1.2s / ~0.3s |
+| Parakeet-TDT-0.6B (INT8) | CoreML (神经引擎) | ~0.09 冷启动, ~0.03 热启动 | ~0.9s / ~0.3s |
 | Whisper-large-v3 | whisper.cpp (Q5_0) | ~0.10 | ~1.0s |
 | Whisper-small | whisper.cpp (Q5_0) | ~0.04 | ~0.4s |
 

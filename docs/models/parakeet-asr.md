@@ -39,13 +39,12 @@ The model is split into 3 CoreML sub-models for optimal compute unit placement:
 
 | Model | Compute | Quantization | Purpose |
 |-------|---------|--------------|---------|
-| `encoder.mlmodelc` | CPU + Neural Engine | INT4 or INT8 palettized | Mel → 1024-dim encoded features |
+| `encoder.mlmodelc` | CPU + Neural Engine | INT8 palettized | Mel → 1024-dim encoded features |
 | `decoder.mlmodelc` | CPU + Neural Engine | None | LSTM prediction network |
 | `joint.mlmodelc` | CPU + Neural Engine | None | Dual-head token + duration logits |
 
-Two quantization variants are available:
-- **INT4** (`aufklarer/Parakeet-TDT-v3-CoreML-INT4`) — ~75% size reduction, minimal accuracy impact
-- **INT8** (`aufklarer/Parakeet-TDT-v3-CoreML-INT8`) — ~50% size reduction, higher accuracy
+Default quantization:
+- **INT8** (`aufklarer/Parakeet-TDT-v3-CoreML-INT8`) — ~50% size reduction, best quality/speed balance
 
 Mel preprocessing (pre-emphasis, STFT, mel filterbank, normalization) is done in Swift using Accelerate/vDSP — no CoreML preprocessor model needed. Decoder and joint are small enough that quantization isn't necessary.
 
@@ -79,7 +78,6 @@ On Apple Silicon with Neural Engine (M2 Max, 20s audio):
 
 ## Model Weights
 
-- [aufklarer/Parakeet-TDT-v3-CoreML-INT4](https://huggingface.co/aufklarer/Parakeet-TDT-v3-CoreML-INT4)
 - [aufklarer/Parakeet-TDT-v3-CoreML-INT8](https://huggingface.co/aufklarer/Parakeet-TDT-v3-CoreML-INT8)
 
 ## Thread Safety
