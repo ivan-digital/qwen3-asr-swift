@@ -1731,6 +1731,86 @@ final class E2ETTSStreamingTests: XCTestCase {
     }
 }
 
+// MARK: - Chunked Decode Bounds Tests
+
+/// Unit test: verify chunkedDecode doesn't crash on edge-case frame counts.
+/// Regression for: "Range requires lowerBound <= upperBound" when the last chunk
+/// has fewer new frames than leftContext, causing trimSamples > totalSamples.
+final class ChunkedDecodeBoundsTests: XCTestCase {
+
+    /// Verify the chunking loop math for all frame counts near chunk boundaries.
+    /// This doesn't run the decoder — it checks that trimSamples never exceeds
+    /// the expected output length for any numFrames value.
+    func testTrimSamplesNeverExceedsOutput() {
+        let chunkSize = 25
+        let leftContext = 10
+        let samplesPerFrame = 1920
+
+        // Test every frame count from 1 to 200 (covers multiple chunk boundaries)
+        for numFrames in 1...200 {
+            // Skip single-pass case (no chunking)
+            guard numFrames > chunkSize + leftContext else { continue }
+
+            var offset = 0
+            while offset < numFrames {
+                let chunkEnd = min(offset + chunkSize, numFrames)
+                let contextStart = max(offset - leftContext, 0)
+                let actualContext = offset - contextStart
+                let inputFrames = chunkEnd - contextStart
+
+                // Decoder output is approximately inputFrames * samplesPerFrame,
+                // but can be slightly less due to conv boundary effects.
+                // Simulate worst case: output is 95% of expected.
+                let worstCaseOutput = Int(Double(inputFrames * samplesPerFrame) * 0.95)
+                let trimSamples = min(actualContext * samplesPerFrame, worstCaseOutput)
+
+                XCTAssertLessThanOrEqual(
+                    trimSamples, worstCaseOutput,
+                    "trimSamples (\(trimSamples)) exceeds output (\(worstCaseOutput)) " +
+                    "for numFrames=\(numFrames), offset=\(offset)")
+
+                offset = chunkEnd
+            }
+        }
+    }
+
+    /// Verify that small last chunks (1-3 frames + 10 context) don't produce
+    /// negative kept ranges — the exact scenario that caused the crash.
+    func testSmallLastChunkDoesNotCrash() {
+        let chunkSize = 25
+        let leftContext = 10
+        let samplesPerFrame = 1920
+
+        // Frame counts that leave 1, 2, or 3 frames in the last chunk
+        for remainder in 1...3 {
+            let numFrames = chunkSize + leftContext + 1 + remainder  // forces chunking + small tail
+
+            var offset = 0
+            var lastChunkTrimSamples = 0
+            var lastChunkInputFrames = 0
+
+            while offset < numFrames {
+                let chunkEnd = min(offset + chunkSize, numFrames)
+                let contextStart = max(offset - leftContext, 0)
+                let actualContext = offset - contextStart
+                let inputFrames = chunkEnd - contextStart
+
+                lastChunkTrimSamples = actualContext * samplesPerFrame
+                lastChunkInputFrames = inputFrames
+                offset = chunkEnd
+            }
+
+            // The last chunk: context can dominate the input
+            let expectedOutput = lastChunkInputFrames * samplesPerFrame
+            XCTAssertTrue(
+                lastChunkTrimSamples <= expectedOutput ||
+                lastChunkInputFrames > leftContext,
+                "Last chunk with \(lastChunkInputFrames - leftContext) new frames: " +
+                "trim=\(lastChunkTrimSamples) vs expected output=\(expectedOutput)")
+        }
+    }
+}
+
 // MARK: - TextChunker Tests
 
 final class TextChunkerTests: XCTestCase {

@@ -175,10 +175,11 @@ cd Examples/PersonaPlexDemo
 
 ## Демо-приложения
 
-- **[PersonaPlexDemo](Examples/PersonaPlexDemo/)** — Голосовой ассистент для диалога (микрофонный ввод, VAD, многоходовый диалог). См. выше.
-- **[SpeechDemo](Examples/SpeechDemo/)** — Диктовка (Parakeet TDT / Qwen3-ASR с автоопределением языка) и синтез речи (Qwen3-TTS) в интерфейсе с вкладками.
+- **[iOSEchoDemo](Examples/iOSEchoDemo/)** — iOS-демо эхо (Parakeet ASR + Kokoro TTS, говорите и слушайте ответ). Устройство и симулятор.
+- **[PersonaPlexDemo](Examples/PersonaPlexDemo/)** — Голосовой ассистент для диалога (микрофонный ввод, VAD, многоходовый диалог). macOS.
+- **[SpeechDemo](Examples/SpeechDemo/)** — Диктовка и синтез речи в интерфейсе с вкладками. macOS.
 
-Соберите и запустите как macOS-приложение `.app` — инструкции в README каждого демо.
+Соберите и запустите — инструкции в README каждого демо.
 
 ## Распознавание речи (ASR) — транскрибирование аудио на Swift
 

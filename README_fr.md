@@ -175,10 +175,11 @@ cd Examples/PersonaPlexDemo
 
 ## Applications de demonstration
 
-- **[PersonaPlexDemo](Examples/PersonaPlexDemo/)** -- Assistant vocal conversationnel (entree micro, VAD, multi-tours). Voir ci-dessus.
-- **[SpeechDemo](Examples/SpeechDemo/)** -- Dictee (Parakeet TDT / Qwen3-ASR avec detection automatique de la langue) et synthese vocale (Qwen3-TTS) dans une interface a onglets.
+- **[iOSEchoDemo](Examples/iOSEchoDemo/)** -- Demo echo iOS (Parakeet ASR + Kokoro TTS, parlez et ecoutez la reponse). Appareil et simulateur.
+- **[PersonaPlexDemo](Examples/PersonaPlexDemo/)** -- Assistant vocal conversationnel (entree micro, VAD, multi-tours). macOS.
+- **[SpeechDemo](Examples/SpeechDemo/)** -- Dictee et synthese vocale dans une interface a onglets. macOS.
 
-Compilez et lancez en tant que bundle macOS `.app` -- consultez le README de chaque demo pour les instructions.
+Compilez et lancez -- consultez le README de chaque demo pour les instructions.
 
 ## Reconnaissance vocale (ASR) -- Transcrire de l'audio en Swift
 

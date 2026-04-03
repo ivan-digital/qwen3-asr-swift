@@ -168,8 +168,8 @@ python scripts/convert_kokoro_coreml.py --output /tmp/kokoro-coreml --quantize i
 
 ```
 Sources/KokoroTTS/
-  Configuration.swift      Model config, phoneme/decoder bucket selection
-  KokoroModel.swift        CoreML model loading (E2E preferred, 3-stage fallback)
+  Configuration.swift      Model config, voice/language selection
+  KokoroModel.swift        End-to-end CoreML model loading and inference
   KokoroTTS.swift          High-level API (fromPretrained, synthesize, alignment)
   Phonemizer.swift         Text → phoneme tokenization
   KokoroTTS+Protocols.swift Protocol conformance

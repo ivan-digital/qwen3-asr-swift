@@ -175,10 +175,11 @@ cd Examples/PersonaPlexDemo
 
 ## डेमो ऐप्स
 
-- **[PersonaPlexDemo](Examples/PersonaPlexDemo/)** — वार्तालाप वॉयस असिस्टेंट (माइक इनपुट, VAD, मल्टी-टर्न)। ऊपर देखें।
-- **[SpeechDemo](Examples/SpeechDemo/)** — डिक्टेशन (Parakeet TDT / Qwen3-ASR भाषा ऑटो-डिटेक्ट के साथ) और टेक्स्ट-टू-स्पीच सिंथेसिस (Qwen3-TTS) टैब्ड इंटरफ़ेस में।
+- **[iOSEchoDemo](Examples/iOSEchoDemo/)** — iOS इको डेमो (Parakeet ASR + Kokoro TTS, बोलें और वापस सुनें)। डिवाइस और सिम्युलेटर।
+- **[PersonaPlexDemo](Examples/PersonaPlexDemo/)** — वार्तालाप वॉयस असिस्टेंट (माइक इनपुट, VAD, मल्टी-टर्न)। macOS।
+- **[SpeechDemo](Examples/SpeechDemo/)** — डिक्टेशन और टेक्स्ट-टू-स्पीच सिंथेसिस टैब्ड इंटरफ़ेस। macOS।
 
-macOS `.app` बंडल के रूप में बिल्ड और रन करें — निर्देशों के लिए प्रत्येक डेमो का README देखें।
+बिल्ड और रन करें — निर्देशों के लिए प्रत्येक डेमो का README देखें।
 
 ## स्पीच-टू-टेक्स्ट (ASR) — Swift में ऑडियो ट्रांसक्राइब करें
 

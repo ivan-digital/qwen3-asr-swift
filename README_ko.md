@@ -175,10 +175,11 @@ cd Examples/PersonaPlexDemo
 
 ## 데모 앱
 
-- **[PersonaPlexDemo](Examples/PersonaPlexDemo/)** — 대화형 음성 어시스턴트 (마이크 입력, VAD, 멀티턴). 위 내용 참조.
-- **[SpeechDemo](Examples/SpeechDemo/)** — 받아쓰기 (Parakeet TDT / 언어 자동 감지가 포함된 Qwen3-ASR) 및 텍스트-음성 합성 (Qwen3-TTS)이 탭 인터페이스로 제공됩니다.
+- **[iOSEchoDemo](Examples/iOSEchoDemo/)** — iOS 에코 데모 (Parakeet ASR + Kokoro TTS, 말하고 다시 듣기). 디바이스 및 시뮬레이터 지원.
+- **[PersonaPlexDemo](Examples/PersonaPlexDemo/)** — 대화형 음성 어시스턴트 (마이크 입력, VAD, 멀티턴). macOS.
+- **[SpeechDemo](Examples/SpeechDemo/)** — 받아쓰기 및 텍스트-음성 합성 탭 인터페이스. macOS.
 
-macOS `.app` 번들로 빌드하고 실행하세요 — 각 데모의 README에서 안내를 확인할 수 있습니다.
+빌드하고 실행하세요 — 각 데모의 README에서 안내를 확인할 수 있습니다.
 
 ## 음성-텍스트 변환 (ASR) — Swift로 오디오 전사하기
 

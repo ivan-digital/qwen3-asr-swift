@@ -713,9 +713,15 @@ public class SpeechTokenizerDecoder: Module {
             let chunkCodes = codes[0..., 0..., contextStart..<chunkEnd]  // [B, 16, contextFrames + chunkFrames]
             let chunkWaveform = executeDecoder(chunkCodes)  // [B, T_samples, 1]
 
-            // Trim left context samples
-            let trimSamples = actualContext * samplesPerFrame
+            // Trim left context samples — clamp to actual output length because
+            // convolutional boundary effects can make the decoder produce fewer
+            // samples than (inputFrames * samplesPerFrame), especially on short last chunks.
+            let trimSamples = min(actualContext * samplesPerFrame, chunkWaveform.dim(1))
             let totalSamples = chunkWaveform.dim(1)
+            guard trimSamples < totalSamples else {
+                offset = chunkEnd
+                continue
+            }
             let kept = chunkWaveform[0..., trimSamples..<totalSamples, 0...]
 
             // Eval each chunk to free intermediate decoder tensors (480x upsample).

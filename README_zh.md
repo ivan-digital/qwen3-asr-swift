@@ -175,10 +175,11 @@ cd Examples/PersonaPlexDemo
 
 ## 示例应用
 
-- **[PersonaPlexDemo](Examples/PersonaPlexDemo/)** — 对话式语音助手（麦克风输入、VAD、多轮对话）。详见上文。
-- **[SpeechDemo](Examples/SpeechDemo/)** — 听写（Parakeet TDT / Qwen3-ASR 自动语言检测）与文本转语音合成（Qwen3-TTS），标签式界面。
+- **[iOSEchoDemo](Examples/iOSEchoDemo/)** — iOS 回声演示（Parakeet ASR + Kokoro TTS，说话后听到回放）。支持设备和模拟器。
+- **[PersonaPlexDemo](Examples/PersonaPlexDemo/)** — 对话式语音助手（麦克风输入、VAD、多轮对话）。macOS。
+- **[SpeechDemo](Examples/SpeechDemo/)** — 听写与文本转语音合成，标签式界面。macOS。
 
-构建并以 macOS `.app` 包运行——各示例应用的 README 中有详细说明。
+构建并运行——各示例应用的 README 中有详细说明。
 
 ## 语音转文字 (ASR)——Swift 音频转录
 
