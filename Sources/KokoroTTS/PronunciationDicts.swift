@@ -11,9 +11,9 @@ enum PronunciationDicts {
     // MARK: - JSON Resource Loading
 
     private static func loadJSON(_ name: String) -> [String: String] {
-        guard let url = Bundle.module.url(forResource: name, withExtension: "json", subdirectory: "Resources") else {
-            return [:]
-        }
+        let url = Bundle.module.url(forResource: name, withExtension: "json")
+                  ?? Bundle.module.url(forResource: name, withExtension: "json", subdirectory: "Resources")
+        guard let url else { return [:] }
         guard let data = try? Data(contentsOf: url),
               let dict = try? JSONDecoder().decode([String: String].self, from: data) else {
             return [:]
