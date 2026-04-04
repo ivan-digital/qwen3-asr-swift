@@ -120,6 +120,22 @@ final class LatinPhonemizer {
 
         while i < chars.count {
             var matched = false
+
+            // Context-dependent: c before e/i/y = s, g before e/i = ʒ
+            if i + 1 < chars.count {
+                let next = chars[i + 1]
+                if chars[i] == "c" && "eiéèêëîïy".contains(next) {
+                    result += "s"
+                    i += 1
+                    continue
+                }
+                if chars[i] == "g" && "eiéèêëîïy".contains(next) {
+                    result += "ʒ"
+                    i += 1
+                    continue
+                }
+            }
+
             // Try longest match first (3, 2, 1 chars)
             for len in stride(from: min(3, chars.count - i), through: 1, by: -1) {
                 let substr = String(chars[i..<i+len])
@@ -136,10 +152,10 @@ final class LatinPhonemizer {
             }
         }
 
-        // Drop silent final consonants (simplified French rule)
+        // Drop silent final consonants (French rule: d, t, s, x, z, p are silent at end)
         if result.count > 1 {
             let last = result.last!
-            if "dtsxzp".contains(last) && word.last != "c" {
+            if "dtsxzp".contains(last) {
                 result = String(result.dropLast())
             }
         }

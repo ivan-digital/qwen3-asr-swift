@@ -152,20 +152,12 @@ public final class KokoroPhonemizer {
             phonemes = chinesePhonemizer.phonemize(text)
         case "ja", "japanese":
             phonemes = japanesePhonemizer.phonemize(text)
-        case "ko", "korean":
-            phonemes = koreanPhonemizer.phonemize(text)
-        case "hi", "hindi":
-            phonemes = hindiPhonemizer.phonemize(text)
-        case "fr", "french":
-            phonemes = frenchPhonemizer.phonemize(text)
-        case "es", "spanish":
-            phonemes = spanishPhonemizer.phonemize(text)
-        case "pt", "portuguese":
-            phonemes = portuguesePhonemizer.phonemize(text)
         case "it", "italian":
             phonemes = italianPhonemizer.phonemize(text)
-        case "de", "german":
-            phonemes = germanPhonemizer.phonemize(text)
+        // French, Spanish, Portuguese, Korean, Hindi, German: use English phonemizer.
+        // Our rule-based G2P produces linguistically correct IPA but doesn't match
+        // the training data format (Kokoro was trained with espeak-ng via misaki).
+        // English fallback works better because Kokoro's vocab aligns with it.
         default:
             phonemes = textToPhonemes(text)
         }
