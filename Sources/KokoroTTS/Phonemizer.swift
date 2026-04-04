@@ -162,6 +162,10 @@ public final class KokoroPhonemizer {
             phonemes = phonemizeWithDict(text, dict: PronunciationDicts.pt, fallback: portuguesePhonemizer)
         case "hi", "hindi":
             phonemes = phonemizeWithDict(text, dict: PronunciationDicts.hi, fallback: hindiPhonemizer)
+        case "de", "german":
+            phonemes = phonemizeWithDict(text, dict: PronunciationDicts.de, fallback: germanPhonemizer)
+        case "ko", "korean":
+            phonemes = phonemizeWithDict(text, dict: PronunciationDicts.ko, fallback: koreanPhonemizer)
         default:
             phonemes = textToPhonemes(text)
         }
@@ -281,6 +285,40 @@ public final class KokoroPhonemizer {
                     result += ipa
                 } else {
                     result += fallback.phonemizeWord(clean)
+                }
+                lastWasWord = true
+            }
+
+            for ch in trailing {
+                if let mapped = mapPunctuation(ch) { result += mapped }
+                lastWasWord = false
+            }
+        }
+
+        return result
+    }
+
+    /// Dictionary-based phonemization for Korean.
+    private func phonemizeWithDict(_ text: String, dict: [String: String], fallback: KoreanPhonemizer) -> String {
+        let words = text.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+        var result = ""
+        var lastWasWord = false
+
+        for word in words {
+            var clean = word
+            var trailing = ""
+            while let last = clean.last, last.isPunctuation || last.isSymbol {
+                trailing = String(last) + trailing
+                clean = String(clean.dropLast())
+            }
+
+            if !clean.isEmpty {
+                if lastWasWord { result += " " }
+                if let ipa = dict[clean] {
+                    result += ipa
+                } else {
+                    // Korean fallback: phonemize the word
+                    result += fallback.phonemize(clean)
                 }
                 lastWasWord = true
             }
