@@ -140,7 +140,7 @@ final class ChinesePhonemizer {
     static func syllableToIPA(_ syllable: String) -> String {
         // Normalize: extract tone from diacritics
         let (base, tone) = extractTone(syllable)
-        let normalized = normalizeFinalsNotation(base)
+        var normalized = normalizeFinalsNotation(base)
 
         // Check interjections
         if let ipa = interjections[normalized] {
@@ -150,6 +150,33 @@ final class ChinesePhonemizer {
         // Check syllabic consonants
         if let ipa = syllabicConsonants[normalized] {
             return applyTone(ipa, tone: tone)
+        }
+
+        // Handle zero-initial syllables: y→i/ü, w→u mappings
+        // "yi" → final "i", "wu" → final "u", "yu" → final "ü"
+        // "ya" → final "ia", "ye" → final "ie", "yao" → final "iao", etc.
+        // "wa" → final "ua", "wo" → final "uo", "wai" → final "uai", etc.
+        if normalized.hasPrefix("y") {
+            let afterY = String(normalized.dropFirst())
+            if afterY == "i" || afterY.isEmpty {
+                normalized = "i"
+            } else if afterY == "u" || afterY == "ü" {
+                normalized = "ü"
+            } else if afterY == "uan" || afterY == "ue" || afterY == "un" {
+                // yuan→üan, yue→üe, yun→ün
+                normalized = "ü" + afterY.dropFirst()
+            } else {
+                // ya→ia, ye→ie, yao→iao, you→iou, etc.
+                normalized = "i" + afterY
+            }
+        } else if normalized.hasPrefix("w") {
+            let afterW = String(normalized.dropFirst())
+            if afterW == "u" || afterW.isEmpty {
+                normalized = "u"
+            } else {
+                // wa→ua, wo→uo, wai→uai, wei→uei, wen→uen, wang→uang
+                normalized = "u" + afterW
+            }
         }
 
         // Split into initial + final
