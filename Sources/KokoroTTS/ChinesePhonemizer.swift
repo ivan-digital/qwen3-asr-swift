@@ -6,7 +6,7 @@ import Foundation
 /// Uses Apple's built-in Mandarin Latin transcription — no external dependencies.
 ///
 /// Pinyin-to-IPA mapping adapted from stefantaubert/pinyin-to-ipa (MIT license).
-/// Tone retoning from hexgrad/misaki (Apache-2.0).
+/// Tone marks simplified to arrow notation to match Kokoro's vocab.
 final class ChinesePhonemizer {
 
     // MARK: - Pinyin Initial → IPA
@@ -70,7 +70,7 @@ final class ChinesePhonemizer {
         "0": "",       // no tone
     ]
 
-    /// Misaki-style simplified tone marks.
+    /// Simplified tone marks (arrow notation matching Kokoro vocab).
     private static let retoneMap: [(from: String, to: String)] = [
         ("˧˩˧", "↓"),  // 3rd tone
         ("˧˥", "↗"),   // 2nd tone
@@ -228,7 +228,7 @@ final class ChinesePhonemizer {
     /// Replace tone placeholder "0" with actual tone contour.
     private static func applyTone(_ ipa: String, tone: Character) -> String {
         let contour = toneContours[tone] ?? ""
-        // Apply retoning (misaki style)
+        // Simplify tone contours to arrow notation
         var toned = ipa.replacingOccurrences(of: "0", with: contour)
         for (from, to) in retoneMap {
             toned = toned.replacingOccurrences(of: from, with: to)

@@ -5,7 +5,7 @@ import NaturalLanguage
 /// GPL-free phonemizer for Kokoro TTS.
 ///
 /// Three-tier approach (all Apache-2.0 / BSD compatible):
-/// 1. **Dictionary lookup** — gold + silver IPA dictionaries from misaki (Apache-2.0)
+/// 1. **Dictionary lookup** — gold + silver IPA pronunciation dictionaries
 /// 2. **Suffix stemming** — strips -s/-ed/-ing, looks up stem, applies phonological rules
 /// 3. **CoreML BART G2P** — encoder-decoder neural model for OOV words (Apache-2.0)
 ///

@@ -6,7 +6,7 @@ import Foundation
 ///           → katakana → IPA via M2P table → P2R romanization
 ///
 /// Uses Apple's built-in Japanese morphological analysis — no MeCab dependency.
-/// M2P and P2R tables from hexgrad/misaki (Apache-2.0).
+/// M2P katakana-to-IPA table covers standard and extended katakana (193 entries).
 final class JapanesePhonemizer {
 
     // MARK: - Katakana → IPA (M2P)
