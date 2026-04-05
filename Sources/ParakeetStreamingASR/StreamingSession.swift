@@ -40,6 +40,7 @@ public class StreamingSession {
     private var segmentIndex: Int = 0
     private var eouDetected = false
     private var sampleBuffer: [Float] = []
+    // Silence tracking removed — model self-recovers after ~10-20s
 
     init(
         config: ParakeetEOUConfig,
@@ -240,6 +241,7 @@ public class StreamingSession {
         allTokens.append(contentsOf: result.tokens)
         allLogProbs.append(contentsOf: result.tokenLogProbs)
 
+
         if result.eouDetected {
             eouDetected = true
         }
@@ -264,9 +266,9 @@ public class StreamingSession {
                 eouDetected: true,
                 segmentIndex: segmentIndex
             )
-            // Don't clear tokens — in continuous dictation, keep accumulating.
-            // EOU marks a sentence boundary, not a hard reset.
-            // The encoder/decoder LSTM state persists across EOU boundaries.
+            // Clear tokens for next utterance — encoder/decoder LSTM state persists
+            allTokens.removeAll()
+            allLogProbs.removeAll()
             segmentIndex += 1
             eouDetected = false
             return partial
