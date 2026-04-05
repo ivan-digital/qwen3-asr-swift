@@ -3,6 +3,66 @@ import Foundation
 import Observation
 import ParakeetStreamingASR
 
+/// Handles audio buffering and ASR processing off the main thread.
+final class ASRProcessor: Sendable {
+    private let session: StreamingSession
+    private let lock = NSLock()
+    private let _buffer = UnsafeMutablePointer<[Float]>.allocate(capacity: 1)
+
+    init(session: StreamingSession) {
+        self.session = session
+        _buffer.initialize(to: [])
+    }
+
+    deinit {
+        _buffer.deinitialize(count: 1)
+        _buffer.deallocate()
+    }
+
+    /// Called from audio thread — just buffers samples.
+    func appendAudio(_ samples: [Float]) {
+        lock.lock()
+        _buffer.pointee.append(contentsOf: samples)
+        lock.unlock()
+    }
+
+    /// Check if enough audio is buffered for processing.
+    var hasEnoughAudio: Bool {
+        lock.lock()
+        let count = _buffer.pointee.count
+        lock.unlock()
+        return count >= 5120
+    }
+
+    /// Process buffered audio and return partials. Called from processQueue.
+    @discardableResult
+    func processBuffered() -> [ParakeetStreamingASRModel.PartialTranscript] {
+        lock.lock()
+        let chunk = _buffer.pointee
+        _buffer.pointee.removeAll(keepingCapacity: true)
+        lock.unlock()
+
+        guard !chunk.isEmpty else { return [] }
+
+        do {
+            return try session.pushAudio(chunk)
+        } catch {
+            print("[ASR] Error: \(error)")
+            return []
+        }
+    }
+
+    func finalize() -> [ParakeetStreamingASRModel.PartialTranscript] {
+        let remaining = processBuffered()
+        do {
+            return remaining + (try session.finalize())
+        } catch {
+            print("[ASR] Finalize error: \(error)")
+            return remaining
+        }
+    }
+}
+
 @Observable
 @MainActor
 final class DictateViewModel {
@@ -14,20 +74,17 @@ final class DictateViewModel {
     var errorMessage: String?
 
     private var model: ParakeetStreamingASRModel?
-    private var session: StreamingSession?
+    private var processor: ASRProcessor?
     private let recorder = StreamingRecorder()
-    private var processingTask: Task<Void, Never>?
+    private let processQueue = DispatchQueue(label: "dictate.asr", qos: .userInteractive)
 
     var modelLoaded: Bool { model != nil }
     var audioLevel: Float { recorder.audioLevel }
 
-    /// Full transcript: committed segments + current partial
     var fullText: String {
-        let committed = committedText.isEmpty ? "" : committedText
-        let partial = partialText.isEmpty ? "" : partialText
-        if committed.isEmpty { return partial }
-        if partial.isEmpty { return committed }
-        return committed + " " + partial
+        if committedText.isEmpty { return partialText }
+        if partialText.isEmpty { return committedText }
+        return committedText + " " + partialText
     }
 
     // MARK: - Model Loading
@@ -53,6 +110,7 @@ final class DictateViewModel {
             try loaded.warmUp()
             model = loaded
             loadingStatus = ""
+            print("[Dictate] Model loaded and warmed up")
         } catch {
             errorMessage = "Failed to load: \(error.localizedDescription)"
             loadingStatus = ""
@@ -77,13 +135,33 @@ final class DictateViewModel {
         partialText = ""
 
         do {
-            let newSession = try model.createSession()
-            session = newSession
+            let session = try model.createSession()
+            let proc = ASRProcessor(session: session)
+            processor = proc
+            print("[Dictate] Session created, starting recorder...")
 
-            recorder.start { [weak self] chunk in
-                self?.processAudioChunk(chunk)
+            recorder.start { [weak self, proc] chunk in
+                proc.appendAudio(chunk)
+                guard proc.hasEnoughAudio else { return }
+
+                self?.processQueue.async { [weak self] in
+                    let partials = proc.processBuffered()
+                    guard !partials.isEmpty else { return }
+                    DispatchQueue.main.async {
+                        for partial in partials {
+                            print("[Dictate] \(partial.isFinal ? "FINAL" : "partial"): '\(partial.text)'")
+                            if partial.isFinal {
+                                self?.commitText(partial.text)
+                                self?.partialText = ""
+                            } else {
+                                self?.partialText = partial.text
+                            }
+                        }
+                    }
+                }
             }
             isRecording = true
+            print("[Dictate] Recording started")
         } catch {
             errorMessage = "Failed to start: \(error.localizedDescription)"
         }
@@ -93,44 +171,18 @@ final class DictateViewModel {
         recorder.stop()
         isRecording = false
 
-        // Finalize remaining audio
-        guard let session else { return }
-        do {
-            let finals = try session.finalize()
-            for partial in finals {
-                if partial.isFinal && !partial.text.isEmpty {
-                    commitText(partial.text)
-                }
+        guard let processor else { return }
+        let finals = processor.finalize()
+        for partial in finals {
+            if partial.isFinal && !partial.text.isEmpty {
+                commitText(partial.text)
             }
-        } catch {
-            errorMessage = "Finalize failed: \(error.localizedDescription)"
         }
-        self.session = nil
+        self.processor = nil
         partialText = ""
     }
 
-    // MARK: - Audio Processing
-
-    private func processAudioChunk(_ samples: [Float]) {
-        guard let session else { return }
-        do {
-            let partials = try session.pushAudio(samples)
-            for partial in partials {
-                DispatchQueue.main.async { [weak self] in
-                    if partial.isFinal {
-                        self?.commitText(partial.text)
-                        self?.partialText = ""
-                    } else {
-                        self?.partialText = partial.text
-                    }
-                }
-            }
-        } catch {
-            DispatchQueue.main.async { [weak self] in
-                self?.errorMessage = "Processing error: \(error.localizedDescription)"
-            }
-        }
-    }
+    // MARK: - Private
 
     private func commitText(_ text: String) {
         if committedText.isEmpty {
@@ -149,10 +201,9 @@ final class DictateViewModel {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
 
-        // Simulate Cmd+V in the frontmost app
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             let src = CGEventSource(stateID: .hidSystemState)
-            let keyDown = CGEvent(keyboardEventSource: src, virtualKey: 0x09, keyDown: true)  // V
+            let keyDown = CGEvent(keyboardEventSource: src, virtualKey: 0x09, keyDown: true)
             keyDown?.flags = .maskCommand
             let keyUp = CGEvent(keyboardEventSource: src, virtualKey: 0x09, keyDown: false)
             keyUp?.flags = .maskCommand

@@ -264,9 +264,9 @@ public class StreamingSession {
                 eouDetected: true,
                 segmentIndex: segmentIndex
             )
-            // Reset for next utterance
-            allTokens.removeAll()
-            allLogProbs.removeAll()
+            // Don't clear tokens — in continuous dictation, keep accumulating.
+            // EOU marks a sentence boundary, not a hard reset.
+            // The encoder/decoder LSTM state persists across EOU boundaries.
             segmentIndex += 1
             eouDetected = false
             return partial
