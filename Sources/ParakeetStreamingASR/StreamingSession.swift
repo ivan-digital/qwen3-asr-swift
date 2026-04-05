@@ -17,6 +17,7 @@ public class StreamingSession {
     private let rnntDecoder: RNNTGreedyDecoder
 
     // Encoder cache state
+    private var preCache: MLMultiArray
     private var cacheLastChannel: MLMultiArray
     private var cacheLastTime: MLMultiArray
     private var cacheLastChannelLen: MLMultiArray
@@ -61,7 +62,12 @@ public class StreamingSession {
         let hidden = config.encoderHidden
         let attCtx = config.attentionContext
         let convCache = config.convCacheSize
+        let preCacheSize = config.streaming.preCacheSize
 
+        preCache = try MLMultiArray(
+            shape: [1, config.numMelBins as NSNumber, preCacheSize as NSNumber], dataType: .float32)
+        memset(preCache.dataPointer, 0,
+               config.numMelBins * preCacheSize * MemoryLayout<Float>.stride)
         cacheLastChannel = try MLMultiArray(
             shape: [layers, 1, attCtx, hidden] as [NSNumber], dataType: .float32)
         cacheLastTime = try MLMultiArray(
@@ -89,10 +95,7 @@ public class StreamingSession {
 
         decoderProvider = ReusableFeatureProvider(["token": tokenArray, "h": h, "c": c])
         let initOut = try decoder.prediction(from: decoderProvider)
-        // Decoder output is [1, decoderHidden, 1] — transpose to [1, 1, decoderHidden] for joint
-        decoderOutput = try Self.transposeDecoderOutput(
-            initOut.featureValue(for: "decoder_output")!.multiArrayValue!,
-            hidden: config.decoderHidden)
+        decoderOutput = initOut.featureValue(for: "decoder_output")!.multiArrayValue!
         h = initOut.featureValue(for: "h_out")!.multiArrayValue!
         c = initOut.featureValue(for: "c_out")!.multiArrayValue!
 
@@ -192,10 +195,11 @@ public class StreamingSession {
             mel = rawMel
         }
 
-        // Run cache-aware encoder
+        // Run cache-aware encoder (with pre_cache for mel subsampling context)
         let encoderInput = try MLDictionaryFeatureProvider(dictionary: [
             "audio_signal": MLFeatureValue(multiArray: mel),
             "audio_length": MLFeatureValue(multiArray: makeInt32Array(value: Int32(melLength))),
+            "pre_cache": MLFeatureValue(multiArray: preCache),
             "cache_last_channel": MLFeatureValue(multiArray: cacheLastChannel),
             "cache_last_time": MLFeatureValue(multiArray: cacheLastTime),
             "cache_last_channel_len": MLFeatureValue(multiArray: cacheLastChannelLen),
@@ -205,8 +209,8 @@ public class StreamingSession {
 
         let encoded = encoderOutput.featureValue(for: "encoded_output")!.multiArrayValue!
         let reportedLength = encoderOutput.featureValue(for: "encoded_length")!.multiArrayValue![0].intValue
-        // Use actual output shape as bound — reported length can exceed output dimension
-        let actualFrames = encoded.shape[2].intValue
+        // Encoder output is [B, T, D] — frame count is shape[1]
+        let actualFrames = encoded.shape[1].intValue
         let encodedLength = min(reportedLength, actualFrames)
 
         // Update encoder caches
@@ -280,14 +284,6 @@ public class StreamingSession {
         let array = try MLMultiArray(shape: [1], dataType: .int32)
         array[0] = NSNumber(value: value)
         return array
-    }
-
-    /// Transpose decoder output from [1, D, 1] to [1, 1, D] for joint network.
-    static func transposeDecoderOutput(_ array: MLMultiArray, hidden: Int) throws -> MLMultiArray {
-        if array.shape[1].intValue == 1 { return array }
-        let result = try MLMultiArray(shape: [1, 1, hidden as NSNumber], dataType: array.dataType)
-        memcpy(result.dataPointer, array.dataPointer, hidden * MemoryLayout<Float16>.stride)
-        return result
     }
 
     /// Truncate mel to exactly `targetFrames` frames.

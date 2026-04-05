@@ -105,9 +105,7 @@ struct RNNTGreedyDecoder {
                 decoderProvider.update("h", h)
                 decoderProvider.update("c", c)
                 let decOut = try decoder.prediction(from: decoderProvider)
-                // Decoder output is [1, D, 1] — transpose to [1, 1, D] for joint
-                let rawDecOut = decOut.featureValue(for: "decoder_output")!.multiArrayValue!
-                decoderOutput = try transposeDecoder(rawDecOut)
+                decoderOutput = decOut.featureValue(for: "decoder_output")!.multiArrayValue!
                 h = decOut.featureValue(for: "h_out")!.multiArrayValue!
                 c = decOut.featureValue(for: "c_out")!.multiArrayValue!
             }
@@ -120,18 +118,13 @@ struct RNNTGreedyDecoder {
 
     // MARK: - Array Operations
 
-    /// Copy encoder frame at time `t` from channels-first layout [1, D, T].
+    /// Copy encoder frame at time `t` from [B, T, D] layout.
     /// Output slice is [1, 1, D] for joint network input.
     private func copyEncoderFrame(from encoded: MLMultiArray, at t: Int, to slice: MLMultiArray) {
         let hidden = config.encoderHidden
-        let totalFrames = encoded.shape[2].intValue
-        let srcBase = encoded.dataPointer.assumingMemoryBound(to: Float16.self)
-        let dst = slice.dataPointer.assumingMemoryBound(to: Float16.self)
-
-        // encoded is [1, D, T] — stride over T dimension for each channel
-        for d in 0..<hidden {
-            dst[d] = srcBase[d * totalFrames + t]
-        }
+        // encoded is [1, T, D] — frame t is contiguous at offset t * D
+        let src = encoded.dataPointer.advanced(by: t * hidden * MemoryLayout<Float16>.stride)
+        memcpy(slice.dataPointer, src, hidden * MemoryLayout<Float16>.stride)
     }
 
     private func logSoftmax(_ array: MLMultiArray, tokenId: Int, count: Int, floatBuf: UnsafeMutablePointer<Float>) -> Float {
@@ -154,16 +147,6 @@ struct RNNTGreedyDecoder {
         let logSumExp = log(sumExp) + maxVal
         let logit = Float(ptr[tokenId])
         return logit - logSumExp
-    }
-
-    /// Transpose decoder output from [1, D, 1] to [1, 1, D].
-    private func transposeDecoder(_ array: MLMultiArray) throws -> MLMultiArray {
-        let d = array.shape[1].intValue
-        // If already [1, 1, D], return as-is
-        if array.shape[1].intValue == 1 { return array }
-        let result = try MLMultiArray(shape: [1, 1, d as NSNumber], dataType: array.dataType)
-        memcpy(result.dataPointer, array.dataPointer, d * MemoryLayout<Float16>.stride)
-        return result
     }
 
     private func argmax(_ array: MLMultiArray, count: Int, floatBuf: UnsafeMutablePointer<Float>) -> Int {
