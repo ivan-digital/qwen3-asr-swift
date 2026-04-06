@@ -98,26 +98,26 @@ final class ASRProcessor: Sendable {
         lock.unlock()
         guard !chunk.isEmpty else { return ([], speechActive) }
 
-        // VAD
+        // Normalize mic audio FIRST — mic levels (rms ~0.01) are too low
+        // for both VAD and ASR. Scale up to usable level.
+        var normalized = chunk
+        let rms = sqrt(chunk.reduce(0) { $0 + $1 * $1 } / Float(chunk.count))
+        if rms > 0.001 {
+            let gain = min(0.15 / rms, 10.0)
+            for i in 0..<normalized.count { normalized[i] = min(max(normalized[i] * gain, -1.0), 1.0) }
+        }
+
+        // VAD on normalized audio
         var offset = 0
         var silenceCount = 0
-        while offset + 512 <= chunk.count {
-            let prob = vad.processChunk(Array(chunk[offset..<offset+512]))
+        while offset + 512 <= normalized.count {
+            let prob = vad.processChunk(Array(normalized[offset..<offset+512]))
             if prob >= 0.5 { speechActive = true; silenceCount = 0 }
             else { silenceCount += 1; if silenceCount >= 15 { speechActive = false } }
             offset += 512
         }
 
-        // Normalize audio volume — mic audio is typically quiet (rms ~0.01-0.05),
-        // but the EOU model expects louder input. Scale to target RMS ~0.1.
-        var normalized = chunk
-        let rms = sqrt(chunk.reduce(0) { $0 + $1 * $1 } / Float(chunk.count))
-        if rms > 0.001 {
-            let gain = min(0.1 / rms, 10.0)  // Target RMS 0.1, max 10x gain
-            for i in 0..<normalized.count { normalized[i] *= gain }
-        }
-
-        // ASR — feed all audio (speech + silence) for encoder context
+        // ASR on normalized audio
         do {
             self.appendDebugAudio(normalized)
             let partials = try session.pushAudio(normalized)

@@ -297,34 +297,14 @@ public class StreamingSession {
         )
     }
 
-    /// Reset after EOU: clear decoder + tokens, keep encoder caches.
-    /// Encoder caches carry acoustic context that helps re-engagement.
-    /// Only decoder state and tokens need resetting for a new utterance.
+    /// After EOU: clear tokens only. Keep all encoder/decoder state.
+    /// The RNNT model's encoder and decoder carry context that helps
+    /// process the next utterance — resetting causes hallucination.
     private func resetForNextUtterance() {
-        // Keep encoder caches (preEncodeMelCache, cacheLastChannel,
-        // cacheLastTime, cacheLastChannelLen) — they carry context
-
-        // Reset decoder LSTM
-        memset(h.dataPointer, 0, config.decoderLayers * config.decoderHidden * MemoryLayout<Float16>.stride)
-        memset(c.dataPointer, 0, config.decoderLayers * config.decoderHidden * MemoryLayout<Float16>.stride)
-
-        // Re-prime decoder with blank token
-        let tokenPtr = tokenArray.dataPointer.assumingMemoryBound(to: Int32.self)
-        tokenPtr.pointee = Int32(config.blankTokenId)
-        decoderProvider.update("h", h)
-        decoderProvider.update("c", c)
-        if let initOut = try? decoder.prediction(from: decoderProvider) {
-            decoderOutput = initOut.featureValue(for: "decoder_output")!.multiArrayValue!
-            h = initOut.featureValue(for: "h_out")!.multiArrayValue!
-            c = initOut.featureValue(for: "c_out")!.multiArrayValue!
-        }
-
-        // Clear accumulated tokens
         allTokens.removeAll()
         allLogProbs.removeAll()
         segmentIndex += 1
         eouDetected = false
-        sampleBuffer.removeAll()
     }
 
     // MARK: - Pre-encode Mel Cache

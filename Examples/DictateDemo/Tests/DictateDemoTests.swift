@@ -203,6 +203,21 @@ final class E2EDictateDemoTests: XCTestCase {
         XCTAssertFalse(streamPartials.isEmpty || !batchText.isEmpty, "Should produce text from mic audio")
     }
 
+    func testDebugWavLoading() throws {
+        let path = "/tmp/dictate-debug.wav"
+        guard FileManager.default.fileExists(atPath: path) else { throw XCTSkip("No debug wav") }
+
+        let audio = try AudioFileLoader.load(url: URL(fileURLWithPath: path), targetSampleRate: 16000)
+        let rms = sqrt(audio.reduce(0) { $0 + $1 * $1 } / Float(audio.count))
+        print("Loaded: \(audio.count) samples, rms=\(rms)")
+        print("First 5: \(Array(audio.prefix(5)))")
+        if audio.count > 16000 {
+            print("At 1s: \(Array(audio[16000..<16005]))")
+            let speechRms = sqrt(audio[16000..<17600].reduce(0) { $0 + $1 * $1 } / 1600)
+            print("Speech rms at 1s: \(speechRms)")
+        }
+    }
+
     // MARK: - Latency
 
     func testStreamingChunkLatency() throws {

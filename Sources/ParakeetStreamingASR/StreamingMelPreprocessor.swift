@@ -31,10 +31,10 @@ class StreamingMelPreprocessor {
     init(config: ParakeetEOUConfig) {
         self.config = config
 
-        // Symmetric Hann window (NeMo default: periodic=False, divides by N-1)
+        // Periodic Hann window (matches NeMo's actual training preprocessing)
         var window = [Float](repeating: 0, count: config.winLength)
         for i in 0..<config.winLength {
-            window[i] = 0.5 * (1.0 - cos(2.0 * Float.pi * Float(i) / Float(config.winLength - 1)))
+            window[i] = 0.5 * (1.0 - cos(2.0 * Float.pi * Float(i) / Float(config.winLength)))
         }
         self.hannWindow = window
 
@@ -207,13 +207,14 @@ class StreamingMelPreprocessor {
             }
         }
 
-        // Zero center padding (NeMo streaming: pad_mode='constant', NOT reflect)
+        // Reflect center padding (matches batch Parakeet mel that produces correct output)
         let totalLen = reflectPad + preemphasized.count + reflectPad
         var padded = [Float](repeating: 0, count: totalLen)
-        // Left pad: zeros (already zeroed)
-        // Center: copy pre-emphasized audio
+        for i in 0..<reflectPad { padded[i] = preemphasized[min(reflectPad - i, preemphasized.count - 1)] }
         for i in 0..<preemphasized.count { padded[reflectPad + i] = preemphasized[i] }
-        // Right pad: zeros (already zeroed)
+        for i in 0..<reflectPad {
+            padded[reflectPad + preemphasized.count + i] = preemphasized[max(0, preemphasized.count - 2 - i)]
+        }
 
         let nFrames = (padded.count - paddedFFT) / config.hopLength + 1
         let melLength = audio.count / config.hopLength

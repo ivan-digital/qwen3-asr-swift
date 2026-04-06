@@ -4,7 +4,5 @@
 <dict>
     <key>NSMicrophoneUsageDescription</key>
     <string>DictateDemo needs microphone access for voice dictation.</string>
-    <key>LSUIElement</key>
-    <true/>
 </dict>
 </plist>
