@@ -283,8 +283,10 @@ public class StreamingSession {
                 eouDetected: true,
                 segmentIndex: segmentIndex
             )
-            // Full reset for next utterance: caches + decoder + tokens
-            resetForNextUtterance()
+            // Don't reset — keep all state for continuous dictation.
+            // The demo UI handles sentence splitting via isFinal.
+            segmentIndex += 1
+            eouDetected = false
             return partial
         }
 

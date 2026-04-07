@@ -143,6 +143,7 @@ final class ASRProcessor: Sendable {
 final class DictateViewModel {
     var sentences: [String] = []
     var partialText = ""
+    var lastCommittedText = ""  // Track what's been committed to extract deltas
     var isRecording = false
     var isLoading = false
     var loadingStatus = ""
@@ -212,7 +213,7 @@ final class DictateViewModel {
     func startRecording() {
         dlog("startRecording called, model=\(model != nil), vad=\(vad != nil)")
         guard let model, let vad else { dlog("GUARD FAILED"); return }
-        errorMessage = nil; partialText = ""; sentences.removeAll()
+        errorMessage = nil; partialText = ""; sentences.removeAll(); lastCommittedText = ""
 
         do {
             let session = try model.createSession()
@@ -230,12 +231,26 @@ final class DictateViewModel {
                 DispatchQueue.main.async {
                     self?.isSpeechActive = speaking
                     for partial in partials {
-                        if partial.isFinal && !partial.text.isEmpty {
-                            dlog("FINAL: '\(partial.text)'")
-                            self?.sentences.append(partial.text)
+                        guard !partial.text.isEmpty else { continue }
+                        // Tokens accumulate — extract only new text since last commit
+                        let fullText = partial.text
+                        let committed = self?.lastCommittedText ?? ""
+                        let newText: String
+                        if fullText.hasPrefix(committed) && !committed.isEmpty {
+                            newText = String(fullText.dropFirst(committed.count)).trimmingCharacters(in: .whitespaces)
+                        } else {
+                            newText = fullText
+                        }
+
+                        if partial.isFinal {
+                            if !newText.isEmpty {
+                                dlog("FINAL: '\(newText)'")
+                                self?.sentences.append(newText)
+                            }
+                            self?.lastCommittedText = fullText
                             self?.partialText = ""
-                        } else if !partial.text.isEmpty {
-                            self?.partialText = partial.text
+                        } else if !newText.isEmpty {
+                            self?.partialText = newText
                         }
                     }
                 }
@@ -276,5 +291,5 @@ final class DictateViewModel {
         NSPasteboard.general.setString(fullText, forType: .string)
     }
 
-    func clearText() { sentences.removeAll(); partialText = "" }
+    func clearText() { sentences.removeAll(); partialText = ""; lastCommittedText = "" }
 }
