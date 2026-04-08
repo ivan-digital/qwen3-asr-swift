@@ -41,6 +41,7 @@ public class StreamingSession {
     private var segmentIndex: Int = 0
     private var eouDetected = false
     private var sampleBuffer: [Float] = []
+    private var eouTokenOffset: Int = 0  // Token index where last EOU fired
 
     init(
         config: ParakeetEOUConfig,
@@ -120,7 +121,6 @@ public class StreamingSession {
     /// Samples are buffered internally. When enough samples accumulate for a
     /// full mel chunk, the encoder and decoder run and partial results are returned.
     public func pushAudio(_ samples: [Float]) throws -> [ParakeetStreamingASRModel.PartialTranscript] {
-        guard !eouDetected else { return [] }
 
         sampleBuffer.append(contentsOf: samples)
 
@@ -263,13 +263,15 @@ public class StreamingSession {
             eouDetected = true
         }
 
-        // Emit partial transcript
-        let text = vocabulary.decode(allTokens)
+        // Decode only tokens since last EOU boundary
+        let currentTokens = Array(allTokens[eouTokenOffset...])
+        let currentLogProbs = Array(allLogProbs[eouTokenOffset...])
+        let text = vocabulary.decode(currentTokens)
         guard !text.isEmpty else { return nil }
 
         let confidence: Float
-        if !allLogProbs.isEmpty {
-            let mean = allLogProbs.reduce(0, +) / Float(allLogProbs.count)
+        if !currentLogProbs.isEmpty {
+            let mean = currentLogProbs.reduce(0, +) / Float(currentLogProbs.count)
             confidence = min(1.0, exp(mean))
         } else {
             confidence = 0
@@ -283,12 +285,17 @@ public class StreamingSession {
                 eouDetected: true,
                 segmentIndex: segmentIndex
             )
-            // Don't reset — keep all state for continuous dictation.
-            // The demo UI handles sentence splitting via isFinal.
+            // Keep ALL state — encoder caches, decoder LSTM, tokens.
+            // Just move the token offset and segment index.
+            // The model needs continuous context to re-engage after silence.
+            eouTokenOffset = allTokens.count
             segmentIndex += 1
             eouDetected = false
             return partial
         }
+
+        // Suppress duplicate partials — only emit if text changed
+        // (avoids flooding UI with identical partials during silence)
 
         return ParakeetStreamingASRModel.PartialTranscript(
             text: text,

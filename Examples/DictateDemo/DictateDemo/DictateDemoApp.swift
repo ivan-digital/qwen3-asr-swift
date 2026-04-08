@@ -99,6 +99,26 @@ struct ContentView: View {
                     withAnimation { proxy.scrollTo("partial", anchor: .bottom) }
                 }
             }
+
+            // Debug overlay
+            if viewModel.isRecording {
+                Divider()
+                HStack(spacing: 16) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Raw: \(String(format: "%.4f", viewModel.debugAudioRms))")
+                        Text("Norm: \(String(format: "%.4f", viewModel.debugNormRms))")
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Chunks: \(viewModel.debugChunksProcessed)")
+                        Text("Partials: \(viewModel.debugPartialsReceived)")
+                    }
+                    Spacer()
+                }
+                .font(.system(.caption2, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal)
+                .padding(.vertical, 4)
+            }
         }
     }
 }

@@ -25,6 +25,9 @@ final class ASRProcessor: Sendable {
     private let lock = NSLock()
     private let _buffer = UnsafeMutablePointer<[Float]>.allocate(capacity: 1)
     nonisolated(unsafe) var speechActive = false
+    nonisolated(unsafe) var smoothGain: Float = 1.0
+    nonisolated(unsafe) var lastRms: Float = 0
+    nonisolated(unsafe) var lastNormRms: Float = 0
 
     init(session: StreamingSession, vad: SileroVADModel) {
         self.session = session
@@ -98,14 +101,13 @@ final class ASRProcessor: Sendable {
         lock.unlock()
         guard !chunk.isEmpty else { return ([], speechActive) }
 
-        // Normalize mic audio FIRST — mic levels (rms ~0.01) are too low
-        // for both VAD and ASR. Scale up to usable level.
+        // Normalize with smoothed gain to avoid amplitude swings between chunks.
+        // Compute target gain, then blend with previous gain for smooth transition.
         var normalized = chunk
         let rms = sqrt(chunk.reduce(0) { $0 + $1 * $1 } / Float(chunk.count))
-        if rms > 0.001 {
-            let gain = min(0.15 / rms, 10.0)
-            for i in 0..<normalized.count { normalized[i] = min(max(normalized[i] * gain, -1.0), 1.0) }
-        }
+        let targetGain: Float = rms > 0.002 ? min(0.1 / rms, 5.0) : smoothGain
+        smoothGain = smoothGain * 0.85 + targetGain * 0.15  // Slow exponential smoothing
+        for i in 0..<normalized.count { normalized[i] = min(max(normalized[i] * smoothGain, -1.0), 1.0) }
 
         // VAD on normalized audio
         var offset = 0
@@ -118,9 +120,13 @@ final class ASRProcessor: Sendable {
         }
 
         // ASR on normalized audio
+        lastRms = rms
+        let normRms = sqrt(normalized.reduce(0) { $0 + $1 * $1 } / Float(normalized.count))
+        lastNormRms = normRms
         do {
             self.appendDebugAudio(normalized)
             let partials = try session.pushAudio(normalized)
+            dlog("asr: rms=\(String(format:"%.4f",rms))→\(String(format:"%.4f",normRms)) gain=\(String(format:"%.1f",smoothGain)) vad=\(speechActive) partials=\(partials.count)")
             if !partials.isEmpty {
                 dlog("ASR: \(partials.count) partials — '\(partials.map { $0.text }.joined(separator: ", "))'")
             }
@@ -149,6 +155,10 @@ final class DictateViewModel {
     var loadingStatus = ""
     var errorMessage: String?
     var isSpeechActive = false
+    var debugAudioRms: Float = 0
+    var debugNormRms: Float = 0
+    var debugChunksProcessed: Int = 0
+    var debugPartialsReceived: Int = 0
 
     private var model: ParakeetStreamingASRModel?
     private var vad: SileroVADModel?
@@ -230,27 +240,17 @@ final class DictateViewModel {
                 let (partials, speaking) = proc.processBuffered()
                 DispatchQueue.main.async {
                     self?.isSpeechActive = speaking
+                    self?.debugAudioRms = proc.lastRms
+                    self?.debugNormRms = proc.lastNormRms
+                    self?.debugChunksProcessed = (self?.debugChunksProcessed ?? 0) + 1
+                    self?.debugPartialsReceived = (self?.debugPartialsReceived ?? 0) + partials.count
                     for partial in partials {
-                        guard !partial.text.isEmpty else { continue }
-                        // Tokens accumulate — extract only new text since last commit
-                        let fullText = partial.text
-                        let committed = self?.lastCommittedText ?? ""
-                        let newText: String
-                        if fullText.hasPrefix(committed) && !committed.isEmpty {
-                            newText = String(fullText.dropFirst(committed.count)).trimmingCharacters(in: .whitespaces)
-                        } else {
-                            newText = fullText
-                        }
-
-                        if partial.isFinal {
-                            if !newText.isEmpty {
-                                dlog("FINAL: '\(newText)'")
-                                self?.sentences.append(newText)
-                            }
-                            self?.lastCommittedText = fullText
+                        if partial.isFinal && !partial.text.isEmpty {
+                            dlog("FINAL: '\(partial.text)'")
+                            self?.sentences.append(partial.text)
                             self?.partialText = ""
-                        } else if !newText.isEmpty {
-                            self?.partialText = newText
+                        } else if !partial.text.isEmpty {
+                            self?.partialText = partial.text
                         }
                     }
                 }
