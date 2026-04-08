@@ -248,11 +248,13 @@ class StreamingMelPreprocessor {
                     vDSP_fft_zrip(fftSetup, &splitComplex, 1, log2PaddedFFT, FFTDirection(kFFTDirection_Forward))
                 }
             }
+            // vDSP_fft_zrip scales by 2x vs standard DFT (torch.stft).
+            // Divide power by 4 (2^2) to match training pipeline.
             let base = frame * nBins
-            powerSpec[base] = splitReal[0] * splitReal[0]
-            powerSpec[base + halfPadded] = splitImag[0] * splitImag[0]
+            powerSpec[base] = splitReal[0] * splitReal[0] * 0.25
+            powerSpec[base + halfPadded] = splitImag[0] * splitImag[0] * 0.25
             for k in 1..<halfPadded {
-                powerSpec[base + k] = splitReal[k] * splitReal[k] + splitImag[k] * splitImag[k]
+                powerSpec[base + k] = (splitReal[k] * splitReal[k] + splitImag[k] * splitImag[k]) * 0.25
             }
         }
 
@@ -266,8 +268,6 @@ class StreamingMelPreprocessor {
         vDSP_vsadd(melSpec, 1, &guardVal, &melSpec, 1, vDSP_Length(melSpec.count))
         var countN = Int32(melSpec.count)
         vvlogf(&melSpec, melSpec, &countN)
-
-        // NO normalization — raw log mel
 
         let mel = try MLMultiArray(
             shape: [1, config.numMelBins as NSNumber, nFrames as NSNumber], dataType: .float32)
