@@ -17,11 +17,10 @@ public class StreamingSession {
     private let rnntDecoder: RNNTGreedyDecoder
 
     // Encoder cache state
+    private var preCache: MLMultiArray  // [1, 128, preCacheSize] — looped back from encoder
     private var cacheLastChannel: MLMultiArray
     private var cacheLastTime: MLMultiArray
     private var cacheLastChannelLen: MLMultiArray
-    // Pre-encode mel cache: last preCacheSize mel frames from previous chunk
-    private var preEncodeMelCache: [Float]
 
     // Decoder LSTM state
     private var h: MLMultiArray
@@ -64,11 +63,12 @@ public class StreamingSession {
         let hidden = config.encoderHidden
         let attCtx = config.attentionContext
         let convCache = config.convCacheSize
+        let preCacheSize = config.streaming.preCacheSize
 
-        // Pre-encode mel cache: zeros for first chunk
-        preEncodeMelCache = [Float](repeating: 0,
-            count: config.numMelBins * config.streaming.preCacheSize)
-
+        preCache = try MLMultiArray(
+            shape: [1, config.numMelBins as NSNumber, preCacheSize as NSNumber], dataType: .float32)
+        memset(preCache.dataPointer, 0,
+               config.numMelBins * preCacheSize * MemoryLayout<Float>.stride)
         cacheLastChannel = try MLMultiArray(
             shape: [layers, 1, attCtx, hidden] as [NSNumber], dataType: .float32)
         cacheLastTime = try MLMultiArray(
@@ -124,7 +124,7 @@ public class StreamingSession {
 
         sampleBuffer.append(contentsOf: samples)
 
-        let samplesPerChunk = config.streaming.melFrames * config.hopLength
+        let samplesPerChunk = (config.streaming.melFrames - 1) * config.hopLength
         var results: [ParakeetStreamingASRModel.PartialTranscript] = []
 
         while sampleBuffer.count >= samplesPerChunk {
@@ -147,7 +147,7 @@ public class StreamingSession {
         // Process remaining buffered samples
         if !sampleBuffer.isEmpty && !eouDetected {
             // Pad to full chunk size
-            let samplesPerChunk = config.streaming.melFrames * config.hopLength
+            let samplesPerChunk = (config.streaming.melFrames - 1) * config.hopLength
             let padded = sampleBuffer + [Float](repeating: 0, count: max(0, samplesPerChunk - sampleBuffer.count))
             sampleBuffer.removeAll()
             if let partial = try processChunk(Array(padded.prefix(samplesPerChunk))) {
@@ -195,30 +195,23 @@ public class StreamingSession {
         }
         guard melLength > 0 else { return nil }
 
-        // Truncate/pad chunk mel to exact expected frame count
+        // Truncate/pad mel to exact expected frame count
         let expectedFrames = config.streaming.melFrames
         let actualMelFrames = rawMel.shape[2].intValue
-        let chunkMel: MLMultiArray
+        let mel: MLMultiArray
         if actualMelFrames > expectedFrames {
-            chunkMel = try truncateMel(rawMel, to: expectedFrames)
+            mel = try truncateMel(rawMel, to: expectedFrames)
         } else if actualMelFrames < expectedFrames {
-            chunkMel = try padMel(rawMel, actualLength: actualMelFrames, targetLength: expectedFrames)
+            mel = try padMel(rawMel, actualLength: actualMelFrames, targetLength: expectedFrames)
         } else {
-            chunkMel = rawMel
+            mel = rawMel
         }
 
-        // Prepend pre-encode mel cache to chunk mel for encoder input
-        let preCacheSize = config.streaming.preCacheSize
-        let totalFrames = preCacheSize + expectedFrames
-        let mel = try prependMelCache(chunkMel, expectedFrames: expectedFrames, totalFrames: totalFrames)
-
-        // Save last preCacheSize frames of chunk mel for next iteration
-        savePreEncodeMelCache(from: chunkMel, frames: expectedFrames)
-
-        // Run cache-aware encoder
+        // Run encoder — pre_cache is a separate input, model concatenates internally
         let encoderInput = try MLDictionaryFeatureProvider(dictionary: [
             "audio_signal": MLFeatureValue(multiArray: mel),
             "audio_length": MLFeatureValue(multiArray: makeInt32Array(value: Int32(expectedFrames))),
+            "pre_cache": MLFeatureValue(multiArray: preCache),
             "cache_last_channel": MLFeatureValue(multiArray: cacheLastChannel),
             "cache_last_time": MLFeatureValue(multiArray: cacheLastTime),
             "cache_last_channel_len": MLFeatureValue(multiArray: cacheLastChannelLen),
@@ -232,7 +225,8 @@ public class StreamingSession {
         let actualFrames = encoded.shape[1].intValue
         let encodedLength = min(reportedLength, actualFrames)
 
-        // Update encoder caches
+        // Update encoder caches (including pre_cache loopback)
+        preCache = encoderOutput.featureValue(for: "new_pre_cache")!.multiArrayValue!
         cacheLastChannel = encoderOutput.featureValue(for: "new_cache_last_channel")!.multiArrayValue!
         cacheLastTime = encoderOutput.featureValue(for: "new_cache_last_time")!.multiArrayValue!
         cacheLastChannelLen = encoderOutput.featureValue(for: "new_cache_last_channel_len")!.multiArrayValue!
@@ -317,52 +311,6 @@ public class StreamingSession {
     }
 
     // MARK: - Pre-encode Mel Cache
-
-    /// Prepend pre-encode mel cache to chunk mel, creating [1, 128, totalFrames].
-    private func prependMelCache(_ chunkMel: MLMultiArray, expectedFrames: Int, totalFrames: Int) throws -> MLMultiArray {
-        let numBins = config.numMelBins
-        let preCacheSize = config.streaming.preCacheSize
-        let mel = try MLMultiArray(
-            shape: [1, numBins as NSNumber, totalFrames as NSNumber], dataType: .float32)
-        let dst = mel.dataPointer.assumingMemoryBound(to: Float.self)
-        let src = chunkMel.dataPointer.assumingMemoryBound(to: Float.self)
-
-        for bin in 0..<numBins {
-            let dstOffset = bin * totalFrames
-            let cacheOffset = bin * preCacheSize
-            let srcOffset = bin * expectedFrames
-
-            // Copy pre-encode cache (preCacheSize frames)
-            memcpy(dst.advanced(by: dstOffset),
-                   preEncodeMelCache.withUnsafeBufferPointer { $0.baseAddress! }.advanced(by: cacheOffset),
-                   preCacheSize * MemoryLayout<Float>.stride)
-
-            // Copy chunk mel (expectedFrames frames)
-            memcpy(dst.advanced(by: dstOffset + preCacheSize),
-                   src.advanced(by: srcOffset),
-                   expectedFrames * MemoryLayout<Float>.stride)
-        }
-        return mel
-    }
-
-    /// Save last preCacheSize frames of chunk mel for next iteration.
-    private func savePreEncodeMelCache(from chunkMel: MLMultiArray, frames: Int) {
-        let numBins = config.numMelBins
-        let preCacheSize = config.streaming.preCacheSize
-        let src = chunkMel.dataPointer.assumingMemoryBound(to: Float.self)
-        let startFrame = max(0, frames - preCacheSize)
-        let copyFrames = min(preCacheSize, frames)
-
-        for bin in 0..<numBins {
-            let srcOffset = bin * frames + startFrame
-            let dstOffset = bin * preCacheSize + (preCacheSize - copyFrames)
-            preEncodeMelCache.withUnsafeMutableBufferPointer { buf in
-                memcpy(buf.baseAddress!.advanced(by: dstOffset),
-                       src.advanced(by: srcOffset),
-                       copyFrames * MemoryLayout<Float>.stride)
-            }
-        }
-    }
 
     private func makeInt32Array(value: Int32) throws -> MLMultiArray {
         let array = try MLMultiArray(shape: [1], dataType: .int32)
