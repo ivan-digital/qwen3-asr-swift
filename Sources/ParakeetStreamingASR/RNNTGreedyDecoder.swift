@@ -45,6 +45,7 @@ struct RNNTGreedyDecoder {
     func decode(
         encoded: MLMultiArray,
         encodedLength: Int,
+        startFrame: Int = 0,
         h: inout MLMultiArray,
         c: inout MLMultiArray,
         decoderOutput: inout MLMultiArray,
@@ -59,17 +60,29 @@ struct RNNTGreedyDecoder {
 
         let tokenPtr = tokenArray.dataPointer.assumingMemoryBound(to: Int32.self)
 
-        for t in 0..<encodedLength {
+        for t in startFrame..<(startFrame + encodedLength) {
             // Extract encoder frame t from [B, D, T] → [B, D, 1]
             copyEncoderFrame(from: encoded, at: t, to: encSlice)
 
             for _ in 0..<maxSymbolsPerStep {
-                // Joint: (encoder_step [1,D,1], decoder_step [1,D,1]) → token_id
+                // Joint expects float32 inputs — convert decoder output if needed
+                let decStep: MLMultiArray
+                if decoderOutput.dataType == .float16 {
+                    decStep = try convertToFloat32(decoderOutput)
+                } else {
+                    decStep = decoderOutput
+                }
                 jointProvider.update("encoder_step", encSlice)
-                jointProvider.update("decoder_step", decoderOutput)
+                jointProvider.update("decoder_step", decStep)
                 let jointOut = try joint.prediction(from: jointProvider)
                 let tokenIdArray = jointOut.featureValue(for: "token_id")!.multiArrayValue!
                 let tokenId = Int(tokenIdArray[0].int32Value)
+                if t == startFrame {
+                    let probArray = jointOut.featureValue(for: "token_prob")!.multiArrayValue!
+                    print("[DBG] joint[t=0]: token=\(tokenId) prob=\(probArray[0]) blank=\(config.blankTokenId)")
+                    print("[DBG] encSlice: shape=\(encSlice.shape) dtype=\(encSlice.dataType.rawValue)")
+                    print("[DBG] decOut: shape=\(decoderOutput.shape) dtype=\(decoderOutput.dataType.rawValue)")
+                }
 
                 if tokenId == config.blankTokenId {
                     break  // Advance to next encoder frame
@@ -103,6 +116,15 @@ struct RNNTGreedyDecoder {
     }
 
     // MARK: - Array Operations
+
+    /// Convert float16 MLMultiArray to float32.
+    private func convertToFloat32(_ array: MLMultiArray) throws -> MLMultiArray {
+        let result = try MLMultiArray(shape: array.shape, dataType: .float32)
+        let src = array.dataPointer.assumingMemoryBound(to: Float16.self)
+        let dst = result.dataPointer.assumingMemoryBound(to: Float.self)
+        for i in 0..<array.count { dst[i] = Float(src[i]) }
+        return result
+    }
 
     /// Copy encoder frame at time `t` from [B, D, T] layout to [B, D, 1].
     private func copyEncoderFrame(from encoded: MLMultiArray, at t: Int, to slice: MLMultiArray) {

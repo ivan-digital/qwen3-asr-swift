@@ -194,7 +194,10 @@ public class StreamingSession {
         let encoded = encoderOutput.featureValue(for: "encoded_output")!.multiArrayValue!
         let reportedLength = encoderOutput.featureValue(for: "encoded_length")!.multiArrayValue![0].intValue
         let actualFrames = encoded.shape[2].intValue
-        let encodedLength = min(reportedLength, actualFrames)
+        // Only decode the LAST validOutputFrames — first frames are from pre-cache context
+        let validOut = config.streaming.outputFrames
+        let encodedLength = min(validOut, actualFrames)
+        let encodedStartFrame = max(0, actualFrames - validOut)
 
         // Update all caches including pre_cache loopback
         preCache = encoderOutput.featureValue(for: "new_pre_cache")!.multiArrayValue!
@@ -202,12 +205,22 @@ public class StreamingSession {
         cacheLastTime = encoderOutput.featureValue(for: "new_cache_last_time")!.multiArrayValue!
         cacheLastChannelLen = encoderOutput.featureValue(for: "new_cache_last_channel_len")!.multiArrayValue!
 
+        // Debug encoder output
+        print("[DBG] encoder: shape=\(encoded.shape) dtype=\(encoded.dataType.rawValue) len=\(encodedLength) reported=\(reportedLength)")
+        if encoded.dataType == .float16 {
+            let ptr = encoded.dataPointer.assumingMemoryBound(to: Float16.self)
+            let total = min(10, encoded.count)
+            let vals = (0..<total).map { Float(ptr[$0]) }
+            print("[DBG] first10: \(vals.map { String(format: "%.3f", $0) })")
+        }
+
         guard encodedLength > 0 else { return nil }
 
-        // RNNT decode
+        // RNNT decode — start from encodedStartFrame (skip pre-cache context frames)
         let result = try rnntDecoder.decode(
             encoded: encoded,
             encodedLength: encodedLength,
+            startFrame: encodedStartFrame,
             h: &h, c: &c,
             decoderOutput: &decoderOutput,
             decoderProvider: decoderProvider,
