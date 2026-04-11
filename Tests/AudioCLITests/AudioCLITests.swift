@@ -85,6 +85,21 @@ final class TranscribeCommandTests: XCTestCase {
         XCTAssertEqual(transcribe.language, "zh")
     }
 
+    func testDefaultContextIsNil() throws {
+        let cmd = try AudioCLI.parseAsRoot(["transcribe", "audio.wav"])
+        let transcribe = try XCTUnwrap(cmd as? TranscribeCommand)
+        XCTAssertNil(transcribe.context)
+    }
+
+    func testParsesContext() throws {
+        let cmd = try AudioCLI.parseAsRoot([
+            "transcribe", "audio.wav",
+            "--context", "Project: Meander, participants: Will, Adam"
+        ])
+        let transcribe = try XCTUnwrap(cmd as? TranscribeCommand)
+        XCTAssertEqual(transcribe.context, "Project: Meander, participants: Will, Adam")
+    }
+
     func testParsesFullModelId() throws {
         let cmd = try AudioCLI.parseAsRoot(["transcribe", "audio.wav", "-m", "org/my-custom-model"])
         let transcribe = try XCTUnwrap(cmd as? TranscribeCommand)
