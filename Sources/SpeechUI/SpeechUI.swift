@@ -1,14 +1,11 @@
-import Foundation
-
-/// SpeechUI provides reusable SwiftUI views for building speech-driven apps:
+/// SpeechUI provides minimal SwiftUI building blocks for streaming speech apps.
 ///
-/// - ``WaveformView`` — render `[Float]` PCM samples as a waveform
-/// - ``MicLevelView`` — horizontal level meter for live mic monitoring
-/// - ``TranscriptionView`` — scrolling transcript with finals + in-progress partial
+/// The module is intentionally narrow. It ships only what is genuinely
+/// speech-domain — display of finals vs in-progress partials and the adapter
+/// that lets any streaming ASR backend feed it. Generic audio utilities like
+/// waveform rendering and level meters are out of scope; use AVFoundation or a
+/// dedicated audio-visualization library for those.
 ///
-/// The views are deliberately decoupled from any specific ASR backend. Feed
-/// them plain Swift values you derive from your model's output (Parakeet,
-/// Qwen3-ASR, Whisper, anything).
-public enum SpeechUI {
-    public static let version = "0.1.0"
-}
+/// - ``TranscriptionView`` — scrolling transcript with finals + partial line
+/// - ``TranscriptionStore`` — `@Observable` adapter for any streaming ASR
+public enum SpeechUI {}

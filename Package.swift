@@ -347,7 +347,14 @@ let package = Package(
         ),
         .testTarget(
             name: "SpeechUITests",
-            dependencies: ["SpeechUI"]
+            dependencies: [
+                "SpeechUI",
+                "ParakeetStreamingASR",
+                "AudioCommon"
+            ],
+            resources: [
+                .copy("Resources/test_audio.wav")
+            ]
         )
     ]
 )

@@ -95,7 +95,7 @@ struct DictateView: View {
 }
 ```
 
-`SpeechUI` fournit aussi `WaveformView` et `MicLevelView` pour la visualisation audio. Les vues sont decouplees de tout backend ASR specifique -- passez-leur de simples valeurs Swift et utilisez le modele de votre choix.
+`SpeechUI` est intentionnellement minimal -- seulement `TranscriptionView` et l'adaptateur `TranscriptionStore`. Plateforme vocale d'abord : couvre le concept ASR en streaming (finaux vs partiels) qu'il est facile de mal implementer, et reste en dehors de la visualisation ou lecture audio generique (utilisez AVFoundation directement pour cela).
 
 Produits SPM disponibles : `Qwen3ASR`, `Qwen3TTS`, `Qwen3TTSCoreML`, `ParakeetASR`, `ParakeetStreamingASR`, `KokoroTTS`, `CosyVoiceTTS`, `PersonaPlex`, `SpeechVAD`, `SpeechEnhancement`, `Qwen3Chat`, `SpeechCore`, `SpeechUI`, `AudioCommon`.
 
