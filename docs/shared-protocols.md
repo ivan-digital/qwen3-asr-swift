@@ -58,7 +58,7 @@ public protocol SpeechRecognitionModel: AnyObject {
 
 The `transcribeWithLanguage` method has a default implementation that delegates to `transcribe()` with no language detection. Models that detect language (e.g. ParakeetASR via `NLLanguageRecognizer`) override it to return `TranscriptionResult` with a detected language — used by the voice pipeline to forward language to TTS.
 
-**Conforming types:** `Qwen3ASRModel`, `ParakeetASRModel`, `ParakeetStreamingASRModel`
+**Conforming types:** `Qwen3ASRModel`, `ParakeetASRModel`, `ParakeetStreamingASRModel`, `OmnilingualASRModel` (CoreML), `OmnilingualASRMLXModel` (MLX)
 
 `ParakeetStreamingASRModel` additionally exposes streaming APIs — `createSession()` for long-lived streaming with cache state, `transcribeStream(audio:sampleRate:)` for chunked AsyncSequence output, and per-session `pushAudio` / `forceEndOfUtterance` / `finalize` for fine-grained VAD-driven pipelines. The batch `transcribe` entry point runs internal chunking and remains protocol-compatible.
 
@@ -344,16 +344,35 @@ Sources/
 │   ├── Logging.swift          Centralized os.Logger instances (AudioLog)
 │   ├── AudioFileLoader.swift  WAV/audio file loading
 │   ├── WAVWriter.swift        WAV file writing
-│   ├── WeightLoading.swift    Safetensors loading, HuggingFace download
+│   ├── HuggingFaceDownloader.swift  Safetensors / asset download from HF Hub
 │   ├── Tokenizer.swift        BPE tokenizer
-│   ├── QuantizedMLP.swift     Shared 4-bit SwiGLU MLP
-│   └── PreQuantizedEmbedding.swift  4-bit packed embedding table
+│   └── SentencePieceModel.swift  Shared SentencePiece `.model` protobuf reader (used by OmnilingualASR + PersonaPlex)
+│
+├── MLXCommon/                 MLX-specific utilities (quantised layers, weight loading, SDPA)
+│   ├── WeightLoading.swift    Apply safetensors tensors to MLXNN modules
+│   ├── QuantizedMLP.swift     Shared 4-bit SwiGLU MLP building block
+│   ├── PreQuantizedEmbedding.swift  4-bit packed embedding table
+│   ├── SDPA.swift             `SDPA.multiHead` / `SDPA.attendAndMerge` helpers used by every MLX attention module
+│   └── MetalBudget.swift      GPU memory pinning / budget helpers
 │
 ├── Qwen3ASR/                  Speech-to-text (ASR + Forced Aligner)
 │   ├── Qwen3ASR.swift         Qwen3ASRModel: SpeechRecognitionModel
 │   ├── ForcedAligner.swift    Qwen3ForcedAligner: ForcedAlignmentModel
 │   ├── Qwen3ASR+Protocols.swift
 │   └── ForcedAligner+Protocols.swift
+│
+├── OmnilingualASR/            Speech-to-text (Meta wav2vec2 + CTC, 1,672 languages)
+│   ├── OmnilingualASR.swift   OmnilingualASRModel: SpeechRecognitionModel (CoreML backend, 300M)
+│   ├── Configuration.swift    Decodes published `config.json` (5 s / 10 s window variants)
+│   ├── SentencePieceVocabulary.swift  Decoder built on `AudioCommon.SentencePieceModel`
+│   ├── CTCGreedyDecoder.swift Argmax + consecutive-duplicate collapse
+│   └── MLX/
+│       ├── OmnilingualMLXModel.swift      OmnilingualASRMLXModel: SpeechRecognitionModel (MLX backend)
+│       ├── OmnilingualMLXConfig.swift     Variant table (300M / 1B / 3B / 7B)
+│       ├── Wav2Vec2Frontend.swift         CNN feature extractor + weight-normed pos encoder
+│       ├── Wav2Vec2EncoderLayer.swift     Pre-norm transformer layer (quantised SA + FFN)
+│       ├── Wav2Vec2Encoder.swift          Stack + final layer norm + CTC head
+│       └── OmnilingualMLXWeightLoader.swift  Fuses PyTorch weight_norm at load time
 │
 ├── Qwen3TTS/                  Text-to-speech (Talker + Code Predictor + Mimi)
 │   ├── Qwen3TTS.swift         Qwen3TTSModel: SpeechGenerationModel
@@ -389,13 +408,19 @@ Sources/
 ### Dependencies
 
 ```
-AudioCommon  ← Qwen3ASR      ─┐
-             ← Qwen3TTS      │
-             ← CosyVoiceTTS  ├── AudioCLILib ── AudioCLI (executable)
-             ← KokoroTTS     │
-             ← PersonaPlex   │
-             ← SpeechVAD    ─┘
+AudioCommon  ← Qwen3ASR         ─┐
+             ← Qwen3TTS         │
+             ← CosyVoiceTTS     │
+             ← KokoroTTS        ├── AudioCLILib ── AudioCLI (executable)
+             ← ParakeetASR      │
+             ← ParakeetStreamingASR │
+             ← OmnilingualASR   │  (CoreML + MLX backends)
+             ← PersonaPlex      │
+             ← SpeechVAD       ─┘
              ← SpeechCore (CSpeechCore xcframework + AudioCommon)
+
+MLXCommon  ← Qwen3ASR, Qwen3TTS, Qwen3Chat, CosyVoiceTTS, PersonaPlex,
+              SpeechVAD, OmnilingualASR (MLX backend)
 ```
 
 Each model target depends only on `AudioCommon` and MLX. No cross-dependencies between model targets. `SpeechCore` depends on `AudioCommon` for protocols and the `CSpeechCore` binary target for the C++ pipeline engine.
@@ -409,6 +434,8 @@ All model classes are **not thread-safe** by design. ML inference is inherently 
 - `Qwen3TTSModel`
 - `CosyVoiceTTSModel`
 - `PersonaPlexModel`
+- `OmnilingualASRModel` (CoreML), `OmnilingualASRMLXModel` (MLX)
+- `ParakeetASRModel`, `ParakeetStreamingASRModel`
 - `SileroVADModel`, `StreamingVADProcessor`, `PyannoteVADModel`
 - `PyannoteDiarizationPipeline` (aliased as `DiarizationPipeline`), `SortformerDiarizer`
 

@@ -96,12 +96,10 @@ public class QuantizedTextAttention: Module {
         }
 
         // SDPA handles GQA natively (N_q != N_kv), no need to tile KV heads
-        let attnOutput = MLXFast.scaledDotProductAttention(
-            queries: queries, keys: cachedKeys, values: cachedValues,
+        let merged = SDPA.attendAndMerge(
+            qHeads: queries, kHeads: cachedKeys, vHeads: cachedValues,
             scale: scale, mask: attentionMask)
-
-        // SDPA returns [B, N_q, T_q, D], transpose to [B, T_q, N_q, D] then reshape
-        let output = oProj(attnOutput.transposed(0, 2, 1, 3).reshaped(batch, seqLen, numHeads * headDim))
+        let output = oProj(merged)
 
         return (output, (cachedKeys, cachedValues))
     }

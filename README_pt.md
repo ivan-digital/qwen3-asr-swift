@@ -12,6 +12,7 @@ Reconhecimento, sintese e compreensao de fala no dispositivo para Mac e iOS. Exe
 
 - **Qwen3-ASR** — Fala para texto / reconhecimento de fala (reconhecimento automatico de fala, 52 idiomas)
 - **Parakeet TDT** — Fala para texto via CoreML (Neural Engine, NVIDIA FastConformer + decodificador TDT, 25 idiomas)
+- **Omnilingual ASR** — Fala para texto via CoreML (Meta wav2vec2 + CTC, **1.672 idiomas** em mais de 150 famílias, janelas de 5/10 s, INT8 palletizado, ANE)
 - **Qwen3-ForcedAligner** — Alinhamento de timestamps por palavra (audio + texto → timestamps)
 - **Qwen3-TTS** — Sintese de texto para fala (mais alta qualidade, streaming, locutores personalizados, 10 idiomas)
 - **CosyVoice TTS** — Texto para fala com streaming, clonagem de voz, dialogo multi-locutor e tags de emocao (9 idiomas, DiT flow matching, codificador de locutor CAM++)
@@ -97,7 +98,7 @@ struct DictateView: View {
 
 `SpeechUI` inclui apenas `TranscriptionView` (finais + parciais) e `TranscriptionStore` (adaptador de ASR em streaming). Use AVFoundation para visualização e reprodução de áudio.
 
-Produtos SPM disponíveis: `Qwen3ASR`, `Qwen3TTS`, `Qwen3TTSCoreML`, `ParakeetASR`, `ParakeetStreamingASR`, `KokoroTTS`, `CosyVoiceTTS`, `PersonaPlex`, `SpeechVAD`, `SpeechEnhancement`, `Qwen3Chat`, `SpeechCore`, `SpeechUI`, `AudioCommon`.
+Produtos SPM disponíveis: `Qwen3ASR`, `Qwen3TTS`, `Qwen3TTSCoreML`, `ParakeetASR`, `ParakeetStreamingASR`, `OmnilingualASR`, `KokoroTTS`, `CosyVoiceTTS`, `PersonaPlex`, `SpeechVAD`, `SpeechEnhancement`, `Qwen3Chat`, `SpeechCore`, `SpeechUI`, `AudioCommon`.
 
 ## Modelos
 
@@ -107,6 +108,10 @@ Produtos SPM disponíveis: `Qwen3ASR`, `Qwen3TTS`, `Qwen3TTSCoreML`, `ParakeetAS
 | Qwen3-ASR-1.7B | Fala → Texto | Nao | 52 idiomas | [4-bit](https://huggingface.co/aufklarer/Qwen3-ASR-1.7B-MLX-4bit) 2.1 GB · [8-bit](https://huggingface.co/aufklarer/Qwen3-ASR-1.7B-MLX-8bit) 3.2 GB |
 | Parakeet-TDT-0.6B | Fala → Texto | Nao | 25 idiomas europeus | [CoreML INT8](https://huggingface.co/aufklarer/Parakeet-TDT-v3-CoreML-INT8) 500 MB |
 | Parakeet-EOU-120M | Fala → Texto | Sim (streaming + EOU) | 25 idiomas europeus | [CoreML INT8](https://huggingface.co/aufklarer/Parakeet-EOU-120M-CoreML-INT8) ~120 MB |
+| Omnilingual-ASR-CTC-300M | Fala → Texto | Nao (janela de 5/10 s) | [1.672 idiomas](https://github.com/facebookresearch/omnilingual-asr/blob/main/src/omnilingual_asr/models/wav2vec2_llama/lang_ids.py) | [CoreML INT8 (10s)](https://huggingface.co/aufklarer/Omnilingual-ASR-CTC-300M-CoreML-INT8-10s) 312 MB · [CoreML INT8 (5s)](https://huggingface.co/aufklarer/Omnilingual-ASR-CTC-300M-CoreML-INT8) 312 MB · [MLX 4-bit](https://huggingface.co/aufklarer/Omnilingual-ASR-CTC-300M-MLX-4bit) 193 MB · [MLX 8-bit](https://huggingface.co/aufklarer/Omnilingual-ASR-CTC-300M-MLX-8bit) 342 MB |
+| Omnilingual-ASR-CTC-1B | Fala → Texto | Nao | [1.672 idiomas](https://github.com/facebookresearch/omnilingual-asr/blob/main/src/omnilingual_asr/models/wav2vec2_llama/lang_ids.py) | [MLX 4-bit](https://huggingface.co/aufklarer/Omnilingual-ASR-CTC-1B-MLX-4bit) 549 MB · [MLX 8-bit](https://huggingface.co/aufklarer/Omnilingual-ASR-CTC-1B-MLX-8bit) 1006 MB |
+| Omnilingual-ASR-CTC-3B | Fala → Texto | Nao | [1.672 idiomas](https://github.com/facebookresearch/omnilingual-asr/blob/main/src/omnilingual_asr/models/wav2vec2_llama/lang_ids.py) | [MLX 4-bit](https://huggingface.co/aufklarer/Omnilingual-ASR-CTC-3B-MLX-4bit) 1709 MB · [MLX 8-bit](https://huggingface.co/aufklarer/Omnilingual-ASR-CTC-3B-MLX-8bit) 3159 MB |
+| Omnilingual-ASR-CTC-7B | Fala → Texto | Nao | [1.672 idiomas](https://github.com/facebookresearch/omnilingual-asr/blob/main/src/omnilingual_asr/models/wav2vec2_llama/lang_ids.py) | [MLX 4-bit](https://huggingface.co/aufklarer/Omnilingual-ASR-CTC-7B-MLX-4bit) 3.55 GB · [MLX 8-bit](https://huggingface.co/aufklarer/Omnilingual-ASR-CTC-7B-MLX-8bit) 6.63 GB |
 | Qwen3-ForcedAligner-0.6B | Audio + Texto → Timestamps | Nao | Multi | [4-bit](https://huggingface.co/aufklarer/Qwen3-ForcedAligner-0.6B-4bit) 979 MB · [8-bit](https://huggingface.co/aufklarer/Qwen3-ForcedAligner-0.6B-8bit) 1.4 GB · [CoreML INT4](https://huggingface.co/aufklarer/Qwen3-ForcedAligner-0.6B-CoreML-INT4) 630 MB · [CoreML INT8](https://huggingface.co/aufklarer/Qwen3-ForcedAligner-0.6B-CoreML-INT8) 1.0 GB |
 | Qwen3-TTS-0.6B Base | Texto → Fala | Sim (~120ms) | 10 idiomas | [4-bit](https://huggingface.co/aufklarer/Qwen3-TTS-12Hz-0.6B-Base-MLX-4bit) 1.7 GB · [8-bit](https://huggingface.co/aufklarer/Qwen3-TTS-12Hz-0.6B-Base-MLX-8bit) 2.4 GB · [CoreML](https://huggingface.co/aufklarer/Qwen3-TTS-CoreML) 1.0 GB |
 | Qwen3-TTS-0.6B CustomVoice | Texto → Fala | Sim (~120ms) | 10 idiomas | [4-bit](https://huggingface.co/aufklarer/Qwen3-TTS-12Hz-0.6B-CustomVoice-MLX-4bit) 1.7 GB |
@@ -134,6 +139,7 @@ Memoria de pesos e a memoria da GPU (MLX) ou ANE (CoreML) consumida pelos parame
 | Qwen3-ASR-1.7B (8-bit, MLX) | 2,349 MB | ~4 GB |
 | Parakeet-TDT-0.6B (CoreML) | 315 MB | ~400 MB |
 | Parakeet-EOU-120M (CoreML) | ~120 MB | ~200 MB |
+| Omnilingual-ASR-CTC-300M (CoreML INT8) | 312 MB | ~600 MB |
 | Qwen3-ForcedAligner-0.6B (4-bit, MLX) | 933 MB | ~1.5 GB |
 | Qwen3-TTS-1.7B (4-bit, MLX) | 2,300 MB | ~4–6 GB |
 | Qwen3-TTS-0.6B (4-bit, MLX) | 977 MB | ~2 GB |
@@ -1272,6 +1278,7 @@ PERSONAPLEX_E2E=1 swift test --filter PersonaPlexE2ETests
 |--------|---------|
 | Qwen3-ASR | 52 idiomas (CN, EN, Cantones, DE, FR, ES, JA, KO, RU, + 22 dialetos chineses, ...) |
 | Parakeet TDT | 25 idiomas europeus (BG, CS, DA, DE, EL, EN, ES, ET, FI, FR, HR, HU, IT, LT, LV, MT, NL, PL, PT, RO, RU, SK, SL, SV, UK) |
+| Omnilingual ASR | **1.672 idiomas** em mais de 150 famílias. Inclui todo o conjunto "servido diretamente" da Meta (~1.100) mais 500+ idiomas de baixos recursos adicionados através de dados da comunidade. Selecionados: EN, ES, FR, DE, ZH, JA, KO, AR, HI, BN, UR, FA, HE, TR, RU, UK, PL, NL, IT, PT, SW, YO, IG, HA, AM, ZU, XH, VI, TH, ID, MS, TL, MY, KM, LO, NE, SI, GU, MR, PA, TA, TE, KN, ML, OR, AS, KA, HY, AZ, KK, UZ, MN, BO, DZ, ... (lista completa: [`lang_ids.py`](https://github.com/facebookresearch/omnilingual-asr/blob/main/src/omnilingual_asr/models/wav2vec2_llama/lang_ids.py)). A cabeça CTC é agnóstica ao idioma — nenhuma dica de idioma é necessária no momento da inferência. |
 | Qwen3-TTS | EN, CN, DE, JA, ES, FR, KO, RU, IT, PT (+ dialetos de Pequim/Sichuan via CustomVoice) |
 | CosyVoice TTS | CN, EN, JA, KO, DE, ES, FR, IT, RU |
 | Kokoro TTS | EN (US/UK), ES, FR, HI, IT, JA, PT, CN, KO, DE |

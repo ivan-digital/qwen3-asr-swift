@@ -95,13 +95,10 @@ public class TalkerAttention: Module {
             cachedValues = concatenated([prevValues, values], axis: 2)
         }
 
-        let attnOutput = MLXFast.scaledDotProductAttention(
-            queries: queries, keys: cachedKeys, values: cachedValues,
+        let merged = SDPA.attendAndMerge(
+            qHeads: queries, kHeads: cachedKeys, vHeads: cachedValues,
             scale: scale, mask: attentionMask)
-
-        // [B, N, S, D] -> [B, S, N, D] -> [B, S, N*D]
-        let output = oProj(attnOutput.transposed(0, 2, 1, 3).reshaped(-1, seqLen, numHeads * headDim))
-
+        let output = oProj(merged)
         return (output, (cachedKeys, cachedValues))
     }
 }

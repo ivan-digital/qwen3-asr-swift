@@ -59,6 +59,8 @@ Project skills in `.claude/skills/`:
 
 - `Sources/Qwen3ASR/` — Speech-to-text (Qwen3-ASR)
 - `Sources/ParakeetASR/` — Speech-to-text (Parakeet TDT, CoreML)
+- `Sources/ParakeetStreamingASR/` — Streaming speech-to-text (Parakeet EOU 120M, CoreML)
+- `Sources/OmnilingualASR/` — Speech-to-text (Meta wav2vec2 CTC, 1,672 languages, CoreML 300M + MLX 300M/1B/3B/7B)
 - `Sources/Qwen3TTS/` — Text-to-speech (Qwen3-TTS)
 - `Sources/CosyVoiceTTS/` — Text-to-speech (CosyVoice3, streaming)
 - `Sources/KokoroTTS/` — Text-to-speech (Kokoro-82M, CoreML, iOS-ready)
@@ -67,8 +69,8 @@ Project skills in `.claude/skills/`:
 - `Sources/SpeechVAD/` — VAD (Silero + Pyannote), speaker diarization, speaker embedding (WeSpeaker)
 - `Sources/SpeechEnhancement/` — Noise suppression (DeepFilterNet3, CoreML)
 - `Sources/Qwen3Chat/` — On-device LLM chat (Qwen3.5-0.8B, MLX + CoreML, INT4/INT8)
-- `Sources/MLXCommon/` — Shared MLX utilities (weight loading, quantized layers, memory estimation)
-- `Sources/AudioCommon/` — Audio I/O, protocols, HuggingFace downloader
+- `Sources/MLXCommon/` — Shared MLX utilities (weight loading, quantized layers, memory estimation, `SDPA` multi-head attention helper)
+- `Sources/AudioCommon/` — Audio I/O, protocols, HuggingFace downloader, shared `SentencePieceModel` protobuf reader
 - `Sources/AudioCLILib/` — CLI commands
 - `Sources/AudioCLI/` — CLI entry point (`audio` binary)
 - `Tests/` — Unit and integration tests

@@ -12,6 +12,7 @@
 
 - **Qwen3-ASR** — Распознавание речи (автоматическое распознавание речи, 52 языка)
 - **Parakeet TDT** — Распознавание речи через CoreML (Neural Engine, NVIDIA FastConformer + TDT-декодер, 25 языков)
+- **Omnilingual ASR** — Распознавание речи через CoreML (Meta wav2vec2 + CTC, **1 672 языка** из более чем 150 языковых семей, окна 5/10 с, INT8 палетизация, ANE)
 - **Qwen3-ForcedAligner** — Выравнивание временных меток на уровне слов (аудио + текст → временные метки)
 - **Qwen3-TTS** — Синтез речи из текста (наивысшее качество, потоковый режим, пользовательские голоса, 10 языков)
 - **CosyVoice TTS** — Синтез речи с потоковой генерацией, клонированием голоса, многоголосым диалогом и тегами эмоций (9 языков, DiT flow matching, CAM++ speaker encoder)
@@ -97,7 +98,7 @@ struct DictateView: View {
 
 `SpeechUI` содержит только `TranscriptionView` (финальные + частичные) и `TranscriptionStore` (адаптер streaming ASR). Для визуализации и воспроизведения аудио используйте AVFoundation.
 
-Доступные SPM-продукты: `Qwen3ASR`, `Qwen3TTS`, `Qwen3TTSCoreML`, `ParakeetASR`, `ParakeetStreamingASR`, `KokoroTTS`, `CosyVoiceTTS`, `PersonaPlex`, `SpeechVAD`, `SpeechEnhancement`, `Qwen3Chat`, `SpeechCore`, `SpeechUI`, `AudioCommon`.
+Доступные SPM-продукты: `Qwen3ASR`, `Qwen3TTS`, `Qwen3TTSCoreML`, `ParakeetASR`, `ParakeetStreamingASR`, `OmnilingualASR`, `KokoroTTS`, `CosyVoiceTTS`, `PersonaPlex`, `SpeechVAD`, `SpeechEnhancement`, `Qwen3Chat`, `SpeechCore`, `SpeechUI`, `AudioCommon`.
 
 ## Модели
 
@@ -107,6 +108,10 @@ struct DictateView: View {
 | Qwen3-ASR-1.7B | Речь → Текст | Нет | 52 языка | [4-bit](https://huggingface.co/aufklarer/Qwen3-ASR-1.7B-MLX-4bit) 2.1 GB · [8-bit](https://huggingface.co/aufklarer/Qwen3-ASR-1.7B-MLX-8bit) 3.2 GB |
 | Parakeet-TDT-0.6B | Речь → Текст | Нет | 25 европейских языков | [CoreML INT8](https://huggingface.co/aufklarer/Parakeet-TDT-v3-CoreML-INT8) 500 MB |
 | Parakeet-EOU-120M | Речь → Текст | Да (потоково + EOU) | 25 европейских языков | [CoreML INT8](https://huggingface.co/aufklarer/Parakeet-EOU-120M-CoreML-INT8) ~120 MB |
+| Omnilingual-ASR-CTC-300M | Речь → Текст | Нет (окно 5/10 с) | [1 672 языка](https://github.com/facebookresearch/omnilingual-asr/blob/main/src/omnilingual_asr/models/wav2vec2_llama/lang_ids.py) | [CoreML INT8 (10s)](https://huggingface.co/aufklarer/Omnilingual-ASR-CTC-300M-CoreML-INT8-10s) 312 MB · [CoreML INT8 (5s)](https://huggingface.co/aufklarer/Omnilingual-ASR-CTC-300M-CoreML-INT8) 312 MB · [MLX 4-bit](https://huggingface.co/aufklarer/Omnilingual-ASR-CTC-300M-MLX-4bit) 193 MB · [MLX 8-bit](https://huggingface.co/aufklarer/Omnilingual-ASR-CTC-300M-MLX-8bit) 342 MB |
+| Omnilingual-ASR-CTC-1B | Речь → Текст | Нет | [1 672 языка](https://github.com/facebookresearch/omnilingual-asr/blob/main/src/omnilingual_asr/models/wav2vec2_llama/lang_ids.py) | [MLX 4-bit](https://huggingface.co/aufklarer/Omnilingual-ASR-CTC-1B-MLX-4bit) 549 MB · [MLX 8-bit](https://huggingface.co/aufklarer/Omnilingual-ASR-CTC-1B-MLX-8bit) 1006 MB |
+| Omnilingual-ASR-CTC-3B | Речь → Текст | Нет | [1 672 языка](https://github.com/facebookresearch/omnilingual-asr/blob/main/src/omnilingual_asr/models/wav2vec2_llama/lang_ids.py) | [MLX 4-bit](https://huggingface.co/aufklarer/Omnilingual-ASR-CTC-3B-MLX-4bit) 1709 MB · [MLX 8-bit](https://huggingface.co/aufklarer/Omnilingual-ASR-CTC-3B-MLX-8bit) 3159 MB |
+| Omnilingual-ASR-CTC-7B | Речь → Текст | Нет | [1 672 языка](https://github.com/facebookresearch/omnilingual-asr/blob/main/src/omnilingual_asr/models/wav2vec2_llama/lang_ids.py) | [MLX 4-bit](https://huggingface.co/aufklarer/Omnilingual-ASR-CTC-7B-MLX-4bit) 3.55 GB · [MLX 8-bit](https://huggingface.co/aufklarer/Omnilingual-ASR-CTC-7B-MLX-8bit) 6.63 GB |
 | Qwen3-ForcedAligner-0.6B | Аудио + Текст → Временные метки | Нет | Мульти | [4-bit](https://huggingface.co/aufklarer/Qwen3-ForcedAligner-0.6B-4bit) 979 MB · [8-bit](https://huggingface.co/aufklarer/Qwen3-ForcedAligner-0.6B-8bit) 1.4 GB · [CoreML INT4](https://huggingface.co/aufklarer/Qwen3-ForcedAligner-0.6B-CoreML-INT4) 630 MB · [CoreML INT8](https://huggingface.co/aufklarer/Qwen3-ForcedAligner-0.6B-CoreML-INT8) 1.0 GB |
 | Qwen3-TTS-0.6B Base | Текст → Речь | Да (~120мс) | 10 языков | [4-bit](https://huggingface.co/aufklarer/Qwen3-TTS-12Hz-0.6B-Base-MLX-4bit) 1.7 GB · [8-bit](https://huggingface.co/aufklarer/Qwen3-TTS-12Hz-0.6B-Base-MLX-8bit) 2.4 GB · [CoreML](https://huggingface.co/aufklarer/Qwen3-TTS-CoreML) 1.0 GB |
 | Qwen3-TTS-0.6B CustomVoice | Текст → Речь | Да (~120мс) | 10 языков | [4-bit](https://huggingface.co/aufklarer/Qwen3-TTS-12Hz-0.6B-CustomVoice-MLX-4bit) 1.7 GB |
@@ -134,6 +139,7 @@ struct DictateView: View {
 | Qwen3-ASR-1.7B (8-bit, MLX) | 2,349 MB | ~4 GB |
 | Parakeet-TDT-0.6B (CoreML) | 315 MB | ~400 MB |
 | Parakeet-EOU-120M (CoreML) | ~120 MB | ~200 MB |
+| Omnilingual-ASR-CTC-300M (CoreML INT8) | 312 MB | ~600 MB |
 | Qwen3-ForcedAligner-0.6B (4-bit, MLX) | 933 MB | ~1.5 GB |
 | Qwen3-TTS-1.7B (4-bit, MLX) | 2,300 MB | ~4–6 GB |
 | Qwen3-TTS-0.6B (4-bit, MLX) | 977 MB | ~2 GB |
@@ -1272,6 +1278,7 @@ PERSONAPLEX_E2E=1 swift test --filter PersonaPlexE2ETests
 |--------|-------|
 | Qwen3-ASR | 52 языка (CN, EN, кантонский, DE, FR, ES, JA, KO, RU, + 22 китайских диалекта, ...) |
 | Parakeet TDT | 25 европейских языков (BG, CS, DA, DE, EL, EN, ES, ET, FI, FR, HR, HU, IT, LT, LV, MT, NL, PL, PT, RO, RU, SK, SL, SV, UK) |
+| Omnilingual ASR | **1 672 языка** из более чем 150 языковых семей. Включает весь набор Meta «поддерживаемых напрямую» (~1 100) плюс 500+ малоресурсных языков, добавленных через данные сообщества. Избранные: EN, ES, FR, DE, ZH, JA, KO, AR, HI, BN, UR, FA, HE, TR, RU, UK, PL, NL, IT, PT, SW, YO, IG, HA, AM, ZU, XH, VI, TH, ID, MS, TL, MY, KM, LO, NE, SI, GU, MR, PA, TA, TE, KN, ML, OR, AS, KA, HY, AZ, KK, UZ, MN, BO, DZ, ... (полный список: [`lang_ids.py`](https://github.com/facebookresearch/omnilingual-asr/blob/main/src/omnilingual_asr/models/wav2vec2_llama/lang_ids.py)). CTC-голова не зависит от языка — при инференсе языковая подсказка не требуется. |
 | Qwen3-TTS | EN, CN, DE, JA, ES, FR, KO, RU, IT, PT (+ пекинский/сычуаньский диалекты через CustomVoice) |
 | CosyVoice TTS | CN, EN, JA, KO, DE, ES, FR, IT, RU |
 | Kokoro TTS | EN (US/UK), ES, FR, HI, IT, JA, PT, CN, KO, DE |

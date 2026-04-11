@@ -45,6 +45,10 @@ let package = Package(
             targets: ["ParakeetStreamingASR"]
         ),
         .library(
+            name: "OmnilingualASR",
+            targets: ["OmnilingualASR"]
+        ),
+        .library(
             name: "SpeechCore",
             targets: ["SpeechCore"]
         ),
@@ -170,6 +174,16 @@ let package = Package(
                 "AudioCommon",
             ]
         ),
+        .target(
+            name: "OmnilingualASR",
+            dependencies: [
+                "AudioCommon",
+                "MLXCommon",
+                .product(name: "MLX", package: "mlx-swift"),
+                .product(name: "MLXNN", package: "mlx-swift"),
+                .product(name: "MLXFast", package: "mlx-swift")
+            ]
+        ),
         .binaryTarget(
             name: "CSpeechCore",
             url: "https://github.com/soniqo/speech-core/releases/download/v0.0.5/SpeechCore.xcframework.zip",
@@ -217,6 +231,7 @@ let package = Package(
                 "SpeechEnhancement",
                 "ParakeetASR",
                 "ParakeetStreamingASR",
+                "OmnilingualASR",
                 "KokoroTTS",
                 "AudioCommon",
                 .product(name: "MLX", package: "mlx-swift"),
@@ -291,6 +306,17 @@ let package = Package(
             dependencies: ["ParakeetStreamingASR", "AudioCommon"],
             resources: [
                 .copy("Resources/test_audio.wav")
+            ]
+        ),
+        .testTarget(
+            name: "OmnilingualASRTests",
+            dependencies: ["OmnilingualASR", "AudioCommon"],
+            resources: [
+                .copy("Resources/test_audio.wav"),
+                .copy("Resources/fleurs_en.wav"),
+                .copy("Resources/fleurs_hi.wav"),
+                .copy("Resources/fleurs_fr.wav"),
+                .copy("Resources/fleurs_ar.wav")
             ]
         ),
         .testTarget(

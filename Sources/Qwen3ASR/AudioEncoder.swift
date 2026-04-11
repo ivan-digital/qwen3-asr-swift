@@ -2,6 +2,7 @@ import Foundation
 import MLX
 import MLXNN
 import MLXFast
+import MLXCommon
 import AudioCommon
 
 /// Audio encoder configuration matching Qwen3-ASR HuggingFace model
@@ -113,25 +114,13 @@ public class AudioSelfAttention: Module {
     }
 
     public func callAsFunction(_ x: MLXArray, attentionMask: MLXArray? = nil) -> MLXArray {
-        let (batch, seqLen, _) = (x.dim(0), x.dim(1), x.dim(2))
-
-        var q = qProj(x)
-        var k = kProj(x)
-        var v = vProj(x)
-
-        // Reshape to [batch, seq, numHeads, headDim] -> [batch, numHeads, seq, headDim]
-        q = q.reshaped(batch, seqLen, numHeads, headDim).transposed(0, 2, 1, 3)
-        k = k.reshaped(batch, seqLen, numHeads, headDim).transposed(0, 2, 1, 3)
-        v = v.reshaped(batch, seqLen, numHeads, headDim).transposed(0, 2, 1, 3)
-
-        // Use MLXFast SDPA — optimized Metal kernel
-        let attnOutput = MLXFast.scaledDotProductAttention(
-            queries: q, keys: k, values: v,
-            scale: scale, mask: attentionMask)
-
-        // SDPA returns [B, N, T, D], transpose to [B, T, N, D] then reshape
-        let out = attnOutput.transposed(0, 2, 1, 3).reshaped(batch, seqLen, numHeads * headDim)
-
+        let q = qProj(x)
+        let k = kProj(x)
+        let v = vProj(x)
+        let out = SDPA.multiHead(
+            q: q, k: k, v: v,
+            numHeads: numHeads, headDim: headDim, scale: scale,
+            mask: attentionMask)
         return outProj(out)
     }
 }

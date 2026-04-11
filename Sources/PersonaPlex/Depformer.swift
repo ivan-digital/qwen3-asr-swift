@@ -122,10 +122,9 @@ public final class DepformerAttention: Module {
             maskMode = .array(causal.reshaped([1, 1, t, actualKVLen]).asType(q.dtype))
         }
 
-        var out = MLXFast.scaledDotProductAttention(
-            queries: q, keys: k, values: v, scale: scale, mask: maskMode)
-        out = swappedAxes(out, 1, 2).reshaped([b, t, cfg.dim])
-        return out_proj(out, step: step)
+        let merged = SDPA.attendAndMerge(
+            qHeads: q, kHeads: k, vHeads: v, scale: scale, mask: maskMode)
+        return out_proj(merged, step: step)
     }
 }
 

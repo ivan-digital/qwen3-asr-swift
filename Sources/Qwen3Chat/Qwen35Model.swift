@@ -402,12 +402,9 @@ public final class GatedAttentionLayer: Module {
         }
 
         // SDPA (handles GQA natively)
-        var attnOut = MLXFast.scaledDotProductAttention(
-            queries: queries, keys: cachedKeys, values: cachedValues,
+        let attnOut = SDPA.attendAndMerge(
+            qHeads: queries, kHeads: cachedKeys, vHeads: cachedValues,
             scale: scale, mask: mask)
-
-        // [B, H, T, D] -> [B, T, H*D]
-        attnOut = attnOut.transposed(0, 2, 1, 3).reshaped(b, seqLen, qDim)
 
         // Gated output: attn_out * sigmoid(gate), then o_proj
         // Reference: self.o_proj(output * mx.sigmoid(gate))

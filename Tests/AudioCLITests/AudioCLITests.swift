@@ -119,6 +119,102 @@ final class TranscribeCommandTests: XCTestCase {
             XCTAssertEqual(AudioCLI.exitCode(for: error), .success)
         }
     }
+
+    // MARK: --engine omnilingual
+
+    func testParsesOmnilingualEngine() throws {
+        let cmd = try AudioCLI.parseAsRoot(["transcribe", "audio.wav", "--engine", "omnilingual"])
+        let transcribe = try XCTUnwrap(cmd as? TranscribeCommand)
+        XCTAssertEqual(transcribe.engine, "omnilingual")
+    }
+
+    func testOmnilingualDefaultWindowIs10() throws {
+        let cmd = try AudioCLI.parseAsRoot(["transcribe", "audio.wav", "--engine", "omnilingual"])
+        let transcribe = try XCTUnwrap(cmd as? TranscribeCommand)
+        XCTAssertEqual(transcribe.window, 10)
+    }
+
+    func testOmnilingualParses5sWindow() throws {
+        let cmd = try AudioCLI.parseAsRoot([
+            "transcribe", "audio.wav", "--engine", "omnilingual", "--window", "5"
+        ])
+        let transcribe = try XCTUnwrap(cmd as? TranscribeCommand)
+        XCTAssertEqual(transcribe.window, 5)
+    }
+
+    func testOmnilingualRejectsInvalidWindow() {
+        XCTAssertThrowsError(try {
+            let cmd = try AudioCLI.parseAsRoot([
+                "transcribe", "audio.wav", "--engine", "omnilingual", "--window", "7"
+            ])
+            try (cmd as? TranscribeCommand)?.validate()
+        }())
+    }
+
+    func testRejectsUnknownEngine() {
+        XCTAssertThrowsError(try {
+            let cmd = try AudioCLI.parseAsRoot(["transcribe", "audio.wav", "--engine", "bogus"])
+            try (cmd as? TranscribeCommand)?.validate()
+        }())
+    }
+
+    // MARK: --engine omnilingual --backend mlx
+
+    func testOmnilingualDefaultBackendIsCoreML() throws {
+        let cmd = try AudioCLI.parseAsRoot(["transcribe", "audio.wav", "--engine", "omnilingual"])
+        let transcribe = try XCTUnwrap(cmd as? TranscribeCommand)
+        XCTAssertEqual(transcribe.backend, "coreml")
+    }
+
+    func testOmnilingualParsesMLXBackend() throws {
+        let cmd = try AudioCLI.parseAsRoot([
+            "transcribe", "audio.wav", "--engine", "omnilingual", "--backend", "mlx"
+        ])
+        let transcribe = try XCTUnwrap(cmd as? TranscribeCommand)
+        XCTAssertEqual(transcribe.backend, "mlx")
+        XCTAssertEqual(transcribe.variant, "300M")
+        XCTAssertEqual(transcribe.bits, 4)
+    }
+
+    func testOmnilingualMLXAcceptsAllVariants() throws {
+        for v in ["300M", "1B", "3B", "7B"] {
+            let cmd = try AudioCLI.parseAsRoot([
+                "transcribe", "audio.wav", "--engine", "omnilingual",
+                "--backend", "mlx", "--variant", v
+            ])
+            let transcribe = try XCTUnwrap(cmd as? TranscribeCommand)
+            XCTAssertNoThrow(try transcribe.validate(), "variant \(v) should validate")
+        }
+    }
+
+    func testOmnilingualMLXRejectsBogusVariant() {
+        XCTAssertThrowsError(try {
+            let cmd = try AudioCLI.parseAsRoot([
+                "transcribe", "audio.wav", "--engine", "omnilingual",
+                "--backend", "mlx", "--variant", "999B"
+            ])
+            try (cmd as? TranscribeCommand)?.validate()
+        }())
+    }
+
+    func testOmnilingualMLXRejectsBogusBits() {
+        XCTAssertThrowsError(try {
+            let cmd = try AudioCLI.parseAsRoot([
+                "transcribe", "audio.wav", "--engine", "omnilingual",
+                "--backend", "mlx", "--bits", "16"
+            ])
+            try (cmd as? TranscribeCommand)?.validate()
+        }())
+    }
+
+    func testOmnilingualRejectsBogusBackend() {
+        XCTAssertThrowsError(try {
+            let cmd = try AudioCLI.parseAsRoot([
+                "transcribe", "audio.wav", "--engine", "omnilingual", "--backend", "tflite"
+            ])
+            try (cmd as? TranscribeCommand)?.validate()
+        }())
+    }
 }
 
 // MARK: - AlignCommand

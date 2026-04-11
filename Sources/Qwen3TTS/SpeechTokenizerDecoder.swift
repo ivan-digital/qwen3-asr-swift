@@ -2,6 +2,7 @@ import Foundation
 import MLX
 import MLXNN
 import MLXFast
+import MLXCommon
 import AudioCommon
 
 // MARK: - Causal Conv1d
@@ -280,11 +281,10 @@ public class DecoderTransformerAttention: Module {
             cachedV = concatenated([prevV, v], axis: 2)
         }
 
-        let attnOut = MLXFast.scaledDotProductAttention(
-            queries: q, keys: cachedK, values: cachedV,
+        let merged = SDPA.attendAndMerge(
+            qHeads: q, kHeads: cachedK, vHeads: cachedV,
             scale: scale, mask: attentionMask)
-
-        let out = oProj(attnOut.transposed(0, 2, 1, 3).reshaped(batch, seqLen, numHeads * headDim))
+        let out = oProj(merged)
         return (out, (cachedK, cachedV))
     }
 }

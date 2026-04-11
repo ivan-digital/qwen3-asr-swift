@@ -2,6 +2,7 @@ import Foundation
 import MLX
 import MLXNN
 import MLXFast
+import MLXCommon
 import AudioCommon
 
 /// Protocol abstracting the text decoder for the ForcedAligner,
@@ -100,11 +101,10 @@ public class FloatTextAttention: Module {
             cachedValues = concatenated([prevValues, values], axis: 2)
         }
 
-        let attnOutput = MLXFast.scaledDotProductAttention(
-            queries: queries, keys: cachedKeys, values: cachedValues,
+        let merged = SDPA.attendAndMerge(
+            qHeads: queries, kHeads: cachedKeys, vHeads: cachedValues,
             scale: scale, mask: attentionMask)
-
-        let output = oProj(attnOutput.transposed(0, 2, 1, 3).reshaped(batch, seqLen, numHeads * headDim))
+        let output = oProj(merged)
         return (output, (cachedKeys, cachedValues))
     }
 }

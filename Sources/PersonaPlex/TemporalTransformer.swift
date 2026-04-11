@@ -80,12 +80,9 @@ public final class TemporalAttention: Module {
             maskMode = .array(causal.reshaped([1, 1, t, actualKVLen]).asType(q.dtype))
         }
 
-        // SDPA returns [B, H, T, D]
-        var out = MLXFast.scaledDotProductAttention(
-            queries: q, keys: k, values: v, scale: scale, mask: maskMode)
-        // [B, H, T, D] -> [B, T, H, D] -> [B, T, dim]
-        out = swappedAxes(out, 1, 2).reshaped([b, t, cfg.dim])
-        return applyLinear(out_proj, out)
+        let merged = SDPA.attendAndMerge(
+            qHeads: q, kHeads: k, vHeads: v, scale: scale, mask: maskMode)
+        return applyLinear(out_proj, merged)
     }
 
     /// Compile-compatible forward: takes explicit cache arrays + MLXArray offset.
@@ -112,10 +109,10 @@ public final class TemporalAttention: Module {
         let newV = concatenated([cacheV, v], axis: 2)
 
         // T=1 autoregressive: no causal mask needed
-        var out = MLXFast.scaledDotProductAttention(
-            queries: q, keys: newK, values: newV, scale: scale, mask: .none)
-        out = out.transposed(0, 2, 1, 3).reshaped([-1, 1, cfg.dim])
-        return (applyLinear(out_proj, out), newK, newV)
+        let merged = SDPA.attendAndMerge(
+            qHeads: q, kHeads: newK, vHeads: newV, scale: scale,
+            mask: MLXFast.ScaledDotProductAttentionMaskMode.none)
+        return (applyLinear(out_proj, merged), newK, newV)
     }
 }
 

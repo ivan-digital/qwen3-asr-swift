@@ -147,6 +147,55 @@ final class ForcedAlignerTests: XCTestCase {
         }
     }
 
+    // MARK: - bf16 variant (exercises FloatTextDecoder / FloatTextAttention)
+
+    /// Same alignment flow as `testForcedAlignerE2E` but using the
+    /// non-quantised bf16 forced-aligner checkpoint. This is the only code
+    /// path that loads `FloatTextDecoder` / `FloatTextAttention` — the 4-bit
+    /// and 8-bit variants both go through `QuantizedTextAttention`. Without
+    /// this test, the float attention refactor (`SDPA.attendAndMerge`) is
+    /// only compile-checked.
+    func testForcedAlignerE2EBf16Variant() async throws {
+        guard let wavURL = Bundle.module.url(forResource: "test_audio", withExtension: "wav") else {
+            throw XCTSkip("Test WAV file not found in bundle resources")
+        }
+
+        print("Loading Forced Aligner (bf16 variant)...")
+        let aligner = try await Qwen3ForcedAligner.fromPretrained(
+            modelId: "aufklarer/Qwen3-ForcedAligner-0.6B-bf16"
+        ) { progress, status in
+            print("[\(Int(progress * 100))%] \(status)")
+        }
+
+        // Sanity-check the text decoder is the float variant.
+        XCTAssertTrue(aligner.textDecoder is FloatTextModel,
+                      "bf16 model should load FloatTextModel (exercises FloatTextAttention)")
+
+        let (samples, sampleRate) = try AudioFileLoader.loadWAV(url: wavURL)
+        let targetSampleRate = 24000
+        let audio: [Float]
+        if sampleRate != targetSampleRate {
+            audio = AudioFileLoader.resample(samples, from: sampleRate, to: targetSampleRate)
+        } else {
+            audio = samples
+        }
+
+        let knownText = "Can you guarantee that the replacement part will be shipped tomorrow?"
+        let aligned = aligner.align(audio: audio, text: knownText, sampleRate: targetSampleRate)
+
+        XCTAssertFalse(aligned.isEmpty, "bf16 aligner should produce aligned words")
+        let expectedWords = knownText.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+        XCTAssertEqual(aligned.count, expectedWords.count,
+                       "bf16 word count should match input")
+
+        for (i, word) in aligned.enumerated() {
+            XCTAssertGreaterThanOrEqual(word.endTime, word.startTime)
+            if i > 0 {
+                XCTAssertGreaterThanOrEqual(word.startTime, aligned[i - 1].startTime)
+            }
+        }
+    }
+
     // MARK: - Latency Benchmark
 
     func testForcedAlignerLatency() async throws {

@@ -2,6 +2,7 @@ import Foundation
 import MLX
 import MLXFast
 import MLXNN
+import MLXCommon
 
 // MARK: - LayerScale
 
@@ -79,10 +80,9 @@ public final class MimiAttention: Module {
             maskMode = .array(causal.reshaped([1, 1, t, actualKVLen]).asType(q.dtype))
         }
 
-        var out = MLXFast.scaledDotProductAttention(
-            queries: q, keys: k, values: v, scale: scale, mask: maskMode)
-        out = swappedAxes(out, 1, 2).reshaped([b, t, hd])
-        return out_proj(out)
+        let merged = SDPA.attendAndMerge(
+            qHeads: q, kHeads: k, vHeads: v, scale: scale, mask: maskMode)
+        return out_proj(merged)
     }
 }
 
