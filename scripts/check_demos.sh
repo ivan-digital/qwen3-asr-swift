@@ -30,6 +30,7 @@ check_demo() {
 echo "=== Demo Build Check ==="
 check_demo SpeechDemo
 check_demo PersonaPlexDemo
+check_demo DictateDemo
 echo "========================"
 
 if [ $ERRORS -gt 0 ]; then
