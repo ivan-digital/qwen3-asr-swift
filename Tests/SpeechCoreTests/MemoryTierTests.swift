@@ -12,7 +12,7 @@ final class MemoryTierTests: XCTestCase {
         XCTAssertTrue(allTiers.contains(tier), "detect() should return a known tier")
     }
 
-    func testDetectOnMacOS() {
+    func testDetectOnMacOS() throws {
         #if os(macOS)
         let totalGB = Double(ProcessInfo.processInfo.physicalMemory) / (1024 * 1024 * 1024)
         let tier = MemoryTier.detect()

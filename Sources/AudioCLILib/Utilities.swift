@@ -23,7 +23,12 @@ public func runAsync(_ block: @escaping () async throws -> Void) throws {
 }
 
 /// Git commit hash baked in at build time, or read from .git at runtime.
+///
+/// ``Process`` is only available on macOS / Linux; iOS / tvOS / watchOS /
+/// visionOS get a placeholder so shared CLI-helper types (e.g. ``runAsync``,
+/// ``reportProgress``) can still be reached from iOS-buildable targets.
 public let buildVersion: String = {
+    #if os(macOS) || os(Linux)
     let pipe = Pipe()
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
@@ -43,6 +48,9 @@ public let buildVersion: String = {
         }
     } catch {}
     return "unknown"
+    #else
+    return "unknown"
+    #endif
 }()
 
 /// Print model loading progress in a consistent format.

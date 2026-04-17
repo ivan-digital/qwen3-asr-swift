@@ -340,6 +340,11 @@ final class DownloadSecurityTests: XCTestCase {
 
 // MARK: - Metallib Build Script Tests
 
+// ``MetallibScriptTests`` drives a bash script via ``Process``. ``Process``
+// is not available on iOS / iOS Simulator (it lives in Foundation's
+// macOS/Linux branch), so gate the suite on macOS to keep iOS sim builds
+// green.
+#if os(macOS)
 final class MetallibScriptTests: XCTestCase {
 
     func testScriptExists() {
@@ -393,3 +398,4 @@ final class MetallibScriptTests: XCTestCase {
         XCTAssertTrue(content.contains("set -euo pipefail"), "Script should use strict mode")
     }
 }
+#endif
