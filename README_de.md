@@ -19,6 +19,7 @@ Spracherkennung, -synthese und -verständnis auf dem Gerät für Mac und iOS. L�
 - **[Qwen3.5-Chat](https://soniqo.audio/de/guides/chat)** — LLM-Chat auf dem Gerät (0.8B, MLX INT4 + CoreML INT8, DeltaNet-Hybrid, Token-Streaming)
 - **[PersonaPlex](https://soniqo.audio/de/guides/respond)** — Vollduplex-Sprache-zu-Sprache (7B, Audio rein → Audio raus, 18 Stimmvoreinstellungen)
 - **[DeepFilterNet3](https://soniqo.audio/de/guides/denoise)** — Echtzeit-Rauschunterdrückung (2,1M Parameter, 48 kHz)
+- **[Wake-Word](https://soniqo.audio/de/guides/wake-word)** — Schlüsselworterkennung auf dem Gerät (KWS Zipformer 3M, CoreML, 26× Echtzeit, konfigurierbare Stichwortliste)
 - **[VAD](https://soniqo.audio/de/guides/vad)** — Sprachaktivitätserkennung (Silero Streaming, Pyannote Offline, FireRedVAD 100+ Sprachen)
 - **[Sprecherdiarisierung](https://soniqo.audio/de/guides/diarize)** — Wer hat wann gesprochen (Pyannote-Pipeline, durchgängiger Sortformer auf der Neural Engine)
 - **[Sprechereinbettungen](https://soniqo.audio/de/guides/embed-speaker)** — WeSpeaker ResNet34 (256-dim), CAM++ (192-dim)

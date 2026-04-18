@@ -155,6 +155,21 @@ public protocol SpeakerExtractionCapable: SpeakerDiarizationModel {
 
 **Conforming types:** `PyannoteDiarizationPipeline`
 
+### WakeWordProvider (Pipeline)
+
+Streaming keyword / wake-word detector. Shares the chunk-push shape of `StreamingVADProvider` so a voice pipeline can gate activation on either VAD or wake-word triggers (or both). Lives in `SpeechWakeWord` rather than `AudioCommon` because it carries the `KeywordDetection` result type and a session-scoped BPE context.
+
+```swift
+public protocol WakeWordProvider: AnyObject {
+    var inputSampleRate: Int { get }
+    var registeredKeywords: [String] { get }
+    func processAudio(_ samples: [Float]) throws -> [KeywordDetection]
+    func reset() throws
+}
+```
+
+**Conforming types:** `WakeWordStreamingAdapter` (wraps `WakeWordDetector` + a single `WakeWordSession`). The underlying `WakeWordDetector` is English-only — see [KWS Zipformer model doc](models/kws-zipformer.md).
+
 ### SpeechEnhancementModel
 
 Models that enhance speech by removing noise.

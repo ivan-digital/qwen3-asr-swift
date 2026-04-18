@@ -19,6 +19,7 @@ Mac과 iOS를 위한 온디바이스 음성 인식, 합성 및 이해. Apple Sil
 - **[Qwen3.5-Chat](https://soniqo.audio/ko/guides/chat)** — 온디바이스 LLM 채팅 (0.8B, MLX INT4 + CoreML INT8, DeltaNet 하이브리드, 스트리밍 토큰)
 - **[PersonaPlex](https://soniqo.audio/ko/guides/respond)** — 전이중 음성-음성 대화 (7B, 오디오 입력 → 오디오 출력, 18개 음색 프리셋)
 - **[DeepFilterNet3](https://soniqo.audio/ko/guides/denoise)** — 실시간 노이즈 억제 (2.1M 파라미터, 48 kHz)
+- **[웨이크워드](https://soniqo.audio/ko/guides/wake-word)** — 온디바이스 키워드 감지 (KWS Zipformer 3M, CoreML, 실시간의 26배, 구성 가능한 키워드 목록)
 - **[VAD](https://soniqo.audio/ko/guides/vad)** — 음성 활동 감지 (Silero 스트리밍, Pyannote 오프라인, FireRedVAD 100+ 개 언어)
 - **[화자 분리](https://soniqo.audio/ko/guides/diarize)** — 누가 언제 말했는지 (Pyannote 파이프라인, Neural Engine 상의 엔드투엔드 Sortformer)
 - **[화자 임베딩](https://soniqo.audio/ko/guides/embed-speaker)** — WeSpeaker ResNet34 (256차원), CAM++ (192차원)

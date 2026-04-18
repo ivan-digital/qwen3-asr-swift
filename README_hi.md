@@ -19,6 +19,7 @@ Mac और iOS के लिए ऑन-डिवाइस स्पीच रि
 - **[Qwen3.5-Chat](https://soniqo.audio/hi/guides/chat)** — ऑन-डिवाइस LLM चैट (0.8B, MLX INT4 + CoreML INT8, DeltaNet हाइब्रिड, स्ट्रीमिंग टोकन)
 - **[PersonaPlex](https://soniqo.audio/hi/guides/respond)** — फुल-डुप्लेक्स स्पीच-टू-स्पीच (7B, ऑडियो इन → ऑडियो आउट, 18 वॉयस प्रीसेट)
 - **[DeepFilterNet3](https://soniqo.audio/hi/guides/denoise)** — रियल-टाइम नॉइज़ सप्रेशन (2.1M params, 48 kHz)
+- **[वेक-वर्ड](https://soniqo.audio/hi/guides/wake-word)** — ऑन-डिवाइस कीवर्ड स्पॉटिंग (KWS Zipformer 3M, CoreML, 26× रियल-टाइम, कॉन्फ़िगरेबल कीवर्ड सूची)
 - **[VAD](https://soniqo.audio/hi/guides/vad)** — वॉयस एक्टिविटी डिटेक्शन (Silero स्ट्रीमिंग, Pyannote ऑफ़लाइन, FireRedVAD 100+ भाषाएँ)
 - **[Speaker Diarization](https://soniqo.audio/hi/guides/diarize)** — कौन कब बोला (Pyannote पाइपलाइन, Neural Engine पर एंड-टू-एंड Sortformer)
 - **[Speaker Embeddings](https://soniqo.audio/hi/guides/embed-speaker)** — WeSpeaker ResNet34 (256-dim), CAM++ (192-dim)

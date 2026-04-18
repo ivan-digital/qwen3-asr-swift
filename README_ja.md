@@ -19,6 +19,7 @@ Mac・iOS向けのオンデバイス音声認識・合成・理解。Apple Silic
 - **[Qwen3.5-Chat](https://soniqo.audio/ja/guides/chat)** — オンデバイスLLMチャット（0.8B、MLX INT4 + CoreML INT8、DeltaNetハイブリッド、ストリーミングトークン）
 - **[PersonaPlex](https://soniqo.audio/ja/guides/respond)** — 全二重音声間会話（7B、音声入力 → 音声出力、18種類のボイスプリセット）
 - **[DeepFilterNet3](https://soniqo.audio/ja/guides/denoise)** — リアルタイムノイズ抑制（2.1Mパラメーター、48 kHz）
+- **[ウェイクワード](https://soniqo.audio/ja/guides/wake-word)** — オンデバイスのキーワード検出（KWS Zipformer 3M、CoreML、リアルタイムの26倍、キーワードリスト設定可能）
 - **[VAD](https://soniqo.audio/ja/guides/vad)** — 音声区間検出（Sileroストリーミング、Pyannoteオフライン、FireRedVAD 100以上の言語）
 - **[話者ダイアライゼーション](https://soniqo.audio/ja/guides/diarize)** — 誰がいつ話したか（Pyannoteパイプライン、Neural Engine上のエンドツーエンドSortformer）
 - **[話者埋め込み](https://soniqo.audio/ja/guides/embed-speaker)** — WeSpeaker ResNet34（256次元）、CAM++（192次元）
