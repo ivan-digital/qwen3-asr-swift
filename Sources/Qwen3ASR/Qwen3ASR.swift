@@ -5,6 +5,51 @@ import MLXNN
 import MLXFast
 import AudioCommon
 
+/// Optional decoder tunables for `Qwen3ASRModel.transcribe(audio:options:)`.
+///
+/// Defaults match the historical greedy behaviour of `transcribe(audio:)`
+/// so existing callers see zero change. Tune these when greedy decoding
+/// collapses onto a single token (typical on silence or ambiguous phonemes).
+public struct Qwen3DecodingOptions: Sendable {
+    /// Cap on decoder output per chunk.
+    public var maxTokens: Int = 448
+
+    /// Optional language hint ("en", "zh", …). `nil` = auto-detect.
+    public var language: String?
+
+    /// Context hint prepended to the decoder prompt.
+    public var context: String?
+
+    /// HuggingFace-style repetition penalty. Divides the logits of tokens
+    /// already generated this chunk by this factor before `argMax`.
+    /// `1.0` disables; `1.1`–`1.3` is the common tuning range.
+    public var repetitionPenalty: Float = 1.0
+
+    /// If > 0, masks any next-token whose emission would form a repeated
+    /// n-gram of this size. `0` disables.
+    public var noRepeatNgramSize: Int = 0
+
+    /// `0` = greedy (argmax). `> 0` = sample with this temperature via
+    /// Gumbel-max. Higher = more random.
+    public var temperature: Float = 0.0
+
+    public init(
+        maxTokens: Int = 448,
+        language: String? = nil,
+        context: String? = nil,
+        repetitionPenalty: Float = 1.0,
+        noRepeatNgramSize: Int = 0,
+        temperature: Float = 0.0
+    ) {
+        self.maxTokens = maxTokens
+        self.language = language
+        self.context = context
+        self.repetitionPenalty = repetitionPenalty
+        self.noRepeatNgramSize = noRepeatNgramSize
+        self.temperature = temperature
+    }
+}
+
 /// Special token IDs for Qwen3-ASR
 public struct Qwen3ASRTokens: Sendable {
     public static let audioTokenId = 151676        // <|audio_pad|>
@@ -55,6 +100,33 @@ public class Qwen3ASRModel {
         self.textDecoder = QuantizedTextModel(config: textConfig)
     }
 
+    /// Transcribe audio to text with explicit decoder options.
+    ///
+    /// The legacy `transcribe(audio:sampleRate:language:maxTokens:context:)`
+    /// overload below forwards into this path with default (greedy) options.
+    public func transcribe(
+        audio: [Float],
+        sampleRate: Int = 16000,
+        options: Qwen3DecodingOptions
+    ) -> String {
+        let melFeatures = featureExtractor.process(audio, sampleRate: sampleRate)
+        let batchedFeatures = melFeatures.expandedDimensions(axis: 0)
+        var audioEmbeds = audioEncoder(batchedFeatures)
+        audioEmbeds = audioEmbeds.expandedDimensions(axis: 0)
+        guard let textDecoder = textDecoder else {
+            let shape = audioEmbeds.shape
+            return "[Audio encoded: \(shape)] - Text decoder not loaded"
+        }
+        return generateText(
+            audioEmbeds: audioEmbeds,
+            textDecoder: textDecoder,
+            language: options.language,
+            maxTokens: options.maxTokens,
+            context: options.context,
+            decodingOptions: options
+        )
+    }
+
     /// Transcribe audio to text
     public func transcribe(
         audio: [Float],
@@ -91,13 +163,20 @@ public class Qwen3ASRModel {
         )
     }
 
-    /// Generate text from audio embeddings
+    /// Generate text from audio embeddings.
+    ///
+    /// When `decodingOptions` is supplied, the decoder loop applies an
+    /// HF-style repetition penalty, an optional no-repeat n-gram mask, and
+    /// optional temperature sampling before each token selection. With the
+    /// default `Qwen3DecodingOptions()` (repetition=1.0, no-repeat=0,
+    /// temperature=0) behaviour is bit-identical to plain greedy.
     func generateText(
         audioEmbeds: MLXArray,
         textDecoder: QuantizedTextModel,
         language: String?,
         maxTokens: Int,
-        context: String? = nil
+        context: String? = nil,
+        decodingOptions: Qwen3DecodingOptions = Qwen3DecodingOptions()
     ) -> String {
         // Special token IDs
         let imStartId = 151644
@@ -178,7 +257,11 @@ public class Qwen3ASRModel {
         let seqLen = hiddenStates.dim(1)
         let lastHidden = hiddenStates[0..., (seqLen-1)..<seqLen, 0...]
         var logits = textDecoder.embedTokens.asLinear(lastHidden)
-        var nextToken = argMax(logits, axis: -1).squeezed().item(Int32.self)
+        var nextToken = Self.pickNextToken(
+            logits: logits,
+            generatedSoFar: generatedTokens,
+            options: decodingOptions
+        )
         generatedTokens.append(nextToken)
 
         // Continue generating
@@ -198,7 +281,11 @@ public class Qwen3ASRModel {
             // Get next token
             let lastHiddenNext = hiddenStates[0..., (-1)..., .ellipsis]
             logits = textDecoder.embedTokens.asLinear(lastHiddenNext)
-            nextToken = argMax(logits, axis: -1).squeezed().item(Int32.self)
+            nextToken = Self.pickNextToken(
+                logits: logits,
+                generatedSoFar: generatedTokens,
+                options: decodingOptions
+            )
             generatedTokens.append(nextToken)
         }
 
@@ -214,6 +301,88 @@ public class Qwen3ASRModel {
             // Fallback: return token IDs
             return generatedTokens.map { String($0) }.joined(separator: " ")
         }
+    }
+
+    // MARK: - Decoder knobs
+
+    /// Pick the next token from a logits tensor, applying repetition
+    /// penalty, no-repeat n-gram masking, and optional temperature sampling.
+    ///
+    /// With default options (repetition=1.0, noRepeat=0, temperature=0) the
+    /// result is the same `argMax` the decoder used pre-refactor.
+    /// Implementation pulls logits to CPU (a 1-D Float array of vocab size)
+    /// so we can manipulate entries in-place without fighting MLX indexing.
+    private static func pickNextToken(
+        logits: MLXArray,
+        generatedSoFar: [Int32],
+        options: Qwen3DecodingOptions
+    ) -> Int32 {
+        // Fast path — pure greedy, no modifications.
+        if options.repetitionPenalty == 1.0,
+           options.noRepeatNgramSize == 0,
+           options.temperature == 0 {
+            return argMax(logits, axis: -1).squeezed().item(Int32.self)
+        }
+
+        // Pull logits to CPU. `logits` is [1, 1, vocabSize]; after squeeze
+        // and conversion we have a plain `[Float]` of length vocabSize.
+        let flat = logits.squeezed().asType(.float32)
+        let vocabSize = flat.size
+        var scores: [Float] = flat.asArray(Float.self)
+        precondition(scores.count == vocabSize, "pickNextToken: vocab size mismatch")
+
+        // Repetition penalty: divide logits for already-generated tokens.
+        if options.repetitionPenalty > 1.0 && !generatedSoFar.isEmpty {
+            let penalty = options.repetitionPenalty
+            for token in Set(generatedSoFar) {
+                let idx = Int(token)
+                guard idx >= 0, idx < vocabSize else { continue }
+                let v = scores[idx]
+                // Positive logits divide; negative logits multiply — matches
+                // HuggingFace's implementation so the penalty always reduces
+                // the probability of the repeated token.
+                scores[idx] = v > 0 ? v / penalty : v * penalty
+            }
+        }
+
+        // No-repeat-ngram: any next token whose emission would form a
+        // repeated n-gram of size N gets pushed to -infinity.
+        let n = options.noRepeatNgramSize
+        if n > 0 && generatedSoFar.count >= n - 1 {
+            let lastPrefix = Array(generatedSoFar.suffix(n - 1))
+            // Walk every position where `lastPrefix` already appeared —
+            // the token that followed it becomes forbidden as the NEXT
+            // token now.
+            if generatedSoFar.count >= n {
+                for i in 0...(generatedSoFar.count - n) {
+                    let window = Array(generatedSoFar[i..<(i + n - 1)])
+                    guard window == lastPrefix else { continue }
+                    let forbidden = Int(generatedSoFar[i + n - 1])
+                    if forbidden >= 0 && forbidden < vocabSize {
+                        scores[forbidden] = -.infinity
+                    }
+                }
+            }
+        }
+
+        // Temperature sampling via Gumbel-max trick:
+        // argmax(logits/T + Gumbel(0,1)) ~ categorical(softmax(logits/T)).
+        if options.temperature > 0 {
+            let t = options.temperature
+            for i in 0..<vocabSize {
+                let u = Float.random(in: 1e-6...1.0)
+                scores[i] = scores[i] / t - Float.log(-Float.log(u))
+            }
+        }
+
+        // Argmax of the adjusted scores.
+        var bestIdx = 0
+        var bestScore = -Float.infinity
+        for i in 0..<vocabSize where scores[i] > bestScore {
+            bestScore = scores[i]
+            bestIdx = i
+        }
+        return Int32(bestIdx)
     }
 }
 
