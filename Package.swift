@@ -68,6 +68,10 @@ let package = Package(
             name: "SpeechUI",
             targets: ["SpeechUI"]
         ),
+        .library(
+            name: "SpeechWakeWord",
+            targets: ["SpeechWakeWord"]
+        ),
         .executable(
             name: "audio",
             targets: ["AudioCLI"]
@@ -221,6 +225,10 @@ let package = Package(
             dependencies: []
         ),
         .target(
+            name: "SpeechWakeWord",
+            dependencies: ["AudioCommon"]
+        ),
+        .target(
             name: "AudioCLILib",
             dependencies: [
                 "Qwen3ASR",
@@ -234,6 +242,7 @@ let package = Package(
                 "ParakeetStreamingASR",
                 "OmnilingualASR",
                 "KokoroTTS",
+                "SpeechWakeWord",
                 "AudioCommon",
                 .product(name: "MLX", package: "mlx-swift"),
                 .product(name: "ArgumentParser", package: "swift-argument-parser")
@@ -381,6 +390,18 @@ let package = Package(
             ],
             resources: [
                 .copy("Resources/test_audio.wav")
+            ]
+        ),
+        .testTarget(
+            name: "SpeechWakeWordTests",
+            dependencies: [
+                "SpeechWakeWord",
+                "AudioCommon"
+            ],
+            exclude: ["Resources/_generate_reference.py"],
+            resources: [
+                .copy("Resources/fbank_input.wav"),
+                .copy("Resources/fbank_reference.bin")
             ]
         )
     ]
