@@ -15,11 +15,16 @@ public struct WakeCommand: ParsableCommand {
     @Option(
         name: .long,
         parsing: .upToNextOption,
-        help: "One or more keywords. Either a bare phrase ('hey soniqo') or phrase:ac_threshold:boost ('hey soniqo:0.15:0.5')."
+        help: """
+            One or more keywords. Formats:
+              'hey soniqo' — greedy BPE over the phrase
+              'hey soniqo:0.15:0.5' — phrase with threshold and boost
+              'LIGHT UP|▁ L IGHT ▁UP:0.25:2.0' — phrase | explicit BPE pieces (space-separated, sherpa-onnx style) : threshold : boost
+            """
     )
     public var keywords: [String] = []
 
-    @Option(name: .long, help: "Path to a keywords file (one `phrase:ac_threshold:boost` per line).")
+    @Option(name: .long, help: "Path to a keywords file (one `phrase[|pieces][:threshold:boost]` per line).")
     public var keywordsFile: String?
 
     @Option(name: .shortAndLong, help: "Model ID on HuggingFace")
@@ -86,13 +91,39 @@ public struct WakeCommand: ParsableCommand {
         return specs
     }
 
-    /// "phrase" | "phrase:threshold" | "phrase:threshold:boost"
+    /// Format: "phrase[|piece1 piece2 ...][:threshold:boost]". Examples:
+    ///   "hey soniqo"
+    ///   "hey soniqo:0.15:0.5"
+    ///   "LIGHT UP|▁ L IGHT ▁UP"
+    ///   "LIGHT UP|▁ L IGHT ▁UP:0.25:2.0"
     private func parseSpec(_ raw: String) -> KeywordSpec {
-        let parts = raw.split(separator: ":", omittingEmptySubsequences: false).map(String.init)
-        let phrase = parts[0].trimmingCharacters(in: .whitespaces)
-        let threshold = parts.count > 1 ? Double(parts[1]) ?? 0 : 0
-        let boost = parts.count > 2 ? Double(parts[2]) ?? 0 : 0
-        return KeywordSpec(phrase: phrase, acThreshold: threshold, boost: boost)
+        // Split the ``phrase[|pieces]`` prefix from the ``:threshold:boost`` tail.
+        let tailStart = raw.range(of: ":")
+        let (head, tail) = tailStart.map {
+            (String(raw[..<$0.lowerBound]), String(raw[$0.upperBound...]))
+        } ?? (raw, "")
+
+        let phrase: String
+        let tokens: [String]?
+        if let pipe = head.range(of: "|") {
+            phrase = String(head[..<pipe.lowerBound]).trimmingCharacters(in: .whitespaces)
+            let pieces = String(head[pipe.upperBound...])
+                .split(whereSeparator: { $0.isWhitespace })
+                .map(String.init)
+            tokens = pieces.isEmpty ? nil : pieces
+        } else {
+            phrase = head.trimmingCharacters(in: .whitespaces)
+            tokens = nil
+        }
+
+        var threshold = 0.0
+        var boost = 0.0
+        if !tail.isEmpty {
+            let parts = tail.split(separator: ":", omittingEmptySubsequences: false).map(String.init)
+            if parts.count >= 1 { threshold = Double(parts[0]) ?? 0 }
+            if parts.count >= 2 { boost = Double(parts[1]) ?? 0 }
+        }
+        return KeywordSpec(phrase: phrase, acThreshold: threshold, boost: boost, tokens: tokens)
     }
 
     private func printJSON(_ detections: [KeywordDetection]) {

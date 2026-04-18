@@ -324,22 +324,28 @@ extension KaldiFbank {
     /// frames each time — avoiding the O(totalFrames) recomputation that
     /// calling ``compute`` on a growing buffer would cost.
     ///
-    /// The first chunk observes ``snipEdges=false`` mirror-padding (for
-    /// frame 0) because ``extractWindow`` owns the mirror at ``firstFrame=0``.
-    /// The buffer itself is retained in full — trimming is not yet
-    /// implemented because doing it correctly requires preserving
-    /// ``(frameLength - frameShift) / 2`` samples of left context and
-    /// tracking a frame-offset that stays aligned with ``frameShift``.
-    /// Memory grows linearly with session duration.
+    /// Memory is bounded: after each ``drain`` the session trims the PCM
+    /// buffer down to one frame's worth of left context plus the trailing
+    /// samples needed for still-pending frames, independent of session
+    /// duration. Frame-offset arithmetic is kept aligned with
+    /// ``frameShift`` so the window math in ``KaldiFbank.computeFrames``
+    /// continues to line up with the original stream.
     public final class StreamingSession {
         public let fbank: KaldiFbank
+        /// Rolling PCM buffer. ``buffer[0]`` corresponds to global sample
+        /// ``bufferFrameOffset * frameShift``.
         private var buffer: [Float] = []
+        /// Number of frames whose windows have been fully trimmed out of
+        /// ``buffer``. Used to translate between global and local frame
+        /// indices when calling ``computeFrames``.
+        private var bufferFrameOffset: Int = 0
         private(set) public var emittedFrames: Int = 0
 
         public init(_ fbank: KaldiFbank) { self.fbank = fbank }
 
         public func reset() {
             buffer.removeAll(keepingCapacity: true)
+            bufferFrameOffset = 0
             emittedFrames = 0
         }
 
@@ -359,26 +365,56 @@ extension KaldiFbank {
         }
 
         private func drain(flush: Bool) -> [Float] {
-            let ready = readyFrameCount(flush: flush)
-            guard ready > emittedFrames else { return [] }
-            let count = ready - emittedFrames
-            let out = fbank.computeFrames(buffer, firstFrame: emittedFrames, count: count)
-            emittedFrames = ready
-            return out
-        }
-
-        private func readyFrameCount(flush: Bool) -> Int {
             let opts = fbank.options
-            let n = buffer.count
-            if flush { return fbank.numFrames(for: n) }
-            if opts.snipEdges {
-                return n < opts.frameLength ? 0 : (n - opts.frameLength) / opts.frameShift + 1
+            let shift = opts.frameShift
+            let length = opts.frameLength
+
+            // Total samples observed across the whole session.
+            let globalSamples = bufferFrameOffset * shift + buffer.count
+
+            // Ready count in global frame coords.
+            let ready: Int
+            if flush {
+                if opts.snipEdges {
+                    ready = globalSamples < length ? 0 : (globalSamples - length) / shift + 1
+                } else {
+                    // kaldi flush: ``(n + shift/2) / shift``.
+                    ready = (globalSamples + shift / 2) / shift
+                }
+            } else if opts.snipEdges {
+                ready = globalSamples < length ? 0 : (globalSamples - length) / shift + 1
+            } else {
+                // Frame f is safe (no right-mirror) when window end
+                // ``f*shift + shift/2 + length/2`` ≤ ``globalSamples``.
+                let halfSpan = length / 2 + shift / 2
+                ready = globalSamples < halfSpan ? 0 : (globalSamples - halfSpan) / shift + 1
             }
-            // snip_edges=false: frame f is "safe" (no right-mirror) when
-            // its window end (f*shift + shift/2 + length/2) is ≤ n.
-            let halfSpan = opts.frameLength / 2 + opts.frameShift / 2
-            if n < halfSpan { return 0 }
-            return (n - halfSpan) / opts.frameShift + 1
+
+            let emitted: [Float]
+            if ready > emittedFrames {
+                let count = ready - emittedFrames
+                let firstLocal = emittedFrames - bufferFrameOffset
+                emitted = fbank.computeFrames(buffer, firstFrame: firstLocal, count: count)
+                emittedFrames = ready
+            } else {
+                emitted = []
+            }
+
+            // Trim: retain exactly one frame of left context so the next
+            // unemitted frame lands at local index 1. Local frame 1's window
+            // under snip_edges=false starts at ``shift - (length-shift)/2``
+            // which is guaranteed ≥ 0 for the shipped (25 ms / 10 ms) config
+            // — avoiding mirror-padding after the very first chunk.
+            let targetOffset = max(0, emittedFrames - 1)
+            if targetOffset > bufferFrameOffset {
+                let dropFrames = targetOffset - bufferFrameOffset
+                let dropSamples = min(dropFrames * shift, buffer.count)
+                if dropSamples > 0 {
+                    buffer.removeFirst(dropSamples)
+                    bufferFrameOffset += dropSamples / shift
+                }
+            }
+            return emitted
         }
     }
 }

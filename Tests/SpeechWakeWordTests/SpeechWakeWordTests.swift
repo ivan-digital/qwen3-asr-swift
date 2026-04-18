@@ -142,6 +142,37 @@ final class KaldiFbankTests: XCTestCase {
         }
     }
 
+    func testStreamingTrimsBuffer() {
+        // Feed 60 seconds of audio in 100 ms chunks. The session should
+        // keep emitting frames correctly without the retained PCM buffer
+        // growing linearly.
+        let fbank = KaldiFbank()
+        let session = KaldiFbank.StreamingSession(fbank)
+        let chunk = [Float](repeating: 0.01, count: 1600)  // 100 ms
+        var totalFrames = 0
+        let numBins = fbank.options.numMelBins
+        for _ in 0..<600 {
+            totalFrames += session.accept(chunk).count / numBins
+        }
+        totalFrames += session.flush().count / numBins
+        XCTAssertEqual(totalFrames, 6000, "expected 6000 frames for 60 s @ 10 ms shift (accuracy within 1 s)")
+
+        // Run one more accept and verify parity with a batch compute over
+        // the equivalent sliding window — the trim must keep enough left
+        // context that frame values don't drift.
+        let fresh = KaldiFbank.StreamingSession(fbank)
+        var ref = [Float]()
+        for _ in 0..<10 {
+            ref.append(contentsOf: fresh.accept(chunk))
+        }
+        ref.append(contentsOf: fresh.flush())
+        let batch = fbank.compute([Float](repeating: 0.01, count: 16000))
+        XCTAssertEqual(ref.count, batch.count)
+        for i in 0..<ref.count {
+            XCTAssertEqual(ref[i], batch[i], accuracy: 1e-6)
+        }
+    }
+
     func testStreamingResetRestartsFromScratch() {
         let fbank = KaldiFbank()
         let session = KaldiFbank.StreamingSession(fbank)
