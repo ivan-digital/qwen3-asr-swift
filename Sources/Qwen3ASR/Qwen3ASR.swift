@@ -312,7 +312,12 @@ public class Qwen3ASRModel {
     /// result is the same `argMax` the decoder used pre-refactor.
     /// Implementation pulls logits to CPU (a 1-D Float array of vocab size)
     /// so we can manipulate entries in-place without fighting MLX indexing.
-    private static func pickNextToken(
+    ///
+    /// Access is `internal static` (not `private`) so
+    /// ``Qwen3DecodingOptionsTests`` can exercise the sampler directly via
+    /// ``@testable import Qwen3ASR`` — there is no GPU or model download
+    /// involved so the path is trivially unit-testable once reachable.
+    static func pickNextToken(
         logits: MLXArray,
         generatedSoFar: [Int32],
         options: Qwen3DecodingOptions
