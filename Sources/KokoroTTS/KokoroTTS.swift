@@ -146,7 +146,7 @@ public final class KokoroTTSModel {
                 "g2p_vocab.json",
                 "us_gold.json",
                 "us_silver.json",
-                "voices/\(voice).json",
+                "voices/*.json",
             ],
             offlineMode: offlineMode
         ) { fraction in

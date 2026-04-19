@@ -29,6 +29,12 @@ final class E2EKokoroTests: XCTestCase {
     func testModelLoadsAndHasE2E() async throws {
         let m = try await model()
         XCTAssertTrue(m.availableVoices.contains("af_heart"))
+        // Regression (#212): `fromPretrained` used to download only one voice JSON,
+        // so `availableVoices` reported a single entry and non-default voices failed.
+        XCTAssertGreaterThan(m.availableVoices.count, 1,
+            "fromPretrained must download the full voice catalog, not just the default voice")
+        XCTAssertTrue(m.availableVoices.contains("jf_alpha"),
+            "Japanese voice preset must be available without re-downloading")
     }
 
     func testSynthesizeEnglish() async throws {

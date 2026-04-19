@@ -26,8 +26,11 @@ jobs:
           mkdir -p dist
           cp .build/release/audio .build/release/audio-server dist/
           cp .build/release/mlx.metallib dist/
+          # KokoroTTS loads fr/pt/hi pronunciation dicts via Bundle.module,
+          # which hard-crashes if the resource bundle isn't beside the binary (#212).
+          cp -R .build/release/Qwen3Speech_KokoroTTS.bundle dist/
           cd dist
-          tar czf audio-macos-arm64.tar.gz audio audio-server mlx.metallib
+          tar czf audio-macos-arm64.tar.gz audio audio-server mlx.metallib Qwen3Speech_KokoroTTS.bundle
 
       - name: Upload release asset
         uses: softprops/action-gh-release@v2

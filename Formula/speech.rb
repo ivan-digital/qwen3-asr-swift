@@ -10,6 +10,7 @@ class Speech < Formula
 
   def install
     libexec.install "audio", "audio-server", "mlx.metallib"
+    libexec.install "Qwen3Speech_KokoroTTS.bundle"
     bin.write_exec_script libexec/"audio"
     bin.write_exec_script libexec/"audio-server"
   end
