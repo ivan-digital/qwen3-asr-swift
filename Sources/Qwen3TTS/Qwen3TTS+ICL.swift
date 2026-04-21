@@ -69,21 +69,33 @@ extension Qwen3TTSModel {
 
         let t0 = CFAbsoluteTimeGetCurrent()
 
-        // Step 1: Resample reference audio to 24kHz
-        let audio24k = referenceSampleRate == 24000
-            ? referenceAudio
-            : AudioFileLoader.resample(referenceAudio, from: referenceSampleRate, to: 24000)
+        // Step 1+2: Encode reference audio → codec tokens [1, 16, T_ref] (cached per reference)
+        let refCodes: MLXArray
+        if let cached = referenceAudioCache.codecRefCodes(for: referenceAudio, sampleRate: referenceSampleRate) {
+            refCodes = cached
+            print("  ICL: codec tokens cache hit (\(cached.dim(2)) frames)")
+        } else {
+            let audio24k = referenceSampleRate == 24000
+                ? referenceAudio
+                : AudioFileLoader.resample(referenceAudio, from: referenceSampleRate, to: 24000)
+            let codes = codecEncoder.encode(samples: audio24k)
+            eval(codes)
+            referenceAudioCache.storeCodecRefCodes(codes, audio: referenceAudio, sampleRate: referenceSampleRate)
+            refCodes = codes
+            print("  ICL: encoded \(audio24k.count) samples → \(codes.dim(2)) codec frames")
+        }
 
-        // Step 2: Encode reference audio → codec tokens [1, 16, T_ref]
-        let refCodes = codecEncoder.encode(samples: audio24k)
-        eval(refCodes)
-        let refTime = refCodes.dim(2)
-        print("  ICL: encoded \(audio24k.count) samples → \(refTime) codec frames")
-
-        // Step 3: Extract speaker embedding (ICL still uses x-vector for speaker conditioning)
-        let mels = SpeakerMel.compute(audio: referenceAudio, sampleRate: referenceSampleRate)
-        let speakerEmbed = speakerEncoder(mels)  // [1, 1024]
-        eval(speakerEmbed)
+        // Step 3: Extract speaker embedding (ICL still uses x-vector for speaker conditioning; cached)
+        let speakerEmbed: MLXArray
+        if let cached = referenceAudioCache.speakerEmbed(for: referenceAudio, sampleRate: referenceSampleRate) {
+            speakerEmbed = cached
+        } else {
+            let mels = SpeakerMel.compute(audio: referenceAudio, sampleRate: referenceSampleRate)
+            let embed = speakerEncoder(mels)  // [1, 1024]
+            eval(embed)
+            referenceAudioCache.storeSpeakerEmbed(embed, audio: referenceAudio, sampleRate: referenceSampleRate)
+            speakerEmbed = embed
+        }
 
         // Step 4: Build ICL prefill embeddings
         let (prefillEmbeds, trailingTextHidden, ttsPadEmbed) = buildICLPrefillEmbeddings(

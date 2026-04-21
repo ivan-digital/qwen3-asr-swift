@@ -122,11 +122,17 @@ public final class KokoroTTSModel {
     // MARK: - Model Loading
 
     /// Load a pretrained Kokoro model from HuggingFace.
+    ///
+    /// - Parameter computeUnits: Which hardware the main CoreML model runs on.
+    ///   Defaults to `.all` (Neural Engine preferred). Pass `.cpuAndGPU` to bypass
+    ///   the Neural Engine — useful as a fallback on platforms where the ANE
+    ///   compiler produces incorrect output for this model.
     public static func fromPretrained(
         modelId: String = defaultModelId,
         voice: String = defaultVoice,
         cacheDir: URL? = nil,
         offlineMode: Bool = false,
+        computeUnits: MLComputeUnits = .all,
         progressHandler: ((Double, String) -> Void)? = nil
     ) async throws -> KokoroTTSModel {
         AudioLog.modelLoading.info("Loading Kokoro model: \(modelId)")
@@ -191,7 +197,7 @@ public final class KokoroTTSModel {
 
         // Load E2E CoreML model
         progressHandler?(0.85, "Loading CoreML model...")
-        let network = try KokoroNetwork(directory: cacheDir)
+        let network = try KokoroNetwork(directory: cacheDir, computeUnits: computeUnits)
         AudioLog.modelLoading.debug("Loaded Kokoro E2E model")
 
         progressHandler?(1.0, "Model loaded")

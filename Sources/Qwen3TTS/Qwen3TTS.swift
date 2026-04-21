@@ -74,6 +74,15 @@ public class Qwen3TTSModel {
     /// growing KV cache handled by shapeless mode, batch dim uses -1 reshapes.
     private var compiledCPTransformer: (([MLXArray]) -> [MLXArray])?
 
+    /// Cache for voice-cloning reference audio artifacts (speaker embedding, ICL codec tokens).
+    /// Bounded LRU; survives across synthesize calls on the same model instance.
+    let referenceAudioCache = ReferenceAudioCache()
+
+    /// Clear cached voice-cloning reference artifacts.
+    public func clearReferenceAudioCache() {
+        referenceAudioCache.clear()
+    }
+
     init(config: Qwen3TTSConfig = .base06B) {
         self.config = config
         self.talker = TalkerModel(config: config.talker)
@@ -204,11 +213,19 @@ public class Qwen3TTSModel {
 
         let t0 = CFAbsoluteTimeGetCurrent()
 
-        // Extract speaker embedding from reference audio
-        let mels = SpeakerMel.compute(audio: referenceAudio, sampleRate: referenceSampleRate)
-        let speakerEmbed = speakerEncoder(mels)  // [1, 1024]
-        eval(speakerEmbed)
-        print("  Speaker embedding extracted: \(speakerEmbed.shape)")
+        // Extract speaker embedding from reference audio (cached per reference)
+        let speakerEmbed: MLXArray
+        if let cached = referenceAudioCache.speakerEmbed(for: referenceAudio, sampleRate: referenceSampleRate) {
+            speakerEmbed = cached
+            print("  Speaker embedding: cache hit \(cached.shape)")
+        } else {
+            let mels = SpeakerMel.compute(audio: referenceAudio, sampleRate: referenceSampleRate)
+            let embed = speakerEncoder(mels)  // [1, 1024]
+            eval(embed)
+            referenceAudioCache.storeSpeakerEmbed(embed, audio: referenceAudio, sampleRate: referenceSampleRate)
+            speakerEmbed = embed
+            print("  Speaker embedding extracted: \(speakerEmbed.shape)")
+        }
 
         // Stage 1: Prepare text tokens and codec prefix (no speaker token ID — using embedding)
         let textTokens = prepareTextTokens(text: text, tokenizer: tokenizer)
