@@ -157,6 +157,21 @@ Weights: [aufklarer/Kokoro-82M-CoreML](https://huggingface.co/aufklarer/Kokoro-8
 
 Non-autoregressive — no sampling loop, latency scales linearly with output length but remains faster than real-time.
 
+## Compute Unit Override
+
+`fromPretrained(computeUnits:)` selects which hardware the main CoreML model runs on:
+
+```swift
+// Default: Neural Engine preferred (recommended)
+let tts = try await KokoroTTSModel.fromPretrained()
+
+// Fallback: bypass ANE (use on platforms where the ANE compiler
+// produces incorrect output for this model — e.g., some iOS 26 builds)
+let tts = try await KokoroTTSModel.fromPretrained(computeUnits: .cpuAndGPU)
+```
+
+The G2P encoder/decoder always run on CPU regardless of this setting; they are small enough that CPU is the fastest path.
+
 ## Conversion
 
 ```bash

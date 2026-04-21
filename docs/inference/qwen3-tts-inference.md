@@ -253,6 +253,28 @@ let audio = model.synthesizeWithVoiceCloneICL(
 
 ICL fixes EOS failure on short texts and non-English languages (e.g. German) that occur with x-vector-only mode.
 
+### Reference Audio Caching
+
+Both `synthesizeWithVoiceClone` (x-vector) and `synthesizeWithVoiceCloneICL` (ICL) cache their per-reference preprocessing across calls on the same model instance:
+
+- **x-vector mode** caches the ECAPA-TDNN speaker embedding `[1, 1024]`.
+- **ICL mode** additionally caches the Mimi codec encoder output `[1, 16, T_ref]`.
+
+The cache is content-addressed — keyed by a hash of the raw sample buffer and its sample rate. Repeated synthesis against the same reference waveform skips the mel + speaker encoder pass (and the codec encoder pass for ICL). Capacity is a bounded LRU (default 4 entries) to keep memory predictable when cycling through multiple reference voices.
+
+```swift
+let tts = try await Qwen3TTSModel.fromPretrained()
+
+// First call: runs ECAPA-TDNN, caches the embedding
+_ = tts.synthesizeWithVoiceClone(text: "Hello", referenceAudio: ref, ...)
+
+// Subsequent calls with the same reference: cache hit (logs "Speaker embedding: cache hit")
+_ = tts.synthesizeWithVoiceClone(text: "How are you?", referenceAudio: ref, ...)
+
+// Explicit eviction (rarely needed — LRU handles capacity)
+tts.clearReferenceAudioCache()
+```
+
 
 ## CoreML Backend (Neural Engine)
 
