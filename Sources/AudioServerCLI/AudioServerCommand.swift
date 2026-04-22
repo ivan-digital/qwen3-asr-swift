@@ -15,16 +15,40 @@ struct AudioServerCommand: AsyncParsableCommand {
     @Option(name: .long, help: "Port to bind (default: 8080)")
     var port: Int = 8080
 
-    @Flag(name: .long, help: "Load all models on startup (slower start, faster first request)")
+    @Flag(name: .long, help: "Preload every model (ASR + TTS + PersonaPlex + Enhancer). Can saturate the Metal wired pool on smaller devices — prefer the per-model flags below unless you really need all four resident.")
     var preload: Bool = false
+
+    @Flag(name: [.customLong("preload-asr")], help: "Preload Qwen3-ASR on startup (for /transcribe-only workloads).")
+    var preloadAsr: Bool = false
+
+    @Flag(name: [.customLong("preload-tts")], help: "Preload Qwen3-TTS on startup (for /speak workloads).")
+    var preloadTts: Bool = false
+
+    @Flag(name: [.customLong("preload-personaplex")], help: "Preload PersonaPlex 7B on startup (for /respond workloads).")
+    var preloadPersonaPlex: Bool = false
+
+    @Flag(name: [.customLong("preload-enhancer")], help: "Preload SpeechEnhancement on startup (for /enhance workloads).")
+    var preloadEnhancer: Bool = false
 
     func run() async throws {
         let server = AudioServer(host: host, port: port)
 
-        if preload {
-            print("Preloading models...")
-            try await server.preloadModels()
-            print("All models loaded.")
+        let loadAll = preload
+        if loadAll || preloadAsr {
+            print("Preloading Qwen3-ASR...")
+            try await server.preloadASR()
+        }
+        if loadAll || preloadTts {
+            print("Preloading Qwen3-TTS...")
+            try await server.preloadTTS()
+        }
+        if loadAll || preloadPersonaPlex {
+            print("Preloading PersonaPlex...")
+            try await server.preloadPersonaPlex()
+        }
+        if loadAll || preloadEnhancer {
+            print("Preloading SpeechEnhancement...")
+            try await server.preloadEnhancer()
         }
 
         print("Starting server on http://\(host):\(port)")

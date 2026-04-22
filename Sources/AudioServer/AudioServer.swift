@@ -48,6 +48,26 @@ public struct AudioServer {
         _ = try await state.loadEnhancer()
     }
 
+    // Individual preload entry points so callers can warm only the
+    // models they actually use. Loading every model at boot (the old
+    // --preload behaviour) can saturate the Metal wired pool on smaller
+    // devices and deadlock the allocator on the first real request.
+    public func preloadASR() async throws {
+        _ = try await state.loadASR()
+    }
+
+    public func preloadTTS() async throws {
+        _ = try await state.loadTTS()
+    }
+
+    public func preloadPersonaPlex() async throws {
+        _ = try await state.loadPersonaPlex()
+    }
+
+    public func preloadEnhancer() async throws {
+        _ = try await state.loadEnhancer()
+    }
+
     // MARK: - HTTP Routes
 
     func buildRouter() -> Router<BasicRequestContext> {
