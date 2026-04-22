@@ -59,7 +59,7 @@ public final class PyannoteVADModel {
 
         let cacheDir = try cacheDir ?? HuggingFaceDownloader.getCacheDirectory(for: modelId)
 
-        try await HuggingFaceDownloader.downloadWeights(
+        try await HuggingFaceDownloader.downloadWeightsWithSourceSelection(
             modelId: modelId,
             to: cacheDir,
             offlineMode: offlineMode,

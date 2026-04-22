@@ -109,7 +109,7 @@ public final class WeSpeakerModel {
 
         switch engine {
         case .mlx:
-            try await HuggingFaceDownloader.downloadWeights(
+            try await HuggingFaceDownloader.downloadWeightsWithSourceSelection(
                 modelId: resolvedModelId,
                 to: cacheDir,
                 offlineMode: offlineMode,
@@ -128,7 +128,7 @@ public final class WeSpeakerModel {
 
         case .coreml:
             #if canImport(CoreML)
-            try await HuggingFaceDownloader.downloadWeights(
+            try await HuggingFaceDownloader.downloadWeightsWithSourceSelection(
                 modelId: resolvedModelId,
                 to: cacheDir,
                 additionalFiles: ["wespeaker.mlmodelc/**", "config.json"],

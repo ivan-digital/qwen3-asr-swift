@@ -42,8 +42,9 @@ public final class Qwen3TTSCoreMLModel {
         } else {
             resolvedCacheDir = try cacheDir ?? HuggingFaceDownloader.getCacheDirectory(for: modelId)
             progressHandler?(0.0, "Downloading model...")
-            try await HuggingFaceDownloader.downloadWeights(
-                modelId: modelId, to: resolvedCacheDir,
+            try await HuggingFaceDownloader.downloadWeightsWithSourceSelection(
+                modelId: modelId,
+                to: resolvedCacheDir,
                 additionalFiles: [
                     "TextProjector.mlmodelc/**", "CodeEmbedder.mlmodelc/**",
                     "MultiCodeEmbedder.mlmodelc/**", "CodeDecoder.mlmodelc/**",
@@ -52,8 +53,9 @@ public final class Qwen3TTSCoreMLModel {
                     "tts_bos_embed.npy", "tts_eos_embed.npy",
                     "config.json", "vocab.json", "merges.txt",
                 ],
-                offlineMode: offlineMode
-            ) { progress in progressHandler?(progress * 0.7, "Downloading model...") }
+                offlineMode: offlineMode,
+                progressHandler: { progress in progressHandler?(progress * 0.7, "Downloading model...") }
+            )
         }
 
         // Embedders on CPU (FP32 precision for accumulation, matching TTSKit)

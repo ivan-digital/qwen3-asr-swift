@@ -1603,23 +1603,29 @@ public extension Qwen3TTSModel {
 
         // Download main model weights
         let mainCacheDir = try cacheDir ?? HuggingFaceDownloader.getCacheDirectory(for: modelId)
-        if !HuggingFaceDownloader.weightsExist(in: mainCacheDir) {
-            progressHandler?(0.1, "Downloading TTS model weights...")
-            try await HuggingFaceDownloader.downloadWeights(
-                modelId: modelId,
-                to: mainCacheDir,
-                additionalFiles: ["vocab.json", "merges.txt", "tokenizer_config.json"],
-                offlineMode: offlineMode,
-                progressHandler: { progress in
-                    progressHandler?(0.1 + progress * 0.3, "Downloading TTS model...")
-                })
-        }
+        progressHandler?(0.1, "Downloading TTS model weights...")
+        try await HuggingFaceDownloader.downloadWeightsWithSourceSelection(
+            modelId: modelId,
+            to: mainCacheDir,
+            additionalFiles: ["vocab.json", "merges.txt", "tokenizer_config.json"],
+            offlineMode: offlineMode,
+            progressHandler: { progress in
+                progressHandler?(0.1 + progress * 0.3, "Downloading TTS model...")
+            })
 
-        // Download tokenizer/codec weights
-        let tokenizerCacheDir = try HuggingFaceDownloader.getCacheDirectory(for: tokenizerModelId)
-        if !HuggingFaceDownloader.weightsExist(in: tokenizerCacheDir) {
+        // Check if tokenizer files exist in main model directory first
+        let speechTokenizerPath = mainCacheDir.appendingPathComponent("speech_tokenizer", isDirectory: true)
+        let tokenizerCacheDir: URL
+
+        if FileManager.default.fileExists(atPath: speechTokenizerPath.path) {
+            // Use tokenizer from main model directory
+            tokenizerCacheDir = mainCacheDir
+            AudioLog.download.debug("Using tokenizer from main model directory: \(speechTokenizerPath.path)")
+        } else {
+            // Download tokenizer/codec weights to separate directory
+            tokenizerCacheDir = try HuggingFaceDownloader.getCacheDirectory(for: tokenizerModelId)
             progressHandler?(0.4, "Downloading speech tokenizer...")
-            try await HuggingFaceDownloader.downloadWeights(
+            try await HuggingFaceDownloader.downloadWeightsWithSourceSelection(
                 modelId: tokenizerModelId,
                 to: tokenizerCacheDir,
                 offlineMode: offlineMode,

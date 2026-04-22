@@ -51,7 +51,8 @@ public enum HuggingFaceDownloader {
 
     // MARK: - Weight Existence Check
 
-    /// Check if safetensors weights exist in a directory.
+    /// Check if model weights exist in a directory.
+    /// Supports multiple formats: safetensors, mlmodelc, npy
     public static func weightsExist(in directory: URL) -> Bool {
         let fm = FileManager.default
         guard fm.fileExists(atPath: directory.path) else { return false }
@@ -62,7 +63,18 @@ public enum HuggingFaceDownloader {
             AudioLog.download.debug("Could not list directory \(directory.path): \(error)")
             contents = []
         }
-        return contents.contains { $0.pathExtension == "safetensors" }
+
+        // Check for various weight formats
+        return contents.contains { url in
+            let ext = url.pathExtension
+            // MLX models use safetensors
+            if ext == "safetensors" { return true }
+            // CoreML models use .mlmodelc (directory)
+            if ext == "mlmodelc" { return true }
+            // Numpy weight files
+            if ext == "npy" { return true }
+            return false
+        }
     }
 
     // MARK: - Download
@@ -137,6 +149,13 @@ public enum HuggingFaceDownloader {
         offlineMode: Bool = false,
         progressHandler: ((Double) -> Void)? = nil
     ) async throws {
+        // Check if weights already exist - skip download if they do
+        if weightsExist(in: directory) {
+            AudioLog.download.debug("Weights already exist in \(directory.path), skipping download")
+            progressHandler?(1.0)
+            return
+        }
+
         // Check environment variable for source selection
         let useModelScope = ProcessInfo.processInfo.environment["QWEN3_MODEL_SOURCE"] == "modelscope"
 

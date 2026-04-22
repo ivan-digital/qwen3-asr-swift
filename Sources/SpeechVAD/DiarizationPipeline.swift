@@ -124,7 +124,7 @@ public final class PyannoteDiarizationPipeline {
 
         // Load segmentation model
         let segCacheDir = try HuggingFaceDownloader.getCacheDirectory(for: segModelId, basePath: cacheBaseDir)
-        try await HuggingFaceDownloader.downloadWeights(
+        try await HuggingFaceDownloader.downloadWeightsWithSourceSelection(
             modelId: segModelId,
             to: segCacheDir,
             offlineMode: offlineMode,

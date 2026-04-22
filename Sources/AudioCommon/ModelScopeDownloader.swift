@@ -32,30 +32,13 @@ public enum ModelScopeDownloader {
     /// ModelScope API base URL
     private static let baseURL = "https://www.modelscope.cn/api/v1/models"
 
-    /// Map HuggingFace model IDs to ModelScope equivalents
-    private static let modelMapping: [String: String] = [
-        "aufklarer/Qwen3-ASR-0.6B-MLX-4bit": "Qwen/Qwen3-ASR-0.6B-MLX-4bit",
-        "aufklarer/Qwen3-ASR-1.7B-MLX-8bit": "Qwen/Qwen3-ASR-1.7B-MLX-8bit",
-        "aufklarer/Qwen3-TTS-0.6B": "Qwen/Qwen3-TTS-0.6B",
-        "pyannote/segmentation-3.0": "pyannote/segmentation-3.0",
-        "pyannote/wespeaker-resnet34-LM": "pyannote/wespeaker-resnet34-LM"
-    ]
-
     // MARK: - Model ID Mapping
 
-    /// Convert HuggingFace model ID to ModelScope equivalent
+    /// ModelScope uses the same model IDs as HuggingFace - no mapping needed
     public static func mapToModelScopeId(_ huggingFaceId: String) -> String {
-        // First check direct mapping
-        if let mapped = modelMapping[huggingFaceId] {
-            return mapped
-        }
-
-        // For Qwen models, try to map aufklarer -> Qwen
-        if huggingFaceId.hasPrefix("aufklarer/Qwen") {
-            return huggingFaceId.replacingOccurrences(of: "aufklarer/Qwen", with: "Qwen/Qwen")
-        }
-
-        // For other models, try to use as-is (many are cross-platform)
+        // Use the original model ID as-is
+        // ModelScope supports HuggingFace-style model paths like:
+        // aufklarer/Qwen3-TTS-12Hz-0.6B-Base-MLX-4bit
         return huggingFaceId
     }
 
@@ -142,7 +125,11 @@ public enum ModelScopeDownloader {
 
     /// List files in ModelScope repository matching a pattern
     private static func listFiles(modelId: String, pattern: String) async throws -> [String] {
-        let url = URL(string: "\(baseURL)/\(modelId)/tree")!
+        // ModelScope uses a different API structure than HuggingFace
+        // Try to list files using the model's file browser endpoint
+        let url = URL(string: "https://www.modelscope.cn/models/\(modelId)/files")!
+
+        AudioLog.download.debug("ModelScope: Listing files at URL: \(url.absoluteString), pattern: \(pattern)")
 
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
@@ -150,31 +137,19 @@ public enum ModelScopeDownloader {
 
         let (data, response) = try await URLSession.shared.data(for: request)
 
-        guard let httpResponse = response as? HTTPURLResponse,
-              httpResponse.statusCode == 200 else {
-            throw ModelScopeDownloadError.networkError(URLError(.badServerResponse))
-        }
+        AudioLog.download.debug("ModelScope: Response status: \((response as? HTTPURLResponse)?.statusCode ?? -1)")
+        AudioLog.download.debug("ModelScope: Response data size: \(data.count) bytes")
 
-        // Parse the response to get file list
-        // This is a simplified implementation - actual ModelScope API might differ
-        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let files = json["files"] as? [[String: Any]] {
-
-            let fileNames = files.compactMap { $0["name"] as? String }
-
-            // Simple pattern matching for *.safetensors
-            if pattern == "*.safetensors" {
-                return fileNames.filter { $0.hasSuffix(".safetensors") }
-            }
-
-            return fileNames
-        }
-
-        // Fallback - try common safetensors files
+        // For now, use a simpler approach - try to download common files directly
+        // This avoids the complexity of parsing ModelScope's web interface
         if pattern == "*.safetensors" {
+            // Try common safetensors file names
             return ["model.safetensors"]
+        } else if pattern == "config.json" {
+            return ["config.json"]
         }
 
+        // For other patterns, return empty array for now
         return []
     }
 

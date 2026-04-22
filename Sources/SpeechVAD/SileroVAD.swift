@@ -241,7 +241,7 @@ public final class SileroVADModel {
 
         switch engine {
         case .mlx:
-            try await HuggingFaceDownloader.downloadWeights(
+            try await HuggingFaceDownloader.downloadWeightsWithSourceSelection(
                 modelId: resolvedModelId,
                 to: cacheDir,
                 offlineMode: offlineMode,
@@ -260,7 +260,7 @@ public final class SileroVADModel {
 
         case .coreml:
             #if canImport(CoreML)
-            try await HuggingFaceDownloader.downloadWeights(
+            try await HuggingFaceDownloader.downloadWeightsWithSourceSelection(
                 modelId: resolvedModelId,
                 to: cacheDir,
                 additionalFiles: ["silero_vad.mlmodelc/**", "config.json"],

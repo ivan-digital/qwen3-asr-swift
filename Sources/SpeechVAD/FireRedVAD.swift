@@ -60,7 +60,7 @@ public final class FireRedVADModel {
 
         let cacheDir = try cacheDir ?? HuggingFaceDownloader.getCacheDirectory(for: modelId)
 
-        try await HuggingFaceDownloader.downloadWeights(
+        try await HuggingFaceDownloader.downloadWeightsWithSourceSelection(
             modelId: modelId,
             to: cacheDir,
             additionalFiles: [
