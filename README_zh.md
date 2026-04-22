@@ -12,6 +12,7 @@
 - **[Parakeet TDT](https://soniqo.audio/zh/guides/parakeet)** — 通过 CoreML 进行语音转文字（神经引擎，NVIDIA FastConformer + TDT 解码器，25 种语言）
 - **[Omnilingual ASR](https://soniqo.audio/zh/guides/omnilingual)** — 语音转文字（Meta wav2vec2 + CTC，**1,672 种语言**，覆盖 32 种文字系统，CoreML 300M + MLX 300M/1B/3B/7B）
 - **[流式听写](https://soniqo.audio/zh/guides/dictate)** — 带部分结果和句末检测的实时听写（Parakeet-EOU-120M）
+- **[Nemotron 流式](https://soniqo.audio/zh/guides/nemotron)** — 具有原生标点和大小写的低延迟流式 ASR（NVIDIA Nemotron-Speech-Streaming-0.6B，CoreML，英语）
 - **[Qwen3-ForcedAligner](https://soniqo.audio/zh/guides/align)** — 词级时间戳对齐（音频 + 文本 → 时间戳）
 - **[Qwen3-TTS](https://soniqo.audio/zh/guides/speak)** — 文本转语音（最高质量、流式输出、自定义说话人，10 种语言）
 - **[CosyVoice TTS](https://soniqo.audio/zh/guides/cosyvoice)** — 流式 TTS，支持声音克隆、多说话人对话、情感标签（9 种语言）
@@ -92,7 +93,7 @@ struct DictateView: View {
 
 `SpeechUI` 只提供 `TranscriptionView`（最终结果 + 部分结果）与 `TranscriptionStore`（流式 ASR 适配器）。音频可视化和播放请使用 AVFoundation。
 
-可用的 SPM products：`Qwen3ASR`、`Qwen3TTS`、`Qwen3TTSCoreML`、`ParakeetASR`、`ParakeetStreamingASR`、`OmnilingualASR`、`KokoroTTS`、`CosyVoiceTTS`、`PersonaPlex`、`SpeechVAD`、`SpeechEnhancement`、`Qwen3Chat`、`SpeechCore`、`SpeechUI`、`AudioCommon`。
+可用的 SPM products：`Qwen3ASR`、`Qwen3TTS`、`Qwen3TTSCoreML`、`ParakeetASR`、`ParakeetStreamingASR`、`NemotronStreamingASR`、`OmnilingualASR`、`KokoroTTS`、`CosyVoiceTTS`、`PersonaPlex`、`SpeechVAD`、`SpeechEnhancement`、`Qwen3Chat`、`SpeechCore`、`SpeechUI`、`AudioCommon`。
 
 ## 模型
 
@@ -103,6 +104,7 @@ struct DictateView: View {
 | [Qwen3-ASR](https://soniqo.audio/zh/guides/transcribe) | 语音 → 文字 | MLX、CoreML（混合） | 0.6B、1.7B | 52 |
 | [Parakeet TDT](https://soniqo.audio/zh/guides/parakeet) | 语音 → 文字 | CoreML (ANE) | 0.6B | 25 种欧洲语言 |
 | [Parakeet EOU](https://soniqo.audio/zh/guides/dictate) | 语音 → 文字（流式） | CoreML (ANE) | 120M | 25 种欧洲语言 |
+| [Nemotron Streaming](https://soniqo.audio/zh/guides/nemotron) | 语音 → 文本（流式、带标点） | CoreML (ANE) | 0.6B | 英语 |
 | [Omnilingual ASR](https://soniqo.audio/zh/guides/omnilingual) | 语音 → 文字 | CoreML (ANE)、MLX | 300M / 1B / 3B / 7B | **[1,672](https://github.com/facebookresearch/omnilingual-asr/blob/main/src/omnilingual_asr/models/wav2vec2_llama/lang_ids.py)** |
 | [Qwen3-ForcedAligner](https://soniqo.audio/zh/guides/align) | 音频 + 文本 → 时间戳 | MLX、CoreML | 0.6B | 多语言 |
 | [Qwen3-TTS](https://soniqo.audio/zh/guides/speak) | 文本 → 语音 | MLX、CoreML | 0.6B、1.7B | 10 |
@@ -152,6 +154,7 @@ dependencies: [
 import Qwen3ASR             // 语音识别 (MLX)
 import ParakeetASR          // 语音识别 (CoreML，批量)
 import ParakeetStreamingASR // 带部分结果和 EOU 的流式听写
+import NemotronStreamingASR // 英语流式 ASR，原生标点（0.6B）
 import OmnilingualASR       // 1,672 种语言 (CoreML + MLX)
 import Qwen3TTS             // 文本转语音
 import CosyVoiceTTS         // 带声音克隆的文本转语音
@@ -319,8 +322,8 @@ speech-swift 把每个模型拆成独立的 SPM target，因此使用者只为 i
 **[完整架构图（含后端、内存表、模块映射）→ soniqo.audio/architecture](https://soniqo.audio/zh/architecture)** · **[API 参考 → soniqo.audio/api](https://soniqo.audio/zh/api)** · **[基准测试 → soniqo.audio/benchmarks](https://soniqo.audio/zh/benchmarks)**
 
 本地文档（仓库内）：
-- **模型：** [Qwen3-ASR](docs/models/asr-model.md) · [Qwen3-TTS](docs/models/tts-model.md) · [CosyVoice](docs/models/cosyvoice-tts.md) · [Kokoro](docs/models/kokoro-tts.md) · [Parakeet TDT](docs/models/parakeet-asr.md) · [Parakeet Streaming](docs/models/parakeet-streaming-asr.md) · [Omnilingual ASR](docs/models/omnilingual-asr.md) · [PersonaPlex](docs/models/personaplex.md) · [FireRedVAD](docs/models/fireredvad.md)
-- **推理：** [Qwen3-ASR](docs/inference/qwen3-asr-inference.md) · [Parakeet TDT](docs/inference/parakeet-asr-inference.md) · [Parakeet Streaming](docs/inference/parakeet-streaming-asr-inference.md) · [Omnilingual ASR](docs/inference/omnilingual-asr-inference.md) · [TTS](docs/inference/qwen3-tts-inference.md) · [Forced Aligner](docs/inference/forced-aligner.md) · [Silero VAD](docs/inference/silero-vad.md) · [说话人分离](docs/inference/speaker-diarization.md) · [语音增强](docs/inference/speech-enhancement.md)
+- **模型：** [Qwen3-ASR](docs/models/asr-model.md) · [Qwen3-TTS](docs/models/tts-model.md) · [CosyVoice](docs/models/cosyvoice-tts.md) · [Kokoro](docs/models/kokoro-tts.md) · [Parakeet TDT](docs/models/parakeet-asr.md) · [Parakeet Streaming](docs/models/parakeet-streaming-asr.md) · [Nemotron Streaming](docs/models/nemotron-streaming.md) · [Omnilingual ASR](docs/models/omnilingual-asr.md) · [PersonaPlex](docs/models/personaplex.md) · [FireRedVAD](docs/models/fireredvad.md)
+- **推理：** [Qwen3-ASR](docs/inference/qwen3-asr-inference.md) · [Parakeet TDT](docs/inference/parakeet-asr-inference.md) · [Parakeet Streaming](docs/inference/parakeet-streaming-asr-inference.md) · [Nemotron Streaming](docs/inference/nemotron-streaming-inference.md) · [Omnilingual ASR](docs/inference/omnilingual-asr-inference.md) · [TTS](docs/inference/qwen3-tts-inference.md) · [Forced Aligner](docs/inference/forced-aligner.md) · [Silero VAD](docs/inference/silero-vad.md) · [说话人分离](docs/inference/speaker-diarization.md) · [语音增强](docs/inference/speech-enhancement.md)
 - **参考：** [共享协议](docs/shared-protocols.md)
 
 ## 缓存配置

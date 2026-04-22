@@ -45,6 +45,10 @@ let package = Package(
             targets: ["ParakeetStreamingASR"]
         ),
         .library(
+            name: "NemotronStreamingASR",
+            targets: ["NemotronStreamingASR"]
+        ),
+        .library(
             name: "OmnilingualASR",
             targets: ["OmnilingualASR"]
         ),
@@ -180,6 +184,12 @@ let package = Package(
             ]
         ),
         .target(
+            name: "NemotronStreamingASR",
+            dependencies: [
+                "AudioCommon",
+            ]
+        ),
+        .target(
             name: "OmnilingualASR",
             dependencies: [
                 "AudioCommon",
@@ -240,6 +250,7 @@ let package = Package(
                 "SpeechEnhancement",
                 "ParakeetASR",
                 "ParakeetStreamingASR",
+                "NemotronStreamingASR",
                 "OmnilingualASR",
                 "KokoroTTS",
                 "SpeechWakeWord",
@@ -314,6 +325,13 @@ let package = Package(
         .testTarget(
             name: "ParakeetStreamingASRTests",
             dependencies: ["ParakeetStreamingASR", "AudioCommon"],
+            resources: [
+                .copy("Resources/test_audio.wav")
+            ]
+        ),
+        .testTarget(
+            name: "NemotronStreamingASRTests",
+            dependencies: ["NemotronStreamingASR", "AudioCommon", "KokoroTTS"],
             resources: [
                 .copy("Resources/test_audio.wav")
             ]

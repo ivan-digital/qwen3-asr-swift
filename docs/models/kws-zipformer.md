@@ -80,5 +80,3 @@ INT8 palettized; the decoder stays FP16 (it's tiny).
 
 - [Inference pipeline](../inference/wake-word.md) — fbank, streaming session,
   keyword file format.
-- [`models/kws-zipformer/export/`](https://github.com/soniqo/speech-models/tree/main/models/kws-zipformer/export)
-  in `soniqo/speech-models` for the full conversion + benchmark scripts.

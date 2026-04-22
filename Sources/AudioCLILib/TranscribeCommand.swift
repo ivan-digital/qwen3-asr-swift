@@ -2,6 +2,7 @@ import Foundation
 import ArgumentParser
 import Qwen3ASR
 import ParakeetASR
+import NemotronStreamingASR
 import OmnilingualASR
 import SpeechVAD
 import AudioCommon
@@ -15,7 +16,7 @@ public struct TranscribeCommand: ParsableCommand {
     @Argument(help: "Audio file to transcribe (WAV, any sample rate)")
     public var audioFile: String
 
-    @Option(name: .long, help: "ASR engine: qwen3 (default), parakeet, omnilingual, qwen3-coreml, or qwen3-coreml-full")
+    @Option(name: .long, help: "ASR engine: qwen3 (default), parakeet, nemotron, omnilingual, qwen3-coreml, or qwen3-coreml-full")
     public var engine: String = "qwen3"
 
     @Option(name: .long, help: "[omnilingual] Window size in seconds: 5 or 10 (default 10) — CoreML backend only")
@@ -52,8 +53,8 @@ public struct TranscribeCommand: ParsableCommand {
 
     public func validate() throws {
         let eng = engine.lowercased()
-        guard eng == "qwen3" || eng == "parakeet" || eng == "omnilingual" || eng == "qwen3-coreml" || eng == "qwen3-coreml-full" else {
-            throw ValidationError("--engine must be 'qwen3', 'parakeet', 'omnilingual', 'qwen3-coreml', or 'qwen3-coreml-full'")
+        guard eng == "qwen3" || eng == "parakeet" || eng == "nemotron" || eng == "omnilingual" || eng == "qwen3-coreml" || eng == "qwen3-coreml-full" else {
+            throw ValidationError("--engine must be 'qwen3', 'parakeet', 'nemotron', 'omnilingual', 'qwen3-coreml', or 'qwen3-coreml-full'")
         }
         if eng == "omnilingual" {
             if window != 5 && window != 10 {
@@ -78,6 +79,8 @@ public struct TranscribeCommand: ParsableCommand {
         switch engine.lowercased() {
         case "parakeet":
             try runParakeetTranscription()
+        case "nemotron":
+            try runNemotronTranscription()
         case "omnilingual":
             try runOmnilingualTranscription()
         case "qwen3-coreml":
@@ -257,6 +260,47 @@ public struct TranscribeCommand: ParsableCommand {
 
             print("Result: \(result)")
             print(String(format: "  Time: %.2fs, RTF: %.3f (warmup: %.2fs)", elapsed, rtf, warmupTime))
+        }
+    }
+
+    private func runNemotronTranscription() throws {
+        try runAsync {
+            print("Loading audio: \(audioFile)")
+            let audio = try AudioFileLoader.load(
+                url: URL(fileURLWithPath: audioFile), targetSampleRate: 16000)
+            let duration = Float(audio.count) / 16000.0
+            print("  Loaded \(audio.count) samples (\(String(format: "%.2f", duration))s)")
+
+            print("Loading Nemotron Streaming model: \(NemotronStreamingASRModel.defaultModelId)")
+            let model = try await NemotronStreamingASRModel.fromPretrained(
+                progressHandler: reportProgress)
+
+            print("Warming up CoreML...")
+            let warmupStart = CFAbsoluteTimeGetCurrent()
+            try model.warmUp()
+            let warmupTime = CFAbsoluteTimeGetCurrent() - warmupStart
+
+            if stream {
+                print("Streaming transcription...")
+                let startTime = CFAbsoluteTimeGetCurrent()
+                for await partial in model.transcribeStream(audio: audio, sampleRate: 16000) {
+                    let tag = partial.isFinal ? "FINAL" : "partial"
+                    if partial.isFinal || self.partial {
+                        print("[\(tag)] \(partial.text)")
+                    }
+                }
+                let elapsed = CFAbsoluteTimeGetCurrent() - startTime
+                let rtf = elapsed / Double(duration)
+                print(String(format: "  Time: %.2fs, RTF: %.3f (warmup: %.2fs)", elapsed, rtf, warmupTime))
+            } else {
+                print("Transcribing...")
+                let startTime = CFAbsoluteTimeGetCurrent()
+                let result = try model.transcribeAudio(audio, sampleRate: 16000)
+                let elapsed = CFAbsoluteTimeGetCurrent() - startTime
+                let rtf = elapsed / Double(duration)
+                print("Result: \(result)")
+                print(String(format: "  Time: %.2fs, RTF: %.3f (warmup: %.2fs)", elapsed, rtf, warmupTime))
+            }
         }
     }
 

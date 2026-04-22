@@ -58,9 +58,11 @@ public protocol SpeechRecognitionModel: AnyObject {
 
 The `transcribeWithLanguage` method has a default implementation that delegates to `transcribe()` with no language detection. Models that detect language (e.g. ParakeetASR via `NLLanguageRecognizer`) override it to return `TranscriptionResult` with a detected language — used by the voice pipeline to forward language to TTS.
 
-**Conforming types:** `Qwen3ASRModel`, `ParakeetASRModel`, `ParakeetStreamingASRModel`, `OmnilingualASRModel` (CoreML), `OmnilingualASRMLXModel` (MLX)
+**Conforming types:** `Qwen3ASRModel`, `ParakeetASRModel`, `ParakeetStreamingASRModel`, `NemotronStreamingASRModel`, `OmnilingualASRModel` (CoreML), `OmnilingualASRMLXModel` (MLX)
 
 `ParakeetStreamingASRModel` additionally exposes streaming APIs — `createSession()` for long-lived streaming with cache state, `transcribeStream(audio:sampleRate:)` for chunked AsyncSequence output, and per-session `pushAudio` / `forceEndOfUtterance` / `finalize` for fine-grained VAD-driven pipelines. The batch `transcribe` entry point runs internal chunking and remains protocol-compatible.
+
+`NemotronStreamingASRModel` exposes the same shape of streaming APIs (`createSession()`, `transcribeStream`, `pushAudio`, `finalize`) minus `forceEndOfUtterance` — Nemotron has no explicit EOU head, so segmentation is driven by the caller (external VAD or punctuation-boundary heuristic) calling `finalize()` directly.
 
 ### ForcedAlignmentModel
 
@@ -450,7 +452,7 @@ All model classes are **not thread-safe** by design. ML inference is inherently 
 - `CosyVoiceTTSModel`
 - `PersonaPlexModel`
 - `OmnilingualASRModel` (CoreML), `OmnilingualASRMLXModel` (MLX)
-- `ParakeetASRModel`, `ParakeetStreamingASRModel`
+- `ParakeetASRModel`, `ParakeetStreamingASRModel`, `NemotronStreamingASRModel`
 - `SileroVADModel`, `StreamingVADProcessor`, `PyannoteVADModel`
 - `PyannoteDiarizationPipeline` (aliased as `DiarizationPipeline`), `SortformerDiarizer`
 
