@@ -84,9 +84,7 @@ published `config.json` on HuggingFace:
 
 ## Model variants
 
-The [aufklarer/coreml-speech-models](https://huggingface.co/collections/aufklarer)
-and [aufklarer/mlx-speech-models](https://huggingface.co/collections/aufklarer)
-collections currently publish:
+The following repos are currently published under [aufklarer](https://huggingface.co/aufklarer) on HuggingFace:
 
 | Repo | Size | Notes |
 |---|---|---|
