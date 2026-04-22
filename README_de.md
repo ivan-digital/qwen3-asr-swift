@@ -12,6 +12,7 @@ Spracherkennung, -synthese und -verständnis auf dem Gerät für Mac und iOS. L�
 - **[Parakeet TDT](https://soniqo.audio/de/guides/parakeet)** — Sprache-zu-Text über CoreML (Neural Engine, NVIDIA FastConformer + TDT-Decoder, 25 Sprachen)
 - **[Omnilingual ASR](https://soniqo.audio/de/guides/omnilingual)** — Sprache-zu-Text (Meta wav2vec2 + CTC, **1.672 Sprachen** in 32 Schriften, CoreML 300M + MLX 300M/1B/3B/7B)
 - **[Streaming-Diktat](https://soniqo.audio/de/guides/dictate)** — Echtzeit-Diktat mit Teilergebnissen und Äußerungsende-Erkennung (Parakeet-EOU-120M)
+- **[Nemotron Streaming](https://soniqo.audio/de/guides/nemotron)** — Streaming-ASR mit geringer Latenz, nativer Interpunktion und Großschreibung (NVIDIA Nemotron-Speech-Streaming-0.6B, CoreML, Englisch)
 - **[Qwen3-ForcedAligner](https://soniqo.audio/de/guides/align)** — Wortgenaue Zeitstempel-Zuordnung (Audio + Text → Zeitstempel)
 - **[Qwen3-TTS](https://soniqo.audio/de/guides/speak)** — Sprachsynthese (höchste Qualität, Streaming, benutzerdefinierte Sprecher, 10 Sprachen)
 - **[CosyVoice TTS](https://soniqo.audio/de/guides/cosyvoice)** — Streaming-TTS mit Stimmklonen, Mehrsprecherdialog, Emotions-Tags (9 Sprachen)
@@ -92,7 +93,7 @@ struct DictateView: View {
 
 `SpeechUI` liefert nur `TranscriptionView` (finale + partielle Ergebnisse) und `TranscriptionStore` (Streaming-ASR-Adapter). Verwende AVFoundation für Audio-Visualisierung und Wiedergabe.
 
-Verfügbare SPM-Produkte: `Qwen3ASR`, `Qwen3TTS`, `Qwen3TTSCoreML`, `ParakeetASR`, `ParakeetStreamingASR`, `OmnilingualASR`, `KokoroTTS`, `CosyVoiceTTS`, `PersonaPlex`, `SpeechVAD`, `SpeechEnhancement`, `Qwen3Chat`, `SpeechCore`, `SpeechUI`, `AudioCommon`.
+Verfügbare SPM-Produkte: `Qwen3ASR`, `Qwen3TTS`, `Qwen3TTSCoreML`, `ParakeetASR`, `ParakeetStreamingASR`, `NemotronStreamingASR`, `OmnilingualASR`, `KokoroTTS`, `CosyVoiceTTS`, `PersonaPlex`, `SpeechVAD`, `SpeechEnhancement`, `Qwen3Chat`, `SpeechCore`, `SpeechUI`, `AudioCommon`.
 
 ## Modelle
 
@@ -103,6 +104,7 @@ Kompakte Übersicht unten. **[Vollständiger Modellkatalog mit Größen, Quantis
 | [Qwen3-ASR](https://soniqo.audio/de/guides/transcribe) | Sprache → Text | MLX, CoreML (hybrid) | 0.6B, 1.7B | 52 |
 | [Parakeet TDT](https://soniqo.audio/de/guides/parakeet) | Sprache → Text | CoreML (ANE) | 0.6B | 25 europäisch |
 | [Parakeet EOU](https://soniqo.audio/de/guides/dictate) | Sprache → Text (Streaming) | CoreML (ANE) | 120M | 25 europäisch |
+| [Nemotron Streaming](https://soniqo.audio/de/guides/nemotron) | Sprache → Text (Streaming, mit Interpunktion) | CoreML (ANE) | 0.6B | Englisch |
 | [Omnilingual ASR](https://soniqo.audio/de/guides/omnilingual) | Sprache → Text | CoreML (ANE), MLX | 300M / 1B / 3B / 7B | **[1.672](https://github.com/facebookresearch/omnilingual-asr/blob/main/src/omnilingual_asr/models/wav2vec2_llama/lang_ids.py)** |
 | [Qwen3-ForcedAligner](https://soniqo.audio/de/guides/align) | Audio + Text → Zeitstempel | MLX, CoreML | 0.6B | Multi |
 | [Qwen3-TTS](https://soniqo.audio/de/guides/speak) | Text → Sprache | MLX, CoreML | 0.6B, 1.7B | 10 |
@@ -152,6 +154,7 @@ Importiere nur, was du brauchst — jedes Modell hat sein eigenes SPM-Target:
 import Qwen3ASR             // Spracherkennung (MLX)
 import ParakeetASR          // Spracherkennung (CoreML, Batch)
 import ParakeetStreamingASR // Streaming-Diktat mit Teilergebnissen + EOU
+import NemotronStreamingASR // Englisches Streaming-ASR mit nativer Interpunktion (0.6B)
 import OmnilingualASR       // 1.672 Sprachen (CoreML + MLX)
 import Qwen3TTS             // Sprachsynthese
 import CosyVoiceTTS         // Sprachsynthese mit Stimmklonen
@@ -319,8 +322,8 @@ speech-swift ist in ein SPM-Target pro Modell aufgeteilt, sodass Konsumenten nur
 **[Vollständiges Architekturdiagramm mit Backends, Speichertabellen und Modulkarte → soniqo.audio/architecture](https://soniqo.audio/de/architecture)** · **[API-Referenz → soniqo.audio/api](https://soniqo.audio/de/api)** · **[Benchmarks → soniqo.audio/benchmarks](https://soniqo.audio/de/benchmarks)**
 
 Lokale Docs (Repo):
-- **Modelle:** [Qwen3-ASR](docs/models/asr-model.md) · [Qwen3-TTS](docs/models/tts-model.md) · [CosyVoice](docs/models/cosyvoice-tts.md) · [Kokoro](docs/models/kokoro-tts.md) · [Parakeet TDT](docs/models/parakeet-asr.md) · [Parakeet Streaming](docs/models/parakeet-streaming-asr.md) · [Omnilingual ASR](docs/models/omnilingual-asr.md) · [PersonaPlex](docs/models/personaplex.md) · [FireRedVAD](docs/models/fireredvad.md)
-- **Inferenz:** [Qwen3-ASR](docs/inference/qwen3-asr-inference.md) · [Parakeet TDT](docs/inference/parakeet-asr-inference.md) · [Parakeet Streaming](docs/inference/parakeet-streaming-asr-inference.md) · [Omnilingual ASR](docs/inference/omnilingual-asr-inference.md) · [TTS](docs/inference/qwen3-tts-inference.md) · [Forced Aligner](docs/inference/forced-aligner.md) · [Silero VAD](docs/inference/silero-vad.md) · [Sprecherdiarisierung](docs/inference/speaker-diarization.md) · [Sprachverbesserung](docs/inference/speech-enhancement.md)
+- **Modelle:** [Qwen3-ASR](docs/models/asr-model.md) · [Qwen3-TTS](docs/models/tts-model.md) · [CosyVoice](docs/models/cosyvoice-tts.md) · [Kokoro](docs/models/kokoro-tts.md) · [Parakeet TDT](docs/models/parakeet-asr.md) · [Parakeet Streaming](docs/models/parakeet-streaming-asr.md) · [Nemotron Streaming](docs/models/nemotron-streaming.md) · [Omnilingual ASR](docs/models/omnilingual-asr.md) · [PersonaPlex](docs/models/personaplex.md) · [FireRedVAD](docs/models/fireredvad.md)
+- **Inferenz:** [Qwen3-ASR](docs/inference/qwen3-asr-inference.md) · [Parakeet TDT](docs/inference/parakeet-asr-inference.md) · [Parakeet Streaming](docs/inference/parakeet-streaming-asr-inference.md) · [Nemotron Streaming](docs/inference/nemotron-streaming-inference.md) · [Omnilingual ASR](docs/inference/omnilingual-asr-inference.md) · [TTS](docs/inference/qwen3-tts-inference.md) · [Forced Aligner](docs/inference/forced-aligner.md) · [Silero VAD](docs/inference/silero-vad.md) · [Sprecherdiarisierung](docs/inference/speaker-diarization.md) · [Sprachverbesserung](docs/inference/speech-enhancement.md)
 - **Referenz:** [Geteilte Protokolle](docs/shared-protocols.md)
 
 ## Cache-Konfiguration

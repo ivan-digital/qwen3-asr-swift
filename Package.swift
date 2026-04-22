@@ -331,7 +331,10 @@ let package = Package(
         ),
         .testTarget(
             name: "NemotronStreamingASRTests",
-            dependencies: ["NemotronStreamingASR", "AudioCommon"]
+            dependencies: ["NemotronStreamingASR", "AudioCommon"],
+            resources: [
+                .copy("Resources/test_audio.wav")
+            ]
         ),
         .testTarget(
             name: "OmnilingualASRTests",
