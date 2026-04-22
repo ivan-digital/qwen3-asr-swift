@@ -127,6 +127,40 @@ public enum HuggingFaceDownloader {
         throw DownloadError.failedToDownload("\(modelId): \(lastError?.localizedDescription ?? "unknown")")
     }
 
+    // MARK: - Unified Download with Source Selection
+
+    /// Download model files with automatic source selection based on environment
+    public static func downloadWeightsWithSourceSelection(
+        modelId: String,
+        to directory: URL,
+        additionalFiles: [String] = [],
+        offlineMode: Bool = false,
+        progressHandler: ((Double) -> Void)? = nil
+    ) async throws {
+        // Check environment variable for source selection
+        let useModelScope = ProcessInfo.processInfo.environment["QWEN3_MODEL_SOURCE"] == "modelscope"
+
+        if useModelScope {
+            AudioLog.download.debug("Using ModelScope to download \(modelId)")
+            try await ModelScopeDownloader.downloadWeights(
+                modelId: modelId,
+                to: directory,
+                additionalFiles: additionalFiles,
+                offlineMode: offlineMode,
+                progressHandler: progressHandler
+            )
+        } else {
+            AudioLog.download.debug("Using HuggingFace to download \(modelId)")
+            try await downloadWeights(
+                modelId: modelId,
+                to: directory,
+                additionalFiles: additionalFiles,
+                offlineMode: offlineMode,
+                progressHandler: progressHandler
+            )
+        }
+    }
+
     // MARK: - Security Helpers (kept for backward compat + security tests)
 
     /// Convert an arbitrary modelId into a single, safe path component for on-disk caching.
@@ -185,15 +219,18 @@ public enum HuggingFaceDownloader {
         let root: URL
         if let override = ProcessInfo.processInfo.environment["QWEN3_CACHE_DIR"],
            !override.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            // Use the override directly without appending cacheDirName
             root = URL(fileURLWithPath: override, isDirectory: true)
+            return root
         } else if let override = ProcessInfo.processInfo.environment["QWEN3_ASR_CACHE_DIR"],
                   !override.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            // Legacy env var support
+            // Legacy env var support - use directly
             root = URL(fileURLWithPath: override, isDirectory: true)
+            return root
         } else {
             root = fm.urls(for: .cachesDirectory, in: .userDomainMask).first!
+            return root.appendingPathComponent(cacheDirName, isDirectory: true)
         }
-        return root.appendingPathComponent(cacheDirName, isDirectory: true)
     }
 
     /// Create a `HubApi` whose `downloadBase` is derived from the repo directory that

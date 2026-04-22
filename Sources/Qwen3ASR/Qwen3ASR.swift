@@ -493,7 +493,7 @@ public extension Qwen3ASRModel {
 
         // Download weights and tokenizer files (skips files that already exist on disk)
         // Download is the slowest part — give it 0-80% of progress
-        try await HuggingFaceDownloader.downloadWeights(
+        try await HuggingFaceDownloader.downloadWeightsWithSourceSelection(
             modelId: modelId,
             to: cacheDir,
             additionalFiles: ["vocab.json", "merges.txt", "tokenizer_config.json"],

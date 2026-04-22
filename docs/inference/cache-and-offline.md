@@ -2,6 +2,23 @@
 
 All `fromPretrained()` methods accept optional `cacheDir` and `offlineMode` parameters for apps that need control over model storage or want to avoid network calls.
 
+## Environment Variables
+
+### QWEN3_CACHE_DIR
+Override the default cache directory location:
+```bash
+export QWEN3_CACHE_DIR=/path/to/custom/cache
+```
+
+Note: When set, models will be cached directly in this directory (e.g., `/path/to/custom/cache/models/...`), not in a nested `qwen3-speech` subdirectory.
+
+### QWEN3_MODEL_SOURCE
+Choose between HuggingFace and ModelScope for downloading models:
+```bash
+export QWEN3_MODEL_SOURCE=modelscope  # Use ModelScope (modelscope.cn)
+export QWEN3_MODEL_SOURCE=huggingface # Use HuggingFace (default)
+```
+
 ## Custom Cache Directory
 
 By default, models are cached in `~/Library/Caches/qwen3-speech/models/<org>/<model>/`. Pass `cacheDir` to override:
@@ -57,6 +74,25 @@ let model = try await ParakeetASRModel.fromPretrained(
 ```
 
 Ship pre-downloaded models in your app bundle, point `cacheDir` at them, and set `offlineMode: true` to guarantee zero network calls.
+
+## ModelScope Support
+
+Models can be downloaded from ModelScope (modelscope.cn) instead of HuggingFace by setting the environment variable:
+
+```bash
+export QWEN3_MODEL_SOURCE=modelscope
+```
+
+This is useful for:
+- **Users in China** - Faster downloads from domestic servers
+- **Corporate environments** - May have better access to ModelScope
+
+Supported models on ModelScope:
+- Qwen3-ASR models (0.6B and 1.7B)
+- Qwen3-TTS models
+- Most other models are also available
+
+The cache directory structure remains identical regardless of the source.
 
 ## Supported Models
 
