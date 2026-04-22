@@ -99,13 +99,26 @@ public class NemotronStreamingASRModel {
     }
 
     /// Transcribe a full audio buffer (non-streaming fallback).
+    ///
+    /// The streaming encoder starts each session with an all-zero attention /
+    /// convolution cache and an all-zero mel pre-cache. For natural speech with
+    /// ambient lead-in that's fine, but short TTS-generated audio with sharp
+    /// onset and offset can lose the first and last words at chunk boundaries.
+    /// Padding 0.1 s of silence at both ends primes the cache with a single
+    /// encoder output frame of "silent" context — enough to eliminate edge
+    /// clipping on TTS input while staying short enough not to perturb chunk
+    /// alignment on natural audio. Empirically recovers full word accuracy on
+    /// Kokoro-generated test phrases without degrading natural-speech tests.
     public func transcribeAudio(_ audio: [Float], sampleRate: Int, language: String? = nil) throws -> String {
-        let samples: [Float]
+        var samples: [Float]
         if sampleRate != config.sampleRate {
             samples = AudioFileLoader.resample(audio, from: sampleRate, to: config.sampleRate)
         } else {
             samples = audio
         }
+        let padSamples = config.sampleRate / 10  // 100 ms
+        samples = [Float](repeating: 0, count: padSamples) + samples + [Float](repeating: 0, count: padSamples)
+
         let session = try createSession()
         var allPartials = try session.pushAudio(samples)
         allPartials.append(contentsOf: try session.finalize())

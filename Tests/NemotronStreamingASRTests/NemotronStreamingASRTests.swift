@@ -153,28 +153,31 @@ final class E2ENemotronStreamingASRTests: XCTestCase {
     /// Synthesize a known phrase with Kokoro and transcribe it through Nemotron.
     /// Kokoro produces 24 kHz audio; Nemotron resamples internally to 16 kHz.
     ///
-    /// The threshold is 3/5 content words rather than full-string match: TTS→ASR
-    /// chains routinely introduce leading-breath artifacts (e.g. "The" heard as
-    /// "But a") and cache-aware streaming can clip a few hundred ms at the tail.
-    /// Three-of-five content-word recovery is a strong end-to-end signal without
-    /// being brittle to acoustic noise from the synthesizer.
+    /// `transcribeAudio` pads 0.5 s of leading + trailing silence so the
+    /// streaming encoder's initially-zero cache has a ramp into the real audio;
+    /// without it the first word or last word can be clipped on short clips
+    /// with sharp synthetic onsets/offsets. A light ghost word at the very
+    /// start is still possible (first-chunk attention with zero left context),
+    /// so the check is all-content-words-present, not full-string equality.
     func testTTSRoundTrip() async throws {
         let nemotron = try model
         let tts = try await KokoroTTSModel.fromPretrained()
 
         let phrase = "The quick brown fox jumps over the lazy dog"
         let audio24k = try tts.synthesize(text: phrase, voice: "af_heart")
+        let audioDuration = Float(audio24k.count) / 24000.0
         XCTAssertGreaterThan(audio24k.count, 24000, "TTS should produce at least 1s of audio")
+        print("TTS audio: \(audio24k.count) samples (\(String(format: "%.2f", audioDuration))s)")
 
         let transcript = try nemotron.transcribeAudio(audio24k, sampleRate: 24000)
         print("Round-trip input:  \"\(phrase)\"")
         print("Round-trip output: \"\(transcript)\"")
 
         let normalized = transcript.lowercased()
-        let expected = ["quick", "brown", "fox", "jumps", "over"]
+        let expected = ["quick", "brown", "fox", "jumps", "over", "lazy", "dog"]
         let matched = expected.filter { normalized.contains($0) }
-        XCTAssertGreaterThanOrEqual(matched.count, 3,
-            "Round-trip transcript should recover at least 3/\(expected.count) content words. " +
-            "Matched: \(matched). Transcript: \"\(transcript)\"")
+        XCTAssertEqual(matched.count, expected.count,
+            "Round-trip should recover every content word. " +
+            "Matched \(matched.count)/\(expected.count): \(matched). Transcript: \"\(transcript)\"")
     }
 }
