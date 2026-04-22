@@ -74,7 +74,7 @@ audio (16 kHz) → Mel (128 bins, 10 ms hop)
 | 560  | 7  | 6  | 64  | 9  | 7  |
 | 1120 | 14 | 13 | 121 | 9  | 14 |
 
-The published HuggingFace bundle targets **160 ms** by default (best low-latency / quality balance). Conversion supports the other three chunk sizes via `convert.py --chunk-ms {80,560,1120}` in `speech-models/models/nemotron-streaming/export/`.
+The published HuggingFace bundle targets **160 ms** by default (best low-latency / quality balance). The other three chunk sizes (80, 560, 1120 ms) can also be converted from the upstream NeMo checkpoint; the published repo just pins the 160 ms variant.
 
 ## Weight Files
 
@@ -103,12 +103,3 @@ Sources/NemotronStreamingASR/
   NemotronStreamingASR+Protocols.swift  SpeechRecognitionModel conformance
 ```
 
-## Conversion
-
-```bash
-cd /Users/ivan/speech-models/models/nemotron-streaming/export
-poetry install
-poetry run python convert.py --chunk-ms 160 --compile --output-dir /tmp/nemotron-streaming-coreml
-poetry run pytest test_convert.py --model-dir /tmp/nemotron-streaming-coreml
-poetry run huggingface-cli upload aufklarer/Nemotron-Speech-Streaming-0.6B-CoreML-INT8 /tmp/nemotron-streaming-coreml .
-```
