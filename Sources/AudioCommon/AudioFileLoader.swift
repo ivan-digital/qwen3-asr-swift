@@ -31,6 +31,41 @@ public enum AudioFileLoader {
         return samples
     }
 
+    /// Load audio file and return stereo channels at target sample rate.
+    /// Returns `[left, right]` — mono files are duplicated to stereo.
+    public static func loadStereo(url: URL, targetSampleRate: Int = 44100) throws -> [[Float]] {
+        let audioFile = try AVAudioFile(forReading: url)
+        let format = audioFile.processingFormat
+        let frameCount = AVAudioFrameCount(audioFile.length)
+
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else {
+            throw AudioLoadError.bufferCreationFailed
+        }
+
+        try audioFile.read(into: buffer)
+
+        guard let floatData = buffer.floatChannelData else {
+            throw AudioLoadError.noFloatData
+        }
+
+        let count = Int(buffer.frameLength)
+        let left = Array(UnsafeBufferPointer(start: floatData[0], count: count))
+        let right: [Float]
+        if format.channelCount >= 2 {
+            right = Array(UnsafeBufferPointer(start: floatData[1], count: count))
+        } else {
+            right = left  // Mono → duplicate
+        }
+
+        let inputSampleRate = Int(format.sampleRate)
+        if inputSampleRate != targetSampleRate {
+            return [resample(left, from: inputSampleRate, to: targetSampleRate),
+                    resample(right, from: inputSampleRate, to: targetSampleRate)]
+        }
+
+        return [left, right]
+    }
+
     /// Load WAV file directly (for 16-bit PCM)
     public static func loadWAV(url: URL) throws -> (samples: [Float], sampleRate: Int) {
         let data = try Data(contentsOf: url)
