@@ -20,6 +20,7 @@ On-device speech recognition, synthesis, and understanding for Mac and iOS. Runs
 - **[Qwen3.5-Chat](https://soniqo.audio/guides/chat)** — On-device LLM chat (0.8B, MLX INT4 + CoreML INT8, DeltaNet hybrid, streaming tokens)
 - **[PersonaPlex](https://soniqo.audio/guides/respond)** — Full-duplex speech-to-speech (7B, audio in → audio out, 18 voice presets)
 - **[DeepFilterNet3](https://soniqo.audio/guides/denoise)** — Real-time noise suppression (2.1M params, 48 kHz)
+- **[Source Separation](https://soniqo.audio/guides/separate)** — Music source separation via Open-Unmix (UMX-HQ / UMX-L, 4 stems: vocals/drums/bass/other, 44.1 kHz stereo)
 - **[Wake-word](https://soniqo.audio/guides/wake-word)** — On-device keyword spotting (KWS Zipformer 3M, CoreML, 26× real-time, configurable keyword list)
 - **[VAD](https://soniqo.audio/guides/vad)** — Voice activity detection (Silero streaming, Pyannote offline, FireRedVAD 100+ languages)
 - **[Speaker Diarization](https://soniqo.audio/guides/diarize)** — Who spoke when (Pyannote pipeline, Sortformer end-to-end on Neural Engine)
@@ -93,7 +94,7 @@ struct DictateView: View {
 
 `SpeechUI` ships only `TranscriptionView` (finals + partials) and `TranscriptionStore` (streaming ASR adapter). Use AVFoundation for audio visualization and playback.
 
-Available SPM products: `Qwen3ASR`, `Qwen3TTS`, `Qwen3TTSCoreML`, `ParakeetASR`, `ParakeetStreamingASR`, `NemotronStreamingASR`, `OmnilingualASR`, `KokoroTTS`, `CosyVoiceTTS`, `PersonaPlex`, `SpeechVAD`, `SpeechEnhancement`, `Qwen3Chat`, `SpeechCore`, `SpeechUI`, `AudioCommon`.
+Available SPM products: `Qwen3ASR`, `Qwen3TTS`, `Qwen3TTSCoreML`, `ParakeetASR`, `ParakeetStreamingASR`, `NemotronStreamingASR`, `OmnilingualASR`, `KokoroTTS`, `CosyVoiceTTS`, `PersonaPlex`, `SpeechVAD`, `SpeechEnhancement`, `SourceSeparation`, `Qwen3Chat`, `SpeechCore`, `SpeechUI`, `AudioCommon`.
 
 ## Models
 
@@ -116,6 +117,7 @@ Compact view below. **[Full model catalogue with sizes, quantisations, download 
 | [Pyannote](https://soniqo.audio/guides/diarize) | VAD + Diarization | MLX | 1.5M | Agnostic |
 | [Sortformer](https://soniqo.audio/guides/diarize) | Diarization (E2E) | CoreML (ANE) | — | Agnostic |
 | [DeepFilterNet3](https://soniqo.audio/guides/denoise) | Speech Enhancement | CoreML | 2.1M | Agnostic |
+| [Open-Unmix](https://soniqo.audio/guides/separate) | Source Separation | MLX | 8.6M | Agnostic |
 | [WeSpeaker](https://soniqo.audio/guides/embed-speaker) | Speaker Embedding | MLX, CoreML | 6.6M | Agnostic |
 
 ## Installation
@@ -163,6 +165,7 @@ import Qwen3Chat            // On-device LLM chat
 import PersonaPlex          // Full-duplex speech-to-speech
 import SpeechVAD            // VAD + speaker diarization + embeddings
 import SpeechEnhancement    // Noise suppression
+import SourceSeparation     // Music source separation (Open-Unmix, 4 stems)
 import SpeechUI             // SwiftUI components for streaming transcripts
 import AudioCommon          // Shared protocols and utilities
 ```
@@ -322,7 +325,7 @@ speech-swift is split into one SPM target per model so consumers only pay for wh
 **[Full architecture diagram with backends, memory tables, and module map → soniqo.audio/architecture](https://soniqo.audio/architecture)** · **[API reference → soniqo.audio/api](https://soniqo.audio/api)** · **[Benchmarks → soniqo.audio/benchmarks](https://soniqo.audio/benchmarks)**
 
 Local docs (repo):
-- **Models:** [Qwen3-ASR](docs/models/asr-model.md) · [Qwen3-TTS](docs/models/tts-model.md) · [CosyVoice](docs/models/cosyvoice-tts.md) · [Kokoro](docs/models/kokoro-tts.md) · [Parakeet TDT](docs/models/parakeet-asr.md) · [Parakeet Streaming](docs/models/parakeet-streaming-asr.md) · [Nemotron Streaming](docs/models/nemotron-streaming.md) · [Omnilingual ASR](docs/models/omnilingual-asr.md) · [PersonaPlex](docs/models/personaplex.md) · [FireRedVAD](docs/models/fireredvad.md)
+- **Models:** [Qwen3-ASR](docs/models/asr-model.md) · [Qwen3-TTS](docs/models/tts-model.md) · [CosyVoice](docs/models/cosyvoice-tts.md) · [Kokoro](docs/models/kokoro-tts.md) · [Parakeet TDT](docs/models/parakeet-asr.md) · [Parakeet Streaming](docs/models/parakeet-streaming-asr.md) · [Nemotron Streaming](docs/models/nemotron-streaming.md) · [Omnilingual ASR](docs/models/omnilingual-asr.md) · [PersonaPlex](docs/models/personaplex.md) · [FireRedVAD](docs/models/fireredvad.md) · [Source Separation](docs/models/source-separation.md)
 - **Inference:** [Qwen3-ASR](docs/inference/qwen3-asr-inference.md) · [Parakeet TDT](docs/inference/parakeet-asr-inference.md) · [Parakeet Streaming](docs/inference/parakeet-streaming-asr-inference.md) · [Nemotron Streaming](docs/inference/nemotron-streaming-inference.md) · [Omnilingual ASR](docs/inference/omnilingual-asr-inference.md) · [TTS](docs/inference/qwen3-tts-inference.md) · [Forced Aligner](docs/inference/forced-aligner.md) · [Silero VAD](docs/inference/silero-vad.md) · [Speaker Diarization](docs/inference/speaker-diarization.md) · [Speech Enhancement](docs/inference/speech-enhancement.md)
 - **Reference:** [Shared Protocols](docs/shared-protocols.md)
 

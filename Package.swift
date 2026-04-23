@@ -37,6 +37,10 @@ let package = Package(
             targets: ["SpeechEnhancement"]
         ),
         .library(
+            name: "SourceSeparation",
+            targets: ["SourceSeparation"]
+        ),
+        .library(
             name: "ParakeetASR",
             targets: ["ParakeetASR"]
         ),
@@ -172,6 +176,16 @@ let package = Package(
             ]
         ),
         .target(
+            name: "SourceSeparation",
+            dependencies: [
+                "AudioCommon",
+                "MLXCommon",
+                .product(name: "MLX", package: "mlx-swift"),
+                .product(name: "MLXNN", package: "mlx-swift"),
+                .product(name: "MLXFast", package: "mlx-swift"),
+            ]
+        ),
+        .target(
             name: "ParakeetASR",
             dependencies: [
                 "AudioCommon",
@@ -248,6 +262,7 @@ let package = Package(
                 "PersonaPlex",
                 "SpeechVAD",
                 "SpeechEnhancement",
+                "SourceSeparation",
                 "ParakeetASR",
                 "ParakeetStreamingASR",
                 "NemotronStreamingASR",
@@ -365,6 +380,14 @@ let package = Package(
             name: "SpeechEnhancementTests",
             dependencies: [
                 "SpeechEnhancement",
+                "AudioCommon",
+                .product(name: "MLX", package: "mlx-swift"),
+            ]
+        ),
+        .testTarget(
+            name: "SourceSeparationTests",
+            dependencies: [
+                "SourceSeparation",
                 "AudioCommon",
                 .product(name: "MLX", package: "mlx-swift"),
             ]
