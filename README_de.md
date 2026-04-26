@@ -6,7 +6,7 @@ KI-Sprachmodelle für Apple Silicon, basierend auf MLX Swift und CoreML.
 
 Spracherkennung, -synthese und -verständnis auf dem Gerät für Mac und iOS. Läuft vollständig lokal auf Apple Silicon — keine Cloud, keine API-Schlüssel, keine Daten verlassen das Gerät.
 
-**[📚 Vollständige Dokumentation →](https://soniqo.audio/de)** · **[🤗 HuggingFace-Modelle](https://huggingface.co/aufklarer)** · **[📝 Blog](https://blog.ivan.digital)**
+**[📚 Vollständige Dokumentation →](https://soniqo.audio/de)** · **[🤗 HuggingFace-Modelle](https://huggingface.co/aufklarer)** · **[📝 Blog](https://blog.ivan.digital)** · **[💬 Discord](https://discord.gg/TnCryqEMgu)**
 
 - **[Qwen3-ASR](https://soniqo.audio/de/guides/transcribe)** — Sprache-zu-Text (automatische Spracherkennung, 52 Sprachen, MLX + CoreML)
 - **[Parakeet TDT](https://soniqo.audio/de/guides/parakeet)** — Sprache-zu-Text über CoreML (Neural Engine, NVIDIA FastConformer + TDT-Decoder, 25 Sprachen)
@@ -19,6 +19,7 @@ Spracherkennung, -synthese und -verständnis auf dem Gerät für Mac und iOS. L�
 - **[Kokoro TTS](https://soniqo.audio/de/guides/kokoro)** — TTS auf dem Gerät (82M, CoreML/Neural Engine, 54 Stimmen, iOS-tauglich, 10 Sprachen)
 - **[VibeVoice TTS](https://soniqo.audio/de/guides/vibevoice)** — Langform-/Multi-Speaker-TTS (Microsoft VibeVoice Realtime-0.5B + 1.5B, MLX, bis zu 90 Min. Podcast-/Hörbuch-Synthese, EN/ZH)
 - **[Qwen3.5-Chat](https://soniqo.audio/de/guides/chat)** — LLM-Chat auf dem Gerät (0.8B, MLX INT4 + CoreML INT8, DeltaNet-Hybrid, Token-Streaming)
+- **[MADLAD-400](https://soniqo.audio/de/guides/translate)** — Mehrsprachige Übersetzung über 400+ Sprachen (3B, MLX INT4 + INT8, T5 v1.1, Apache 2.0)
 - **[PersonaPlex](https://soniqo.audio/de/guides/respond)** — Vollduplex-Sprache-zu-Sprache (7B, Audio rein → Audio raus, 18 Stimmvoreinstellungen)
 - **[DeepFilterNet3](https://soniqo.audio/de/guides/denoise)** — Echtzeit-Rauschunterdrückung (2,1M Parameter, 48 kHz)
 - **[Quelltrennung](https://soniqo.audio/de/guides/separate)** — Musikquelltrennung mit Open-Unmix (UMX-HQ / UMX-L, 4 Stems: Gesang/Drums/Bass/Rest, 44,1 kHz Stereo)
@@ -115,6 +116,7 @@ Kompakte Übersicht unten. **[Vollständiger Modellkatalog mit Größen, Quantis
 | [VibeVoice Realtime-0.5B](https://soniqo.audio/de/guides/vibevoice) | Text → Sprache (Langform, Multi-Speaker) | MLX | 0.5B | EN/ZH |
 | [VibeVoice 1.5B](https://soniqo.audio/de/guides/vibevoice) | Text → Sprache (bis zu 90 Min. Podcast) | MLX | 1.5B | EN/ZH |
 | [Qwen3.5-Chat](https://soniqo.audio/de/guides/chat) | Text → Text (LLM) | MLX, CoreML | 0.8B | Multi |
+| [MADLAD-400](https://soniqo.audio/de/guides/translate) | Text → Text (Übersetzung) | MLX | 3B | **400+** |
 | [PersonaPlex](https://soniqo.audio/de/guides/respond) | Sprache → Sprache | MLX | 7B | EN |
 | [Silero VAD](https://soniqo.audio/de/guides/vad) | Sprachaktivitätserkennung | MLX, CoreML | 309K | Sprachunabhängig |
 | [Pyannote](https://soniqo.audio/de/guides/diarize) | VAD + Diarisierung | MLX | 1.5M | Sprachunabhängig |
@@ -139,6 +141,7 @@ Dann:
 ```bash
 audio transcribe recording.wav
 audio speak "Hello world"
+audio translate "Hello, how are you?" --to es
 audio respond --input question.wav --transcript
 audio-server --port 8080            # lokaler HTTP/WebSocket-Server (OpenAI-kompatibles /v1/realtime)
 ```
@@ -166,6 +169,7 @@ import CosyVoiceTTS         // Sprachsynthese mit Stimmklonen
 import KokoroTTS            // Sprachsynthese (iOS-tauglich)
 import VibeVoiceTTS         // Langform-/Multi-Speaker-TTS (EN/ZH)
 import Qwen3Chat            // LLM-Chat auf dem Gerät
+import MADLADTranslation    // Mehrsprachige Übersetzung über 400+ Sprachen
 import PersonaPlex          // Vollduplex-Sprache-zu-Sprache
 import SpeechVAD            // VAD + Sprecherdiarisierung + Einbettungen
 import SpeechEnhancement    // Rauschunterdrückung
@@ -265,6 +269,16 @@ let chat = try await Qwen35MLXChat.fromPretrained()
 chat.chat(messages: [(.user, "Explain MLX in one sentence")]) { token, isFinal in
     print(token, terminator: "")
 }
+```
+
+### Übersetzung — [vollständige Anleitung →](https://soniqo.audio/de/guides/translate)
+
+```swift
+import MADLADTranslation
+
+let translator = try await MADLADTranslator.fromPretrained()
+let es = try translator.translate("Hello, how are you?", to: "es")
+// → "Hola, ¿cómo estás?"
 ```
 
 ### Sprachaktivitätserkennung — [vollständige Anleitung →](https://soniqo.audio/de/guides/vad)

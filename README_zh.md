@@ -19,6 +19,7 @@
 - **[Kokoro TTS](https://soniqo.audio/zh/guides/kokoro)** — 端侧 TTS（82M，CoreML/神经引擎，54 种音色，iOS 就绪，10 种语言）
 - **[VibeVoice TTS](https://soniqo.audio/zh/guides/vibevoice)** — 长篇 / 多说话人 TTS（Microsoft VibeVoice Realtime-0.5B + 1.5B，MLX，可合成最长 90 分钟的播客 / 有声书，英语 / 中文）
 - **[Qwen3.5-Chat](https://soniqo.audio/zh/guides/chat)** — 端侧 LLM 对话（0.8B，MLX INT4 + CoreML INT8，DeltaNet 混合架构，流式 token）
+- **[MADLAD-400](https://soniqo.audio/zh/guides/translate)** — 400+ 语言间的多对多翻译（3B，MLX INT4 + INT8，T5 v1.1，Apache 2.0）
 - **[PersonaPlex](https://soniqo.audio/zh/guides/respond)** — 全双工语音到语音（7B，音频输入 → 音频输出，18 种预设音色）
 - **[DeepFilterNet3](https://soniqo.audio/zh/guides/denoise)** — 实时噪声抑制（2.1M 参数，48 kHz）
 - **[音源分离](https://soniqo.audio/zh/guides/separate)** — 通过 Open-Unmix 进行音乐源分离（UMX-HQ / UMX-L，4 声轨：人声/鼓/贝斯/其他，44.1 kHz 立体声）
@@ -115,6 +116,7 @@ struct DictateView: View {
 | [VibeVoice Realtime-0.5B](https://soniqo.audio/zh/guides/vibevoice) | 文本 → 语音（长篇、多说话人） | MLX | 0.5B | EN/ZH |
 | [VibeVoice 1.5B](https://soniqo.audio/zh/guides/vibevoice) | 文本 → 语音（最长 90 分钟播客） | MLX | 1.5B | EN/ZH |
 | [Qwen3.5-Chat](https://soniqo.audio/zh/guides/chat) | 文本 → 文本（LLM） | MLX、CoreML | 0.8B | 多语言 |
+| [MADLAD-400](https://soniqo.audio/zh/guides/translate) | 文本 → 文本（翻译） | MLX | 3B | **400+** |
 | [PersonaPlex](https://soniqo.audio/zh/guides/respond) | 语音 → 语音 | MLX | 7B | EN |
 | [Silero VAD](https://soniqo.audio/zh/guides/vad) | 语音活动检测 | MLX、CoreML | 309K | 语言无关 |
 | [Pyannote](https://soniqo.audio/zh/guides/diarize) | VAD + 说话人分离 | MLX | 1.5M | 语言无关 |
@@ -139,6 +141,7 @@ brew install speech
 ```bash
 audio transcribe recording.wav
 audio speak "Hello world"
+audio translate "Hello, how are you?" --to es
 audio respond --input question.wav --transcript
 audio-server --port 8080            # 本地 HTTP / WebSocket 服务器（OpenAI 兼容 /v1/realtime）
 ```
@@ -166,6 +169,7 @@ import CosyVoiceTTS         // 带声音克隆的文本转语音
 import KokoroTTS            // 文本转语音 (iOS 就绪)
 import VibeVoiceTTS         // 长篇 / 多说话人 TTS（英语 / 中文）
 import Qwen3Chat            // 端侧 LLM 对话
+import MADLADTranslation    // 400+ 语言间的多对多翻译
 import PersonaPlex          // 全双工语音到语音
 import SpeechVAD            // VAD + 说话人分离 + 嵌入向量
 import SpeechEnhancement    // 噪声抑制
@@ -265,6 +269,16 @@ let chat = try await Qwen35MLXChat.fromPretrained()
 chat.chat(messages: [(.user, "Explain MLX in one sentence")]) { token, isFinal in
     print(token, terminator: "")
 }
+```
+
+### 翻译 — [完整指南 →](https://soniqo.audio/zh/guides/translate)
+
+```swift
+import MADLADTranslation
+
+let translator = try await MADLADTranslator.fromPretrained()
+let es = try translator.translate("Hello, how are you?", to: "es")
+// → "Hola, ¿cómo estás?"
 ```
 
 ### 语音活动检测 — [完整指南 →](https://soniqo.audio/zh/guides/vad)

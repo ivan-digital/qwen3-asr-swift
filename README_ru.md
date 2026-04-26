@@ -19,6 +19,7 @@
 - **[Kokoro TTS](https://soniqo.audio/ru/guides/kokoro)** — Синтез речи на устройстве (82M, CoreML/Neural Engine, 54 голоса, готов для iOS, 10 языков)
 - **[VibeVoice TTS](https://soniqo.audio/ru/guides/vibevoice)** — Длинный формат / многоголосый TTS (Microsoft VibeVoice Realtime-0.5B + 1.5B, MLX, синтез подкастов/аудиокниг до 90 минут, EN/ZH)
 - **[Qwen3.5-Chat](https://soniqo.audio/ru/guides/chat)** — Локальный чат на базе LLM (0.8B, MLX INT4 + CoreML INT8, гибрид DeltaNet, потоковая генерация токенов)
+- **[MADLAD-400](https://soniqo.audio/ru/guides/translate)** — Многоязычный перевод между 400+ языками (3B, MLX INT4 + INT8, T5 v1.1, Apache 2.0)
 - **[PersonaPlex](https://soniqo.audio/ru/guides/respond)** — Полнодуплексная генерация речи из речи (7B, аудио на входе → аудио на выходе, 18 голосовых пресетов)
 - **[DeepFilterNet3](https://soniqo.audio/ru/guides/denoise)** — Подавление шума в реальном времени (2.1M параметров, 48 кГц)
 - **[Разделение источников](https://soniqo.audio/ru/guides/separate)** — Разделение музыкальных источников через Open-Unmix (UMX-HQ / UMX-L, 4 стема: вокал/ударные/бас/остальное, 44,1 кГц стерео)
@@ -115,6 +116,7 @@ struct DictateView: View {
 | [VibeVoice Realtime-0.5B](https://soniqo.audio/ru/guides/vibevoice) | Текст → Речь (длинный формат, многоголосый) | MLX | 0.5B | EN/ZH |
 | [VibeVoice 1.5B](https://soniqo.audio/ru/guides/vibevoice) | Текст → Речь (подкаст до 90 минут) | MLX | 1.5B | EN/ZH |
 | [Qwen3.5-Chat](https://soniqo.audio/ru/guides/chat) | Текст → Текст (LLM) | MLX, CoreML | 0.8B | Многоязычный |
+| [MADLAD-400](https://soniqo.audio/ru/guides/translate) | Текст → Текст (Перевод) | MLX | 3B | **400+** |
 | [PersonaPlex](https://soniqo.audio/ru/guides/respond) | Речь → Речь | MLX | 7B | EN |
 | [Silero VAD](https://soniqo.audio/ru/guides/vad) | Детектор речи | MLX, CoreML | 309K | Универсальный |
 | [Pyannote](https://soniqo.audio/ru/guides/diarize) | VAD + Диаризация | MLX | 1.5M | Универсальный |
@@ -139,6 +141,7 @@ brew install speech
 ```bash
 audio transcribe recording.wav
 audio speak "Hello world"
+audio translate "Hello, how are you?" --to es
 audio respond --input question.wav --transcript
 audio-server --port 8080            # локальный HTTP / WebSocket сервер (OpenAI-совместимый /v1/realtime)
 ```
@@ -166,6 +169,7 @@ import CosyVoiceTTS         // Синтез речи с клонирование
 import KokoroTTS            // Синтез речи (готов для iOS)
 import VibeVoiceTTS         // Длинный формат / многоголосый TTS (EN/ZH)
 import Qwen3Chat            // Локальный чат на базе LLM
+import MADLADTranslation    // Многоязычный перевод между 400+ языками
 import PersonaPlex          // Полнодуплексная речь-в-речь
 import SpeechVAD            // VAD + диаризация спикеров + эмбеддинги
 import SpeechEnhancement    // Подавление шума
@@ -265,6 +269,16 @@ let chat = try await Qwen35MLXChat.fromPretrained()
 chat.chat(messages: [(.user, "Explain MLX in one sentence")]) { token, isFinal in
     print(token, terminator: "")
 }
+```
+
+### Перевод — [полное руководство →](https://soniqo.audio/ru/guides/translate)
+
+```swift
+import MADLADTranslation
+
+let translator = try await MADLADTranslator.fromPretrained()
+let es = try translator.translate("Hello, how are you?", to: "es")
+// → "Hola, ¿cómo estás?"
 ```
 
 ### Детектор голосовой активности — [полное руководство →](https://soniqo.audio/ru/guides/vad)

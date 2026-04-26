@@ -19,6 +19,7 @@ Mac과 iOS를 위한 온디바이스 음성 인식, 합성 및 이해. Apple Sil
 - **[Kokoro TTS](https://soniqo.audio/ko/guides/kokoro)** — 온디바이스 TTS (82M, CoreML/Neural Engine, 54개 음색, iOS 지원, 10개 언어)
 - **[VibeVoice TTS](https://soniqo.audio/ko/guides/vibevoice)** — 장문 / 멀티 스피커 TTS (Microsoft VibeVoice Realtime-0.5B + 1.5B, MLX, 최대 90분 팟캐스트 / 오디오북 합성, EN/ZH)
 - **[Qwen3.5-Chat](https://soniqo.audio/ko/guides/chat)** — 온디바이스 LLM 채팅 (0.8B, MLX INT4 + CoreML INT8, DeltaNet 하이브리드, 스트리밍 토큰)
+- **[MADLAD-400](https://soniqo.audio/ko/guides/translate)** — 400+ 언어 간 다대다 번역 (3B, MLX INT4 + INT8, T5 v1.1, Apache 2.0)
 - **[PersonaPlex](https://soniqo.audio/ko/guides/respond)** — 전이중 음성-음성 대화 (7B, 오디오 입력 → 오디오 출력, 18개 음색 프리셋)
 - **[DeepFilterNet3](https://soniqo.audio/ko/guides/denoise)** — 실시간 노이즈 억제 (2.1M 파라미터, 48 kHz)
 - **[소스 분리](https://soniqo.audio/ko/guides/separate)** — Open-Unmix 기반 음악 소스 분리 (UMX-HQ / UMX-L, 4개 스템: 보컬/드럼/베이스/기타, 44.1 kHz 스테레오)
@@ -115,6 +116,7 @@ struct DictateView: View {
 | [VibeVoice Realtime-0.5B](https://soniqo.audio/ko/guides/vibevoice) | 텍스트 → 음성 (장문, 멀티 스피커) | MLX | 0.5B | EN/ZH |
 | [VibeVoice 1.5B](https://soniqo.audio/ko/guides/vibevoice) | 텍스트 → 음성 (최대 90분 팟캐스트) | MLX | 1.5B | EN/ZH |
 | [Qwen3.5-Chat](https://soniqo.audio/ko/guides/chat) | 텍스트 → 텍스트 (LLM) | MLX, CoreML | 0.8B | 다언어 |
+| [MADLAD-400](https://soniqo.audio/ko/guides/translate) | 텍스트 → 텍스트 (번역) | MLX | 3B | **400+** |
 | [PersonaPlex](https://soniqo.audio/ko/guides/respond) | 음성 → 음성 | MLX | 7B | EN |
 | [Silero VAD](https://soniqo.audio/ko/guides/vad) | 음성 활동 감지 | MLX, CoreML | 309K | 언어 무관 |
 | [Pyannote](https://soniqo.audio/ko/guides/diarize) | VAD + 화자 분리 | MLX | 1.5M | 언어 무관 |
@@ -139,6 +141,7 @@ brew install speech
 ```bash
 audio transcribe recording.wav
 audio speak "Hello world"
+audio translate "Hello, how are you?" --to es
 audio respond --input question.wav --transcript
 audio-server --port 8080            # 로컬 HTTP / WebSocket 서버 (OpenAI 호환 /v1/realtime)
 ```
@@ -166,6 +169,7 @@ import CosyVoiceTTS         // 음성 복제 포함 텍스트-음성 변환
 import KokoroTTS            // 텍스트-음성 변환 (iOS 지원)
 import VibeVoiceTTS         // 장문 / 멀티 스피커 TTS (EN/ZH)
 import Qwen3Chat            // 온디바이스 LLM 채팅
+import MADLADTranslation    // 400+ 언어 간 다대다 번역
 import PersonaPlex          // 전이중 음성-음성 변환
 import SpeechVAD            // VAD + 화자 분리 + 임베딩
 import SpeechEnhancement    // 노이즈 억제
@@ -265,6 +269,16 @@ let chat = try await Qwen35MLXChat.fromPretrained()
 chat.chat(messages: [(.user, "Explain MLX in one sentence")]) { token, isFinal in
     print(token, terminator: "")
 }
+```
+
+### 번역 — [전체 가이드 →](https://soniqo.audio/ko/guides/translate)
+
+```swift
+import MADLADTranslation
+
+let translator = try await MADLADTranslator.fromPretrained()
+let es = try translator.translate("Hello, how are you?", to: "es")
+// → "Hola, ¿cómo estás?"
 ```
 
 ### 음성 활동 감지 — [전체 가이드 →](https://soniqo.audio/ko/guides/vad)

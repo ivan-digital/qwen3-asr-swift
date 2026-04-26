@@ -77,6 +77,10 @@ let package = Package(
             targets: ["Qwen3Chat"]
         ),
         .library(
+            name: "MADLADTranslation",
+            targets: ["MADLADTranslation"]
+        ),
+        .library(
             name: "SpeechUI",
             targets: ["SpeechUI"]
         ),
@@ -261,6 +265,17 @@ let package = Package(
             ]
         ),
         .target(
+            name: "MADLADTranslation",
+            dependencies: [
+                "AudioCommon",
+                "MLXCommon",
+                .product(name: "MLX", package: "mlx-swift"),
+                .product(name: "MLXNN", package: "mlx-swift"),
+                .product(name: "MLXFast", package: "mlx-swift"),
+                .product(name: "Transformers", package: "swift-transformers"),
+            ]
+        ),
+        .target(
             name: "SpeechUI",
             dependencies: []
         ),
@@ -285,6 +300,7 @@ let package = Package(
                 "OmnilingualASR",
                 "KokoroTTS",
                 "VibeVoiceTTS",
+                "MADLADTranslation",
                 "SpeechWakeWord",
                 "AudioCommon",
                 .product(name: "MLX", package: "mlx-swift"),
@@ -422,6 +438,13 @@ let package = Package(
             name: "Qwen3ChatTests",
             dependencies: [
                 "Qwen3Chat",
+                "AudioCommon",
+            ]
+        ),
+        .testTarget(
+            name: "MADLADTranslationTests",
+            dependencies: [
+                "MADLADTranslation",
                 "AudioCommon",
             ]
         ),

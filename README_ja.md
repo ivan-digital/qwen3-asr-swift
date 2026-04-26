@@ -19,6 +19,7 @@ Mac・iOS向けのオンデバイス音声認識・合成・理解。Apple Silic
 - **[Kokoro TTS](https://soniqo.audio/ja/guides/kokoro)** — オンデバイスTTS（82M、CoreML/Neural Engine、54ボイス、iOS対応、10言語）
 - **[VibeVoice TTS](https://soniqo.audio/ja/guides/vibevoice)** — 長尺・マルチスピーカーTTS（Microsoft VibeVoice Realtime-0.5B + 1.5B、MLX、最長90分のポッドキャスト／オーディオブック生成、EN/ZH）
 - **[Qwen3.5-Chat](https://soniqo.audio/ja/guides/chat)** — オンデバイスLLMチャット（0.8B、MLX INT4 + CoreML INT8、DeltaNetハイブリッド、ストリーミングトークン）
+- **[MADLAD-400](https://soniqo.audio/ja/guides/translate)** — 400+言語間の多対多翻訳（3B、MLX INT4 + INT8、T5 v1.1、Apache 2.0）
 - **[PersonaPlex](https://soniqo.audio/ja/guides/respond)** — 全二重音声間会話（7B、音声入力 → 音声出力、18種類のボイスプリセット）
 - **[DeepFilterNet3](https://soniqo.audio/ja/guides/denoise)** — リアルタイムノイズ抑制（2.1Mパラメーター、48 kHz）
 - **[音源分離](https://soniqo.audio/ja/guides/separate)** — Open-Unmix による音楽音源分離（UMX-HQ / UMX-L、4 ステム：ボーカル／ドラム／ベース／その他、44.1 kHz ステレオ）
@@ -115,6 +116,7 @@ struct DictateView: View {
 | [VibeVoice Realtime-0.5B](https://soniqo.audio/ja/guides/vibevoice) | テキスト → 音声（長尺・マルチスピーカー） | MLX | 0.5B | EN/ZH |
 | [VibeVoice 1.5B](https://soniqo.audio/ja/guides/vibevoice) | テキスト → 音声（最長90分のポッドキャスト） | MLX | 1.5B | EN/ZH |
 | [Qwen3.5-Chat](https://soniqo.audio/ja/guides/chat) | テキスト → テキスト（LLM） | MLX、CoreML | 0.8B | 多言語 |
+| [MADLAD-400](https://soniqo.audio/ja/guides/translate) | テキスト → テキスト（翻訳） | MLX | 3B | **400+** |
 | [PersonaPlex](https://soniqo.audio/ja/guides/respond) | 音声 → 音声 | MLX | 7B | EN |
 | [Silero VAD](https://soniqo.audio/ja/guides/vad) | 音声区間検出 | MLX、CoreML | 309K | 言語非依存 |
 | [Pyannote](https://soniqo.audio/ja/guides/diarize) | VAD + ダイアライゼーション | MLX | 1.5M | 言語非依存 |
@@ -139,6 +141,7 @@ brew install speech
 ```bash
 audio transcribe recording.wav
 audio speak "Hello world"
+audio translate "Hello, how are you?" --to es
 audio respond --input question.wav --transcript
 audio-server --port 8080            # ローカル HTTP / WebSocket サーバー（OpenAI 互換 /v1/realtime）
 ```
@@ -166,6 +169,7 @@ import CosyVoiceTTS         // 音声クローン付き音声合成
 import KokoroTTS            // 音声合成 (iOS対応)
 import VibeVoiceTTS         // 長尺・マルチスピーカーTTS（EN/ZH）
 import Qwen3Chat            // オンデバイスLLMチャット
+import MADLADTranslation    // 400+ 言語間の多対多翻訳
 import PersonaPlex          // 全二重音声間変換
 import SpeechVAD            // VAD + 話者ダイアライゼーション + 埋め込み
 import SpeechEnhancement    // ノイズ抑制
@@ -265,6 +269,16 @@ let chat = try await Qwen35MLXChat.fromPretrained()
 chat.chat(messages: [(.user, "Explain MLX in one sentence")]) { token, isFinal in
     print(token, terminator: "")
 }
+```
+
+### 翻訳 — [完全ガイド →](https://soniqo.audio/ja/guides/translate)
+
+```swift
+import MADLADTranslation
+
+let translator = try await MADLADTranslator.fromPretrained()
+let es = try translator.translate("Hello, how are you?", to: "es")
+// → "Hola, ¿cómo estás?"
 ```
 
 ### 音声区間検出 — [完全ガイド →](https://soniqo.audio/ja/guides/vad)
