@@ -53,6 +53,10 @@ let package = Package(
             targets: ["NemotronStreamingASR"]
         ),
         .library(
+            name: "VibeVoiceTTS",
+            targets: ["VibeVoiceTTS"]
+        ),
+        .library(
             name: "OmnilingualASR",
             targets: ["OmnilingualASR"]
         ),
@@ -204,6 +208,18 @@ let package = Package(
             ]
         ),
         .target(
+            name: "VibeVoiceTTS",
+            dependencies: [
+                "AudioCommon",
+                "MLXCommon",
+                .product(name: "MLX", package: "mlx-swift"),
+                .product(name: "MLXNN", package: "mlx-swift"),
+                .product(name: "MLXFast", package: "mlx-swift"),
+                .product(name: "MLXRandom", package: "mlx-swift"),
+                .product(name: "Transformers", package: "swift-transformers")
+            ]
+        ),
+        .target(
             name: "OmnilingualASR",
             dependencies: [
                 "AudioCommon",
@@ -268,6 +284,7 @@ let package = Package(
                 "NemotronStreamingASR",
                 "OmnilingualASR",
                 "KokoroTTS",
+                "VibeVoiceTTS",
                 "SpeechWakeWord",
                 "AudioCommon",
                 .product(name: "MLX", package: "mlx-swift"),
@@ -388,6 +405,15 @@ let package = Package(
             name: "SourceSeparationTests",
             dependencies: [
                 "SourceSeparation",
+                "AudioCommon",
+                .product(name: "MLX", package: "mlx-swift"),
+            ]
+        ),
+        .testTarget(
+            name: "VibeVoiceTTSTests",
+            dependencies: [
+                "VibeVoiceTTS",
+                "NemotronStreamingASR",
                 "AudioCommon",
                 .product(name: "MLX", package: "mlx-swift"),
             ]

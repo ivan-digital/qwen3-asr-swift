@@ -18,6 +18,8 @@ public struct AudioCLI: ParsableCommand {
             SeparateCommand.self,
             KokoroCommand.self,
             Qwen3TTSCoreMLCommand.self,
+            VibeVoiceCommand.self,
+            VibeVoiceEncodeCommand.self,
             WakeCommand.self,
         ]
     )

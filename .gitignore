@@ -51,3 +51,4 @@ benchmarks/
 .claude/worktrees/
 *.xcodeproj/project.pbxproj
 .DS_Store
+.claude/scheduled_tasks.lock
