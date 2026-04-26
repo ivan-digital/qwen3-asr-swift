@@ -17,6 +17,7 @@
 - **[Qwen3-TTS](https://soniqo.audio/zh/guides/speak)** — 文本转语音（最高质量、流式输出、自定义说话人，10 种语言）
 - **[CosyVoice TTS](https://soniqo.audio/zh/guides/cosyvoice)** — 流式 TTS，支持声音克隆、多说话人对话、情感标签（9 种语言）
 - **[Kokoro TTS](https://soniqo.audio/zh/guides/kokoro)** — 端侧 TTS（82M，CoreML/神经引擎，54 种音色，iOS 就绪，10 种语言）
+- **[VibeVoice TTS](https://soniqo.audio/zh/guides/vibevoice)** — 长篇 / 多说话人 TTS（Microsoft VibeVoice Realtime-0.5B + 1.5B，MLX，可合成最长 90 分钟的播客 / 有声书，英语 / 中文）
 - **[Qwen3.5-Chat](https://soniqo.audio/zh/guides/chat)** — 端侧 LLM 对话（0.8B，MLX INT4 + CoreML INT8，DeltaNet 混合架构，流式 token）
 - **[PersonaPlex](https://soniqo.audio/zh/guides/respond)** — 全双工语音到语音（7B，音频输入 → 音频输出，18 种预设音色）
 - **[DeepFilterNet3](https://soniqo.audio/zh/guides/denoise)** — 实时噪声抑制（2.1M 参数，48 kHz）
@@ -94,7 +95,7 @@ struct DictateView: View {
 
 `SpeechUI` 只提供 `TranscriptionView`（最终结果 + 部分结果）与 `TranscriptionStore`（流式 ASR 适配器）。音频可视化和播放请使用 AVFoundation。
 
-可用的 SPM products：`Qwen3ASR`、`Qwen3TTS`、`Qwen3TTSCoreML`、`ParakeetASR`、`ParakeetStreamingASR`、`NemotronStreamingASR`、`OmnilingualASR`、`KokoroTTS`、`CosyVoiceTTS`、`PersonaPlex`、`SpeechVAD`、`SpeechEnhancement`、`SourceSeparation`、`Qwen3Chat`、`SpeechCore`、`SpeechUI`、`AudioCommon`。
+可用的 SPM products：`Qwen3ASR`、`Qwen3TTS`、`Qwen3TTSCoreML`、`ParakeetASR`、`ParakeetStreamingASR`、`NemotronStreamingASR`、`OmnilingualASR`、`KokoroTTS`、`VibeVoiceTTS`、`CosyVoiceTTS`、`PersonaPlex`、`SpeechVAD`、`SpeechEnhancement`、`SourceSeparation`、`Qwen3Chat`、`SpeechCore`、`SpeechUI`、`AudioCommon`。
 
 ## 模型
 
@@ -111,6 +112,8 @@ struct DictateView: View {
 | [Qwen3-TTS](https://soniqo.audio/zh/guides/speak) | 文本 → 语音 | MLX、CoreML | 0.6B、1.7B | 10 |
 | [CosyVoice3](https://soniqo.audio/zh/guides/cosyvoice) | 文本 → 语音 | MLX | 0.5B | 9 |
 | [Kokoro-82M](https://soniqo.audio/zh/guides/kokoro) | 文本 → 语音 | CoreML (ANE) | 82M | 10 |
+| [VibeVoice Realtime-0.5B](https://soniqo.audio/zh/guides/vibevoice) | 文本 → 语音（长篇、多说话人） | MLX | 0.5B | EN/ZH |
+| [VibeVoice 1.5B](https://soniqo.audio/zh/guides/vibevoice) | 文本 → 语音（最长 90 分钟播客） | MLX | 1.5B | EN/ZH |
 | [Qwen3.5-Chat](https://soniqo.audio/zh/guides/chat) | 文本 → 文本（LLM） | MLX、CoreML | 0.8B | 多语言 |
 | [PersonaPlex](https://soniqo.audio/zh/guides/respond) | 语音 → 语音 | MLX | 7B | EN |
 | [Silero VAD](https://soniqo.audio/zh/guides/vad) | 语音活动检测 | MLX、CoreML | 309K | 语言无关 |
@@ -161,6 +164,7 @@ import OmnilingualASR       // 1,672 种语言 (CoreML + MLX)
 import Qwen3TTS             // 文本转语音
 import CosyVoiceTTS         // 带声音克隆的文本转语音
 import KokoroTTS            // 文本转语音 (iOS 就绪)
+import VibeVoiceTTS         // 长篇 / 多说话人 TTS（英语 / 中文）
 import Qwen3Chat            // 端侧 LLM 对话
 import PersonaPlex          // 全双工语音到语音
 import SpeechVAD            // VAD + 说话人分离 + 嵌入向量
@@ -240,7 +244,7 @@ let audio = model.synthesize(text: "Hello world", language: "english")
 try WAVWriter.write(samples: audio, sampleRate: 24000, to: outputURL)
 ```
 
-其他 TTS 引擎：[CosyVoice3](https://soniqo.audio/zh/guides/cosyvoice)（流式 + 声音克隆 + 情感标签）、[Kokoro-82M](https://soniqo.audio/zh/guides/kokoro)（iOS 就绪，54 种音色）、[声音克隆](https://soniqo.audio/zh/guides/voice-cloning)。
+其他 TTS 引擎：[CosyVoice3](https://soniqo.audio/zh/guides/cosyvoice)（流式 + 声音克隆 + 情感标签）、[Kokoro-82M](https://soniqo.audio/zh/guides/kokoro)（iOS 就绪，54 种音色）、[VibeVoice](https://soniqo.audio/zh/guides/vibevoice)（长篇播客 / 多说话人，英语 / 中文）、[声音克隆](https://soniqo.audio/zh/guides/voice-cloning)。
 
 ### 语音到语音 — [完整指南 →](https://soniqo.audio/zh/guides/respond)
 
@@ -325,8 +329,8 @@ speech-swift 把每个模型拆成独立的 SPM target，因此使用者只为 i
 **[完整架构图（含后端、内存表、模块映射）→ soniqo.audio/architecture](https://soniqo.audio/zh/architecture)** · **[API 参考 → soniqo.audio/api](https://soniqo.audio/zh/api)** · **[基准测试 → soniqo.audio/benchmarks](https://soniqo.audio/zh/benchmarks)**
 
 本地文档（仓库内）：
-- **模型：** [Qwen3-ASR](docs/models/asr-model.md) · [Qwen3-TTS](docs/models/tts-model.md) · [CosyVoice](docs/models/cosyvoice-tts.md) · [Kokoro](docs/models/kokoro-tts.md) · [Parakeet TDT](docs/models/parakeet-asr.md) · [Parakeet Streaming](docs/models/parakeet-streaming-asr.md) · [Nemotron Streaming](docs/models/nemotron-streaming.md) · [Omnilingual ASR](docs/models/omnilingual-asr.md) · [PersonaPlex](docs/models/personaplex.md) · [FireRedVAD](docs/models/fireredvad.md) · [Source Separation](docs/models/source-separation.md)
-- **推理：** [Qwen3-ASR](docs/inference/qwen3-asr-inference.md) · [Parakeet TDT](docs/inference/parakeet-asr-inference.md) · [Parakeet Streaming](docs/inference/parakeet-streaming-asr-inference.md) · [Nemotron Streaming](docs/inference/nemotron-streaming-inference.md) · [Omnilingual ASR](docs/inference/omnilingual-asr-inference.md) · [TTS](docs/inference/qwen3-tts-inference.md) · [Forced Aligner](docs/inference/forced-aligner.md) · [Silero VAD](docs/inference/silero-vad.md) · [说话人分离](docs/inference/speaker-diarization.md) · [语音增强](docs/inference/speech-enhancement.md)
+- **模型：** [Qwen3-ASR](docs/models/asr-model.md) · [Qwen3-TTS](docs/models/tts-model.md) · [CosyVoice](docs/models/cosyvoice-tts.md) · [Kokoro](docs/models/kokoro-tts.md) · [VibeVoice](docs/models/vibevoice.md) · [Parakeet TDT](docs/models/parakeet-asr.md) · [Parakeet Streaming](docs/models/parakeet-streaming-asr.md) · [Nemotron Streaming](docs/models/nemotron-streaming.md) · [Omnilingual ASR](docs/models/omnilingual-asr.md) · [PersonaPlex](docs/models/personaplex.md) · [FireRedVAD](docs/models/fireredvad.md) · [Source Separation](docs/models/source-separation.md)
+- **推理：** [Qwen3-ASR](docs/inference/qwen3-asr-inference.md) · [Parakeet TDT](docs/inference/parakeet-asr-inference.md) · [Parakeet Streaming](docs/inference/parakeet-streaming-asr-inference.md) · [Nemotron Streaming](docs/inference/nemotron-streaming-inference.md) · [Omnilingual ASR](docs/inference/omnilingual-asr-inference.md) · [TTS](docs/inference/qwen3-tts-inference.md) · [VibeVoice](docs/inference/vibevoice-inference.md) · [Forced Aligner](docs/inference/forced-aligner.md) · [Silero VAD](docs/inference/silero-vad.md) · [说话人分离](docs/inference/speaker-diarization.md) · [语音增强](docs/inference/speech-enhancement.md)
 - **参考：** [共享协议](docs/shared-protocols.md)
 
 ## 缓存配置

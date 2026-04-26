@@ -17,6 +17,7 @@
 - **[Qwen3-TTS](https://soniqo.audio/ru/guides/speak)** — Синтез речи (наивысшее качество, потоковый режим, пользовательские голоса, 10 языков)
 - **[CosyVoice TTS](https://soniqo.audio/ru/guides/cosyvoice)** — Потоковый синтез речи с клонированием голоса, многоголосым диалогом, тегами эмоций (9 языков)
 - **[Kokoro TTS](https://soniqo.audio/ru/guides/kokoro)** — Синтез речи на устройстве (82M, CoreML/Neural Engine, 54 голоса, готов для iOS, 10 языков)
+- **[VibeVoice TTS](https://soniqo.audio/ru/guides/vibevoice)** — Длинный формат / многоголосый TTS (Microsoft VibeVoice Realtime-0.5B + 1.5B, MLX, синтез подкастов/аудиокниг до 90 минут, EN/ZH)
 - **[Qwen3.5-Chat](https://soniqo.audio/ru/guides/chat)** — Локальный чат на базе LLM (0.8B, MLX INT4 + CoreML INT8, гибрид DeltaNet, потоковая генерация токенов)
 - **[PersonaPlex](https://soniqo.audio/ru/guides/respond)** — Полнодуплексная генерация речи из речи (7B, аудио на входе → аудио на выходе, 18 голосовых пресетов)
 - **[DeepFilterNet3](https://soniqo.audio/ru/guides/denoise)** — Подавление шума в реальном времени (2.1M параметров, 48 кГц)
@@ -94,7 +95,7 @@ struct DictateView: View {
 
 `SpeechUI` предоставляет только `TranscriptionView` (финальные + частичные результаты) и `TranscriptionStore` (адаптер для потокового ASR). Для визуализации и воспроизведения аудио используйте AVFoundation.
 
-Доступные SPM-продукты: `Qwen3ASR`, `Qwen3TTS`, `Qwen3TTSCoreML`, `ParakeetASR`, `ParakeetStreamingASR`, `NemotronStreamingASR`, `OmnilingualASR`, `KokoroTTS`, `CosyVoiceTTS`, `PersonaPlex`, `SpeechVAD`, `SpeechEnhancement`, `SourceSeparation`, `Qwen3Chat`, `SpeechCore`, `SpeechUI`, `AudioCommon`.
+Доступные SPM-продукты: `Qwen3ASR`, `Qwen3TTS`, `Qwen3TTSCoreML`, `ParakeetASR`, `ParakeetStreamingASR`, `NemotronStreamingASR`, `OmnilingualASR`, `KokoroTTS`, `VibeVoiceTTS`, `CosyVoiceTTS`, `PersonaPlex`, `SpeechVAD`, `SpeechEnhancement`, `SourceSeparation`, `Qwen3Chat`, `SpeechCore`, `SpeechUI`, `AudioCommon`.
 
 ## Модели
 
@@ -111,6 +112,8 @@ struct DictateView: View {
 | [Qwen3-TTS](https://soniqo.audio/ru/guides/speak) | Текст → Речь | MLX, CoreML | 0.6B, 1.7B | 10 |
 | [CosyVoice3](https://soniqo.audio/ru/guides/cosyvoice) | Текст → Речь | MLX | 0.5B | 9 |
 | [Kokoro-82M](https://soniqo.audio/ru/guides/kokoro) | Текст → Речь | CoreML (ANE) | 82M | 10 |
+| [VibeVoice Realtime-0.5B](https://soniqo.audio/ru/guides/vibevoice) | Текст → Речь (длинный формат, многоголосый) | MLX | 0.5B | EN/ZH |
+| [VibeVoice 1.5B](https://soniqo.audio/ru/guides/vibevoice) | Текст → Речь (подкаст до 90 минут) | MLX | 1.5B | EN/ZH |
 | [Qwen3.5-Chat](https://soniqo.audio/ru/guides/chat) | Текст → Текст (LLM) | MLX, CoreML | 0.8B | Многоязычный |
 | [PersonaPlex](https://soniqo.audio/ru/guides/respond) | Речь → Речь | MLX | 7B | EN |
 | [Silero VAD](https://soniqo.audio/ru/guides/vad) | Детектор речи | MLX, CoreML | 309K | Универсальный |
@@ -161,6 +164,7 @@ import OmnilingualASR       // 1 672 языка (CoreML + MLX)
 import Qwen3TTS             // Синтез речи
 import CosyVoiceTTS         // Синтез речи с клонированием голоса
 import KokoroTTS            // Синтез речи (готов для iOS)
+import VibeVoiceTTS         // Длинный формат / многоголосый TTS (EN/ZH)
 import Qwen3Chat            // Локальный чат на базе LLM
 import PersonaPlex          // Полнодуплексная речь-в-речь
 import SpeechVAD            // VAD + диаризация спикеров + эмбеддинги
@@ -240,7 +244,7 @@ let audio = model.synthesize(text: "Hello world", language: "english")
 try WAVWriter.write(samples: audio, sampleRate: 24000, to: outputURL)
 ```
 
-Альтернативные TTS-движки: [CosyVoice3](https://soniqo.audio/ru/guides/cosyvoice) (потоковый + клонирование голоса + теги эмоций), [Kokoro-82M](https://soniqo.audio/ru/guides/kokoro) (готов для iOS, 54 голоса), [Клонирование голоса](https://soniqo.audio/ru/guides/voice-cloning).
+Альтернативные TTS-движки: [CosyVoice3](https://soniqo.audio/ru/guides/cosyvoice) (потоковый + клонирование голоса + теги эмоций), [Kokoro-82M](https://soniqo.audio/ru/guides/kokoro) (готов для iOS, 54 голоса), [VibeVoice](https://soniqo.audio/ru/guides/vibevoice) (длинный подкаст / многоголосый, EN/ZH), [Клонирование голоса](https://soniqo.audio/ru/guides/voice-cloning).
 
 ### Речь-в-речь — [полное руководство →](https://soniqo.audio/ru/guides/respond)
 
@@ -325,8 +329,8 @@ speech-swift разделён на отдельные SPM-таргеты для 
 **[Полная архитектурная диаграмма с бэкендами, таблицами памяти и картой модулей → soniqo.audio/architecture](https://soniqo.audio/ru/architecture)** · **[Справочник API → soniqo.audio/api](https://soniqo.audio/ru/api)** · **[Бенчмарки → soniqo.audio/benchmarks](https://soniqo.audio/ru/benchmarks)**
 
 Локальная документация (в репозитории):
-- **Модели:** [Qwen3-ASR](docs/models/asr-model.md) · [Qwen3-TTS](docs/models/tts-model.md) · [CosyVoice](docs/models/cosyvoice-tts.md) · [Kokoro](docs/models/kokoro-tts.md) · [Parakeet TDT](docs/models/parakeet-asr.md) · [Parakeet Streaming](docs/models/parakeet-streaming-asr.md) · [Nemotron Streaming](docs/models/nemotron-streaming.md) · [Omnilingual ASR](docs/models/omnilingual-asr.md) · [PersonaPlex](docs/models/personaplex.md) · [FireRedVAD](docs/models/fireredvad.md) · [Source Separation](docs/models/source-separation.md)
-- **Инференс:** [Qwen3-ASR](docs/inference/qwen3-asr-inference.md) · [Parakeet TDT](docs/inference/parakeet-asr-inference.md) · [Parakeet Streaming](docs/inference/parakeet-streaming-asr-inference.md) · [Nemotron Streaming](docs/inference/nemotron-streaming-inference.md) · [Omnilingual ASR](docs/inference/omnilingual-asr-inference.md) · [TTS](docs/inference/qwen3-tts-inference.md) · [Forced Aligner](docs/inference/forced-aligner.md) · [Silero VAD](docs/inference/silero-vad.md) · [Диаризация спикеров](docs/inference/speaker-diarization.md) · [Улучшение речи](docs/inference/speech-enhancement.md)
+- **Модели:** [Qwen3-ASR](docs/models/asr-model.md) · [Qwen3-TTS](docs/models/tts-model.md) · [CosyVoice](docs/models/cosyvoice-tts.md) · [Kokoro](docs/models/kokoro-tts.md) · [VibeVoice](docs/models/vibevoice.md) · [Parakeet TDT](docs/models/parakeet-asr.md) · [Parakeet Streaming](docs/models/parakeet-streaming-asr.md) · [Nemotron Streaming](docs/models/nemotron-streaming.md) · [Omnilingual ASR](docs/models/omnilingual-asr.md) · [PersonaPlex](docs/models/personaplex.md) · [FireRedVAD](docs/models/fireredvad.md) · [Source Separation](docs/models/source-separation.md)
+- **Инференс:** [Qwen3-ASR](docs/inference/qwen3-asr-inference.md) · [Parakeet TDT](docs/inference/parakeet-asr-inference.md) · [Parakeet Streaming](docs/inference/parakeet-streaming-asr-inference.md) · [Nemotron Streaming](docs/inference/nemotron-streaming-inference.md) · [Omnilingual ASR](docs/inference/omnilingual-asr-inference.md) · [TTS](docs/inference/qwen3-tts-inference.md) · [VibeVoice](docs/inference/vibevoice-inference.md) · [Forced Aligner](docs/inference/forced-aligner.md) · [Silero VAD](docs/inference/silero-vad.md) · [Диаризация спикеров](docs/inference/speaker-diarization.md) · [Улучшение речи](docs/inference/speech-enhancement.md)
 - **Справочник:** [Общие протоколы](docs/shared-protocols.md)
 
 ## Настройка кэша
