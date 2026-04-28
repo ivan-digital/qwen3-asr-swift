@@ -63,15 +63,16 @@ Same as ASR: mel spectrogram → chunked Conv2D → transformer → projector.
 
 ### 2. Text Preprocessing (TextPreprocessing.swift)
 
-Three language paths, matching the reference Qwen3 forced-aligner preprocessing:
+Language dispatch:
 
 | Language | Tokenizer |
 |---|---|
-| Japanese | `NLTokenizer(unit: .word, language: .japanese)` — morpheme-level |
-| Korean | `NLTokenizer(unit: .word, language: .korean)` — word-level |
+| Japanese | `NLTokenizer(.japanese)` — morpheme-level |
+| Korean | `NLTokenizer(.korean)` — word-level |
+| Thai / Lao / Khmer / Burmese / Tibetan | `NLTokenizer(<lang>)` — native segmentation for scripts without word-level whitespace |
 | Everything else | whitespace split + per-Han ideograph break |
 
-A universal token filter keeps only Unicode Letters (`L*`), Numbers (`N*`), and the ASCII apostrophe — punctuation, symbols, and marks are stripped before the timestamp slots are inserted. The Han-ideograph break covers CJK Unified `0x4E00–0x9FFF`, Extensions A–E, and Compatibility `0xF900–0xFAFF`. Hiragana, katakana, and Hangul are **not** broken per character — those scripts are handled by the language-specific tokenizers.
+A universal token filter keeps Unicode Letters (`L*`), Numbers (`N*`), combining Marks (`Mn`/`Mc`/`Me`), and the ASCII apostrophe — punctuation, symbols, and separators are stripped. Combining marks must be preserved so scripts like Devanagari, Thai, Bengali, and Tibetan keep their vowel and tone marks intact (e.g. `नमस्ते`, `สวัสดี`). The Han-ideograph break covers CJK Unified `0x4E00–0x9FFF`, Extensions A–E, and Compatibility `0xF900–0xFAFF`; hiragana, katakana, and Hangul are deliberately **not** broken per character — those scripts are handled by the language-specific tokenizers.
 
 **English / European / Hindi / Arabic / etc. (default path):**
 ```
