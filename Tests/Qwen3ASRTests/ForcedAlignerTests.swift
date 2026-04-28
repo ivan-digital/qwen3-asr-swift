@@ -9,70 +9,95 @@ final class ForcedAlignerTests: XCTestCase {
 
     // MARK: - Unit Tests (no model download)
 
+    // MARK: - Default path (matches upstream `tokenize_space_lang`)
+
     func testTextPreprocessingEnglish() {
-        // Test the word splitting logic
         let words = TextPreprocessor.splitIntoWords("Hello world test", language: "English")
         XCTAssertEqual(words, ["Hello", "world", "test"])
     }
 
-    func testTextPreprocessingCJK() {
+    /// Pure Chinese has no whitespace → each Han ideograph becomes its own
+    /// token via `split_segment_with_chinese`.
+    func testTextPreprocessingChinese() {
         let words = TextPreprocessor.splitIntoWords("你好世界", language: "Chinese")
-        XCTAssertEqual(words.count, 4)
-        XCTAssertEqual(words[0], "你")
-        XCTAssertEqual(words[1], "好")
-        XCTAssertEqual(words[2], "世")
-        XCTAssertEqual(words[3], "界")
+        XCTAssertEqual(words, ["你", "好", "世", "界"])
     }
 
-    func testTextPreprocessingJapanese() {
-        // Hiragana + Kanji + punctuation. Regression: CLI used to pass
-        // language="English" by default, collapsing the whole sentence to
-        // one whitespace-split "word". Verify the Japanese path splits per
-        // CJK character.
+    /// Han ideographs peel out of Latin-bordered text but Latin runs stay
+    /// grouped. Matches upstream behavior exactly.
+    func testTextPreprocessingMixedHanLatin() {
+        let words = TextPreprocessor.splitIntoWords("Hello你好world", language: "Chinese")
+        XCTAssertEqual(words, ["Hello", "你", "好", "world"])
+    }
+
+    /// Punctuation is stripped by `clean_token` (only Unicode L*/N* + `'` are
+    /// kept). The full-width period `。` must NOT appear as a token.
+    func testTextPreprocessingPunctuationStripped() {
+        let words = TextPreprocessor.splitIntoWords("Hello, world!", language: "English")
+        XCTAssertEqual(words, ["Hello", "world"])
+    }
+
+    func testTextPreprocessingApostropheKept() {
+        let words = TextPreprocessor.splitIntoWords("don't stop", language: "English")
+        XCTAssertEqual(words, ["don't", "stop"])
+    }
+
+    // MARK: - Japanese (NLTokenizer morpheme-level, matches upstream nagisa)
+
+    /// Japanese must NOT split per kana. Upstream uses nagisa morphemes;
+    /// we use Apple's NLTokenizer for equivalent granularity.
+    /// "おはようございます。今日はいい天気ですね。" should produce a small
+    /// number of morphemes (≈6–10), not 21 per-character tokens.
+    func testTextPreprocessingJapaneseMorpheme() {
         let words = TextPreprocessor.splitIntoWords(
             "おはようございます。今日はいい天気ですね。",
             language: "japanese")
-        XCTAssertGreaterThan(words.count, 5,
-            "Japanese should split per character, got \(words.count) word(s): \(words)")
-        XCTAssertEqual(words.first, "お")
+        XCTAssertGreaterThan(words.count, 1, "Should produce multiple morphemes")
+        XCTAssertLessThan(words.count, 15,
+            "Japanese should be morpheme-level (~6–10), not per-char (21). Got \(words.count): \(words)")
+        // Punctuation must be stripped.
+        XCTAssertFalse(words.contains("。"), "Full-width period should be cleaned")
     }
 
-    func testTextPreprocessingKatakana() {
+    /// Pure katakana word should be a single morpheme, not 6 per-char tokens.
+    func testTextPreprocessingKatakanaSingleWord() {
         let words = TextPreprocessor.splitIntoWords("コンピュータ", language: "ja")
-        XCTAssertEqual(words.count, 6)
+        XCTAssertEqual(words, ["コンピュータ"],
+            "Katakana word should NOT split per character — got \(words)")
     }
 
+    /// Pure hiragana greeting should not split per kana.
+    func testTextPreprocessingHiraganaGreeting() {
+        let words = TextPreprocessor.splitIntoWords("こんにちは", language: "ja")
+        XCTAssertEqual(words.count, 1,
+            "Hiragana greeting should be one morpheme, got \(words)")
+    }
+
+    /// Mixed Japanese + Latin: Latin words stay intact, JP segmented by
+    /// NLTokenizer. Punctuation stripped.
     func testTextPreprocessingJapaneseWithLatin() {
-        // Japanese sentences commonly mix Latin words/numbers (product names,
-        // loanwords, units). Latin runs stay grouped as one token; CJK
-        // characters split individually.
         let words = TextPreprocessor.splitIntoWords(
-            "iPhone を 使います",
+            "iPhoneを使います。",
             language: "japanese")
-        XCTAssertEqual(words.first, "iPhone",
+        XCTAssertTrue(words.contains("iPhone"),
             "Latin run should stay grouped, got: \(words)")
-        XCTAssertTrue(words.contains("を"))
-        XCTAssertTrue(words.contains("使"))
-        XCTAssertTrue(words.contains("い"))
-        XCTAssertTrue(words.contains("ま"))
-        XCTAssertTrue(words.contains("す"))
+        XCTAssertFalse(words.contains("。"))
+        // Should be morpheme-level, not per-kana — at most ~5 tokens.
+        XCTAssertLessThan(words.count, 7,
+            "Japanese+Latin should be morpheme-level, got \(words.count): \(words)")
     }
 
-    func testTextPreprocessingJapaneseWithDigits() {
-        let words = TextPreprocessor.splitIntoWords("5G は 速い", language: "ja")
-        XCTAssertEqual(words.first, "5G")
-        XCTAssertTrue(words.contains("は"))
-        XCTAssertTrue(words.contains("速"))
-        XCTAssertTrue(words.contains("い"))
-    }
+    // MARK: - Korean (NLTokenizer, matches upstream soynlp)
 
-    func testTextPreprocessingMixedCJK() {
-        let words = TextPreprocessor.splitIntoWords("Hello你好world", language: "Chinese")
-        XCTAssertEqual(words.count, 4)
-        XCTAssertEqual(words[0], "Hello")
-        XCTAssertEqual(words[1], "你")
-        XCTAssertEqual(words[2], "好")
-        XCTAssertEqual(words[3], "world")
+    /// Korean must NOT split per Hangul syllable. Upstream uses soynlp
+    /// LTokenizer; we use Apple's NLTokenizer for native word segmentation.
+    func testTextPreprocessingKorean() {
+        let words = TextPreprocessor.splitIntoWords("안녕하세요 반갑습니다", language: "korean")
+        XCTAssertGreaterThan(words.count, 0)
+        // Must NOT be 11 per-syllable tokens.
+        XCTAssertLessThan(words.count, 6,
+            "Korean should be word/morpheme level, not per-syllable. Got \(words.count): \(words)")
+        XCTAssertFalse(words.contains(" "))
     }
 
     func testTimestampCorrectionAlreadyMonotonic() {
