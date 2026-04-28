@@ -24,6 +24,24 @@ final class ForcedAlignerTests: XCTestCase {
         XCTAssertEqual(words[3], "界")
     }
 
+    func testTextPreprocessingJapanese() {
+        // Hiragana + Kanji + punctuation. Regression: CLI used to pass
+        // language="English" by default, collapsing the whole sentence to
+        // one whitespace-split "word". Verify the Japanese path splits per
+        // CJK character.
+        let words = TextPreprocessor.splitIntoWords(
+            "おはようございます。今日はいい天気ですね。",
+            language: "japanese")
+        XCTAssertGreaterThan(words.count, 5,
+            "Japanese should split per character, got \(words.count) word(s): \(words)")
+        XCTAssertEqual(words.first, "お")
+    }
+
+    func testTextPreprocessingKatakana() {
+        let words = TextPreprocessor.splitIntoWords("コンピュータ", language: "ja")
+        XCTAssertEqual(words.count, 6)
+    }
+
     func testTextPreprocessingMixedCJK() {
         let words = TextPreprocessor.splitIntoWords("Hello你好world", language: "Chinese")
         XCTAssertEqual(words.count, 4)

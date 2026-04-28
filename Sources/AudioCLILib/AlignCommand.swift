@@ -61,7 +61,11 @@ public struct AlignCommand: ParsableCommand {
 
             print("Aligning...")
             let start = Date()
-            let aligned = aligner.align(audio: audio, text: alignText, sampleRate: 24000)
+            let aligned = aligner.align(
+                audio: audio,
+                text: alignText,
+                sampleRate: 24000,
+                language: language ?? "English")
             let elapsed = Date().timeIntervalSince(start)
 
             for word in aligned {
