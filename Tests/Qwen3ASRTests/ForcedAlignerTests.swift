@@ -42,6 +42,30 @@ final class ForcedAlignerTests: XCTestCase {
         XCTAssertEqual(words.count, 6)
     }
 
+    func testTextPreprocessingJapaneseWithLatin() {
+        // Japanese sentences commonly mix Latin words/numbers (product names,
+        // loanwords, units). Latin runs stay grouped as one token; CJK
+        // characters split individually.
+        let words = TextPreprocessor.splitIntoWords(
+            "iPhone を 使います",
+            language: "japanese")
+        XCTAssertEqual(words.first, "iPhone",
+            "Latin run should stay grouped, got: \(words)")
+        XCTAssertTrue(words.contains("を"))
+        XCTAssertTrue(words.contains("使"))
+        XCTAssertTrue(words.contains("い"))
+        XCTAssertTrue(words.contains("ま"))
+        XCTAssertTrue(words.contains("す"))
+    }
+
+    func testTextPreprocessingJapaneseWithDigits() {
+        let words = TextPreprocessor.splitIntoWords("5G は 速い", language: "ja")
+        XCTAssertEqual(words.first, "5G")
+        XCTAssertTrue(words.contains("は"))
+        XCTAssertTrue(words.contains("速"))
+        XCTAssertTrue(words.contains("い"))
+    }
+
     func testTextPreprocessingMixedCJK() {
         let words = TextPreprocessor.splitIntoWords("Hello你好world", language: "Chinese")
         XCTAssertEqual(words.count, 4)
