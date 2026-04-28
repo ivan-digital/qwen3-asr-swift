@@ -65,8 +65,7 @@ public enum TextPreprocessor {
         )
     }
 
-    /// Split text into words using the language-appropriate strategy that
-    /// matches the upstream Python preprocessing exactly.
+    /// Split text into words using the language-appropriate strategy.
     static func splitIntoWords(_ text: String, language: String) -> [String] {
         let lang = language.lowercased()
 
@@ -76,7 +75,22 @@ public enum TextPreprocessor {
         if lang.contains("korean") || lang == "ko" {
             return tokenizeKorean(text)
         }
+        // Scripts without word-level whitespace where Apple's NLTokenizer
+        // provides native segmentation. Without these dispatches the
+        // default whitespace path collapses each sentence to one token.
+        if let nlLang = nlLanguageForUnspaced(lang) {
+            return nlTokenize(text, language: nlLang)
+        }
         return tokenizeSpaceLang(text)
+    }
+
+    private static func nlLanguageForUnspaced(_ lang: String) -> NLLanguage? {
+        if lang.contains("thai")     || lang == "th" { return .thai }
+        if lang.contains("lao")      || lang == "lo" { return .lao }
+        if lang.contains("khmer")    || lang == "km" { return .khmer }
+        if lang.contains("burmese")  || lang.contains("myanmar") || lang == "my" { return .burmese }
+        if lang.contains("tibetan")  || lang == "bo" { return .tibetan }
+        return nil
     }
 
     // MARK: - Japanese
@@ -111,15 +125,11 @@ public enum TextPreprocessor {
     // MARK: - Default path (whitespace + per-Han break)
 
     /// Whitespace split, then per-Han-ideograph break inside each segment.
-    /// Used for **everything** except Japanese and Korean — including
-    /// English, Chinese, European languages, Hindi, Arabic, etc. Chinese
-    /// works because most Chinese text has no whitespace, so each ideograph
-    /// becomes its own token via the per-Han break.
-    ///
-    /// Note: scripts without word-level whitespace (e.g. Thai, Lao, Khmer,
-    /// Burmese) collapse to a single token here. The Qwen3 forced aligner
-    /// model does not officially support those languages, so this matches
-    /// the supported feature set.
+    /// Default path for languages with reliable word-level whitespace —
+    /// English, European languages, Hindi, Arabic, Vietnamese, Mongolian,
+    /// Indonesian, etc. Chinese works because most Chinese text has no
+    /// whitespace, so each ideograph becomes its own token via the per-Han
+    /// break inside the (single) whitespace-bounded segment.
     static func tokenizeSpaceLang(_ text: String) -> [String] {
         var tokens: [String] = []
         for raw in text.split(whereSeparator: \.isWhitespace) {
@@ -168,7 +178,11 @@ public enum TextPreprocessor {
         switch cat {
         case .uppercaseLetter, .lowercaseLetter, .titlecaseLetter,
              .modifierLetter, .otherLetter,
-             .decimalNumber, .letterNumber, .otherNumber:
+             .decimalNumber, .letterNumber, .otherNumber,
+             // Combining marks are essential for scripts like Thai, Lao,
+             // Khmer, Burmese, Tibetan, Devanagari, Bengali, Arabic harakat
+             // — stripping them mangles the word (e.g. "สวัสดี" → "สวสด").
+             .nonspacingMark, .spacingMark, .enclosingMark:
             return true
         default:
             return false

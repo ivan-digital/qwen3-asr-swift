@@ -100,17 +100,55 @@ final class ForcedAlignerTests: XCTestCase {
         XCTAssertFalse(words.contains(" "))
     }
 
-    // MARK: - Out-of-scope languages (documents current behavior)
+    // MARK: - Asian scripts without word-level whitespace
+    // (NLTokenizer handles these natively — no extra dependency.)
 
-    /// Thai has no word-level whitespace and is not in the Qwen3
-    /// forced-aligner supported language set. The default whitespace +
-    /// Han-only path collapses the whole string to a single token. This
-    /// test documents that behavior so future contributors understand the
-    /// limitation rather than treating it as a bug.
-    func testTextPreprocessingThaiCollapses() {
-        let words = TextPreprocessor.splitIntoWords("สวัสดีครับวันนี้อากาศดี", language: "thai")
-        XCTAssertEqual(words.count, 1,
-            "Thai is not a supported language; expect single-token collapse. Got: \(words)")
+    /// Thai must NOT collapse to one token. NLTokenizer for Thai produces
+    /// reasonable word-level segmentation (no whitespace in source text).
+    func testTextPreprocessingThai() {
+        let words = TextPreprocessor.splitIntoWords(
+            "สวัสดีครับวันนี้อากาศดี", language: "thai")
+        XCTAssertGreaterThan(words.count, 2,
+            "Thai should segment into multiple words. Got \(words.count): \(words)")
+        XCTAssertTrue(words.contains("สวัสดี") || words.contains("วันนี้"),
+            "Expected common Thai word in output, got: \(words)")
+    }
+
+    func testTextPreprocessingLao() {
+        let words = TextPreprocessor.splitIntoWords("ສະບາຍດີຕອນເຊົ້າ", language: "lo")
+        XCTAssertGreaterThan(words.count, 1, "Lao should segment, got: \(words)")
+    }
+
+    func testTextPreprocessingKhmer() {
+        let words = TextPreprocessor.splitIntoWords("សួស្ដីពេលព្រឹក", language: "km")
+        XCTAssertGreaterThan(words.count, 1, "Khmer should segment, got: \(words)")
+    }
+
+    func testTextPreprocessingBurmese() {
+        let words = TextPreprocessor.splitIntoWords("မင်္ဂလာပါမနက်ဖြန်", language: "burmese")
+        XCTAssertGreaterThan(words.count, 1, "Burmese should segment, got: \(words)")
+    }
+
+    func testTextPreprocessingTibetan() {
+        let words = TextPreprocessor.splitIntoWords("བཀྲ་ཤིས་བདེ་ལེགས།", language: "tibetan")
+        XCTAssertGreaterThan(words.count, 1, "Tibetan should segment, got: \(words)")
+    }
+
+    /// Hindi (Devanagari) uses whitespace between words but each word
+    /// contains combining vowel marks (matras like `ि`, `ी`, `े`, `ो`).
+    /// Marks must be preserved — otherwise "नमस्ते" mangles to "नमसत".
+    func testTextPreprocessingHindiMarksPreserved() {
+        let words = TextPreprocessor.splitIntoWords("नमस्ते दोस्त", language: "hindi")
+        XCTAssertEqual(words.count, 2)
+        XCTAssertEqual(words[0], "नमस्ते", "Devanagari combining marks must survive cleanToken")
+        XCTAssertEqual(words[1], "दोस्त")
+    }
+
+    /// Bengali likewise uses combining marks and whitespace.
+    func testTextPreprocessingBengaliMarksPreserved() {
+        let words = TextPreprocessor.splitIntoWords("নমস্কার বন্ধু", language: "bengali")
+        XCTAssertEqual(words.count, 2)
+        XCTAssertEqual(words[0], "নমস্কার")
     }
 
     /// Same for German — works like English. Compound words stay as one
