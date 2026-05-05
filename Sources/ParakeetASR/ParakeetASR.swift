@@ -28,6 +28,12 @@ public class ParakeetASRModel {
     var decoder: MLModel?
     var joint: MLModel?
     private let vocabulary: ParakeetVocabulary
+    /// Mel frame counts the loaded encoder accepts, sorted ascending.
+    /// Derived from the encoder's CoreML input constraint at load time, so
+    /// fixed-shape exports (e.g. iOS-5s = `[500]`) and enumerated-shape
+    /// exports (e.g. macOS = `[100, 200, 300, 400, 500, 750, 1000, 1500,
+    /// 2000, 3000]`) both work without any per-variant Swift logic.
+    private let supportedMelLengths: [Int]
     /// Confidence from the last transcription (0.0–1.0).
     public private(set) var lastConfidence: Float = 0
     /// Per-word confidence scores from the last transcription.
@@ -38,7 +44,8 @@ public class ParakeetASRModel {
         encoder: MLModel?,
         decoder: MLModel?,
         joint: MLModel?,
-        vocabulary: ParakeetVocabulary
+        vocabulary: ParakeetVocabulary,
+        supportedMelLengths: [Int]
     ) {
         self.config = config
         self.melPreprocessor = MelPreprocessor(config: config)
@@ -46,6 +53,7 @@ public class ParakeetASRModel {
         self.decoder = decoder
         self.joint = joint
         self.vocabulary = vocabulary
+        self.supportedMelLengths = supportedMelLengths
     }
 
     // MARK: - Warmup
@@ -118,19 +126,24 @@ public class ParakeetASRModel {
 
     // MARK: - CoreML Inference Helpers
 
-    /// Enumerated mel frame lengths supported by the encoder CoreML model.
-    private static let enumeratedMelLengths = [100, 200, 300, 400, 500, 750, 1000, 1500, 2000, 3000]
+    /// Fallback used only if the encoder's input constraint can't be introspected.
+    /// Real values come from `discoverSupportedMelLengths(from:)` at load time.
+    private static let defaultMelLengths = [100, 200, 300, 400, 500, 750, 1000, 1500, 2000, 3000]
 
-    /// Pad mel spectrogram to the nearest enumerated shape.
-    /// The encoder uses EnumeratedShapes to avoid a BNNS crash with dynamic shapes.
+    /// Pad mel spectrogram to the smallest supported shape that fits.
+    /// Supported shapes are read from the encoder's CoreML input constraint
+    /// at load time (see `discoverSupportedMelLengths(from:)`), so fixed-shape
+    /// exports work without forcing the caller to know about them.
     private func padMelToEnumeratedShape(mel: MLMultiArray, actualLength: Int) throws -> MLMultiArray {
         let melFrames = mel.shape[2].intValue
 
-        // Find the smallest enumerated length >= melFrames
-        guard let targetLength = Self.enumeratedMelLengths.first(where: { $0 >= melFrames }) else {
+        // Find the smallest supported length >= melFrames
+        guard let targetLength = supportedMelLengths.first(where: { $0 >= melFrames }) else {
+            let maxLen = supportedMelLengths.last ?? 0
+            let maxSecs = Double(maxLen) / 100.0
             throw AudioModelError.inferenceFailed(
                 operation: "mel padding",
-                reason: "Audio too long: \(melFrames) mel frames exceeds max \(Self.enumeratedMelLengths.last!) (30s)")
+                reason: "Audio too long: \(melFrames) mel frames exceeds max \(maxLen) (\(String(format: "%.1f", maxSecs))s) — encoder accepts shapes \(supportedMelLengths)")
         }
 
         if targetLength == melFrames {
@@ -263,6 +276,9 @@ public class ParakeetASRModel {
         let joint = try loadCoreMLModel(
             name: "joint", from: resolvedCacheDir, computeUnits: .cpuAndGPU)
 
+        let supportedMelLengths = discoverSupportedMelLengths(from: encoder)
+        AudioLog.modelLoading.info("Parakeet encoder accepts mel frame counts: \(supportedMelLengths)")
+
         progressHandler?(1.0, "Model loaded")
         AudioLog.modelLoading.info("Parakeet model loaded successfully")
 
@@ -271,8 +287,54 @@ public class ParakeetASRModel {
             encoder: encoder,
             decoder: decoder,
             joint: joint,
-            vocabulary: vocabulary
+            vocabulary: vocabulary,
+            supportedMelLengths: supportedMelLengths
         )
+    }
+
+    /// Read the encoder's mel input shape constraint and return the supported
+    /// frame counts (dim 2 of `[batch, mel_bins, frames]`), sorted ascending.
+    ///
+    /// Handles both export styles produced by `models/parakeet-asr/export/convert.py`:
+    /// - `--single-shape` → fixed shape, returns one element (e.g. `[500]` for iOS-5s)
+    /// - default → `EnumeratedShapes`, returns the enumerated frame counts
+    ///
+    /// Falls back to `defaultMelLengths` if introspection fails — that matches
+    /// the historical hardcoded list, so behaviour on previously-working exports
+    /// is unchanged.
+    private static func discoverSupportedMelLengths(from encoder: MLModel) -> [Int] {
+        guard let melDescription = encoder.modelDescription.inputDescriptionsByName["mel"],
+              let arrayConstraint = melDescription.multiArrayConstraint else {
+            return defaultMelLengths
+        }
+
+        let shapeConstraint = arrayConstraint.shapeConstraint
+        switch shapeConstraint.type {
+        case .enumerated:
+            let frames = shapeConstraint.enumeratedShapes
+                .compactMap { $0.count >= 3 ? $0[2].intValue : nil }
+                .sorted()
+            return frames.isEmpty ? defaultMelLengths : frames
+        case .unspecified:
+            // Single fixed shape — the canonical shape on the constraint is the
+            // only one the model accepts.
+            let canonical = arrayConstraint.shape
+            return canonical.count >= 3 ? [canonical[2].intValue] : defaultMelLengths
+        case .range:
+            // Range-on-time-axis exports: pick supported lengths that fall
+            // inside the model's allowed range. Snap to the historical list
+            // (intersected with the range) so we don't explode into thousands
+            // of candidate paddings for permissive ranges.
+            let perDim = shapeConstraint.sizeRangeForDimension
+            guard perDim.count >= 3 else { return defaultMelLengths }
+            let timeRange = perDim[2].rangeValue
+            let lower = max(1, timeRange.location)
+            let upper = lower + timeRange.length
+            let candidates = defaultMelLengths.filter { $0 >= lower && $0 <= upper }
+            return candidates.isEmpty ? [upper] : candidates
+        @unknown default:
+            return defaultMelLengths
+        }
     }
 
     /// Load a compiled CoreML model from a `.mlmodelc` directory.
