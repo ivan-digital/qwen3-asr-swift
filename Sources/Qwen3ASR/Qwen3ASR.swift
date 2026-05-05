@@ -246,47 +246,37 @@ public class Qwen3ASRModel {
         // Initialize KV cache
         var cache: [(MLXArray, MLXArray)]? = nil
 
-        // Generate tokens
-        var generatedTokens: [Int32] = []
-
         // First pass: process the full input embeddings
-        var (hiddenStates, newCache) = textDecoder(inputsEmbeds: inputEmbeds, cache: cache)
+        let (hiddenStates, newCache) = textDecoder(inputsEmbeds: inputEmbeds, cache: cache)
         cache = newCache
 
         // Get logits from the last position using embedding as LM head (tied weights)
         let seqLen = hiddenStates.dim(1)
         let lastHidden = hiddenStates[0..., (seqLen-1)..<seqLen, 0...]
-        var logits = textDecoder.embedTokens.asLinear(lastHidden)
-        var nextToken = Self.pickNextToken(
-            logits: logits,
-            generatedSoFar: generatedTokens,
-            options: decodingOptions
-        )
-        generatedTokens.append(nextToken)
+        let logits = textDecoder.embedTokens.asLinear(lastHidden)
 
-        // Continue generating
-        for _ in 1..<maxTokens {
-            // Check for EOS
-            if nextToken == Int32(Qwen3ASRTokens.eosTokenId) {
-                break
-            }
-
-            // Get embedding for the new token
-            let tokenEmbeds = textDecoder.embedTokens(MLXArray([nextToken]).expandedDimensions(axis: 0))
-
-            // Forward pass with cache
-            (hiddenStates, newCache) = textDecoder(inputsEmbeds: tokenEmbeds, cache: cache)
-            cache = newCache
-
-            // Get next token
-            let lastHiddenNext = hiddenStates[0..., (-1)..., .ellipsis]
-            logits = textDecoder.embedTokens.asLinear(lastHiddenNext)
-            nextToken = Self.pickNextToken(
-                logits: logits,
-                generatedSoFar: generatedTokens,
+        // Greedy fast path uses a double-buffered asyncEval decode loop that
+        // overlaps the GPU forward pass for token N+1 with the host-side
+        // bookkeeping (EOS check + Swift array append) for token N. The
+        // legacy slow path stays on the per-token CPU sync because it pulls
+        // the full logits tensor to CPU for repetition / n-gram / temperature
+        // manipulation, which would defeat the overlap.
+        let generatedTokens: [Int32]
+        if Self.isGreedyFastPath(decodingOptions) {
+            generatedTokens = Self.generateGreedyAsyncEval(
+                textDecoder: textDecoder,
+                initialLogits: logits,
+                cache: cache!,
+                maxTokens: maxTokens
+            )
+        } else {
+            generatedTokens = Self.generateSlow(
+                textDecoder: textDecoder,
+                initialLogits: logits,
+                cache: cache!,
+                maxTokens: maxTokens,
                 options: decodingOptions
             )
-            generatedTokens.append(nextToken)
         }
 
         // Decode tokens to text
@@ -301,6 +291,145 @@ public class Qwen3ASRModel {
             // Fallback: return token IDs
             return generatedTokens.map { String($0) }.joined(separator: " ")
         }
+    }
+
+    /// Greedy with default options: temperature 0, no repetition penalty,
+    /// no n-gram blocking. The double-buffered asyncEval loop only kicks
+    /// in for this configuration so we can guarantee bit-identical token
+    /// sequences vs. the legacy `argMax(...).item()` decoder.
+    static func isGreedyFastPath(_ options: Qwen3DecodingOptions) -> Bool {
+        return options.repetitionPenalty == 1.0
+            && options.noRepeatNgramSize == 0
+            && options.temperature == 0.0
+    }
+
+    /// Double-buffered greedy decode loop. The key trick is to keep the
+    /// "next token" as a lazy 0-D `MLXArray` (the result of `argMax`),
+    /// build the *next* step's forward pass on top of it (still lazy),
+    /// then call `MLX.asyncEval` so the GPU starts computing step N+1
+    /// before we sync step N's int32 to CPU. The host-side EOS check
+    /// and `generatedTokens.append` then overlap with the in-flight GPU
+    /// work for step N+1 instead of stalling between every token.
+    ///
+    /// Greedy correctness invariant: argMax is deterministic, so this
+    /// produces the exact same token sequence as the legacy loop on
+    /// matching inputs.
+    static func generateGreedyAsyncEval(
+        textDecoder: QuantizedTextModel,
+        initialLogits: MLXArray,
+        cache initialCache: [(MLXArray, MLXArray)],
+        maxTokens: Int
+    ) -> [Int32] {
+        var generatedTokens: [Int32] = []
+        guard maxTokens > 0 else { return generatedTokens }
+
+        // Stage 0: argmax of the prefill's last logits. Stays lazy until
+        // the first `.item()` below.
+        //
+        // Cast to int32 explicitly: MLX's `argmax` returns uint32, but the
+        // legacy loop fed `embedTokens` an int32 tensor (built from a Swift
+        // `Int32`). Quantized embedding lookup observably dispatches
+        // differently on uint32 vs. int32, producing tokens that diverge
+        // from the legacy path on a small fraction of inputs. Casting here
+        // restores exact dtype parity, so greedy stays token-for-token
+        // identical to the pre-optimisation decoder.
+        var nextTokenArr = argMax(initialLogits, axis: -1).squeezed().asType(.int32)
+        var cache = initialCache
+        // Kick off the GPU on the first token (and the prefill cache that
+        // step 1's graph will read from).
+        asyncEval(nextTokenArr, cache)
+
+        let eosToken = Int32(Qwen3ASRTokens.eosTokenId)
+
+        for step in 0..<maxTokens {
+            // Stage N+1's graph BEFORE syncing N. embedTokens expects a
+            // [batch, seq] int32 tensor; nextTokenArr is 0-D so we expand
+            // twice to [1, 1].
+            //
+            // Skip the speculative graph build on the LAST iteration —
+            // we'd never consume it, and on tiny `maxTokens` the saved
+            // GPU/host work matters.
+            var nextTokenArrN1: MLXArray? = nil
+            var cacheN1: [(MLXArray, MLXArray)]? = nil
+            if step + 1 < maxTokens {
+                let nextEmbed = textDecoder.embedTokens(
+                    nextTokenArr.expandedDimensions(axis: 0).expandedDimensions(axis: 0)
+                )
+                let (hiddenN1, newCacheN1) = textDecoder(inputsEmbeds: nextEmbed, cache: cache)
+                let lastHiddenN1 = hiddenN1[0..., (-1)..., .ellipsis]
+                let logitsN1 = textDecoder.embedTokens.asLinear(lastHiddenN1)
+                let argN1 = argMax(logitsN1, axis: -1).squeezed().asType(.int32)
+                // Kick GPU on N+1 (chains after the asyncEval that is
+                // still computing N).
+                asyncEval(argN1, newCacheN1)
+                nextTokenArrN1 = argN1
+                cacheN1 = newCacheN1
+            }
+
+            // Now sync N. By the time we reach `.item()` the GPU has
+            // very likely finished N already, and the cost of this call
+            // shrinks to a host-side memcpy of one int32 — which itself
+            // overlaps with the in-flight N+1 forward pass.
+            let nextToken = nextTokenArr.item(Int32.self)
+            // Match the legacy loop semantics exactly: append the token
+            // first, *then* break on EOS. The legacy loop emitted EOS
+            // into `generatedTokens` whenever EOS was the most recent
+            // pick, so greedy stays bit-identical.
+            generatedTokens.append(nextToken)
+            if nextToken == eosToken { break }
+
+            guard let advancedCache = cacheN1, let advancedToken = nextTokenArrN1 else {
+                // Final iteration without speculative work — nothing to
+                // advance to; the loop will exit naturally next.
+                break
+            }
+            cache = advancedCache
+            nextTokenArr = advancedToken
+        }
+        return generatedTokens
+    }
+
+    /// Legacy decode loop kept verbatim for the non-greedy slow path.
+    /// `pickNextToken` here pulls logits to CPU for repetition penalty,
+    /// n-gram masking, and temperature sampling, so there's no benefit
+    /// from `asyncEval` overlap.
+    static func generateSlow(
+        textDecoder: QuantizedTextModel,
+        initialLogits: MLXArray,
+        cache initialCache: [(MLXArray, MLXArray)],
+        maxTokens: Int,
+        options: Qwen3DecodingOptions
+    ) -> [Int32] {
+        var generatedTokens: [Int32] = []
+        guard maxTokens > 0 else { return generatedTokens }
+        var cache: [(MLXArray, MLXArray)]? = initialCache
+
+        var nextToken = Self.pickNextToken(
+            logits: initialLogits,
+            generatedSoFar: generatedTokens,
+            options: options
+        )
+        generatedTokens.append(nextToken)
+
+        for _ in 1..<maxTokens {
+            if nextToken == Int32(Qwen3ASRTokens.eosTokenId) { break }
+
+            let tokenEmbeds = textDecoder.embedTokens(
+                MLXArray([nextToken]).expandedDimensions(axis: 0)
+            )
+            let (hiddenStates, newCache) = textDecoder(inputsEmbeds: tokenEmbeds, cache: cache)
+            cache = newCache
+
+            let lastHiddenNext = hiddenStates[0..., (-1)..., .ellipsis]
+            let logits = textDecoder.embedTokens.asLinear(lastHiddenNext)
+            nextToken = Self.pickNextToken(
+                logits: logits,
+                generatedSoFar: generatedTokens,
+                options: options
+            )
+            generatedTokens.append(nextToken)
+        }
+        return generatedTokens
     }
 
     // MARK: - Decoder knobs
