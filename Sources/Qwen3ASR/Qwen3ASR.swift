@@ -60,6 +60,11 @@ public struct Qwen3ASRTokens: Sendable {
     public static let imStartTokenId = 151644      // <|im_start|>
     public static let imEndTokenId = 151645        // <|im_end|>
     public static let timestampTokenId = 151705    // <|timestamp|>
+    public static let asrTextTokenId = 151704      // <asr_text>
+    public static let newlineTokenId = 198         // \n
+    public static let systemTokenId = 8948         // system
+    public static let userTokenId = 872            // user
+    public static let assistantTokenId = 77091     // assistant
 }
 
 /// Main Qwen3-ASR model for speech recognition.
@@ -264,59 +269,43 @@ public class Qwen3ASRModel {
         context: String? = nil,
         decodingOptions: Qwen3DecodingOptions = Qwen3DecodingOptions()
     ) -> String {
-        // Special token IDs
-        let imStartId = 151644
-        let imEndId = 151645
-        let audioStartId = 151669
-        let audioEndId = 151670
-        let audioPadId = 151676
-        let asrTextId = 151704
-        let newlineId = 198
-
-        // Token IDs for "system", "user", "assistant"
-        let systemId = 8948
-        let userId = 872
-        let assistantId = 77091
-
-        // Number of audio tokens (from audio encoder output)
+        let T = Qwen3ASRTokens.self
         let numAudioTokens = audioEmbeds.dim(1)
-
-        // Build input_ids array with audio_pad placeholder tokens
         var inputIds: [Int32] = []
 
         // <|im_start|>system\n{context}<|im_end|>\n
-        inputIds.append(contentsOf: [imStartId, systemId, newlineId].map { Int32($0) })
+        inputIds.append(contentsOf: [T.imStartTokenId, T.systemTokenId, T.newlineTokenId].map { Int32($0) })
         if let context = context, !context.isEmpty, let tokenizer = tokenizer {
             let contextTokens = tokenizer.encode(context)
             inputIds.append(contentsOf: contextTokens.map { Int32($0) })
         }
-        inputIds.append(contentsOf: [imEndId, newlineId].map { Int32($0) })
+        inputIds.append(contentsOf: [T.imEndTokenId, T.newlineTokenId].map { Int32($0) })
 
         // <|im_start|>user\n<|audio_start|>
-        inputIds.append(contentsOf: [imStartId, userId, newlineId, audioStartId].map { Int32($0) })
+        inputIds.append(contentsOf: [T.imStartTokenId, T.userTokenId, T.newlineTokenId, T.audioStartTokenId].map { Int32($0) })
 
         // <|audio_pad|> * numAudioTokens (placeholder tokens that will be replaced)
         let audioStartIndex = inputIds.count
         for _ in 0..<numAudioTokens {
-            inputIds.append(Int32(audioPadId))
+            inputIds.append(Int32(T.audioTokenId))
         }
         let audioEndIndex = inputIds.count
 
         // <|audio_end|><|im_end|>\n
-        inputIds.append(contentsOf: [audioEndId, imEndId, newlineId].map { Int32($0) })
+        inputIds.append(contentsOf: [T.audioEndTokenId, T.imEndTokenId, T.newlineTokenId].map { Int32($0) })
 
         // <|im_start|>assistant\n
-        inputIds.append(contentsOf: [imStartId, assistantId, newlineId].map { Int32($0) })
+        inputIds.append(contentsOf: [T.imStartTokenId, T.assistantTokenId, T.newlineTokenId].map { Int32($0) })
 
-        // Add language hint if specified, then always add <|asr_text|> marker.
-        // Without <|asr_text|>, the model doesn't know it should transcribe.
-        // Without language hint, the model auto-detects and prepends "language XX" to output.
+        // Add language hint if specified, then always add <asr_text>. Without
+        // <asr_text>, the model doesn't know it should transcribe. Without a
+        // language hint, the model auto-detects and prepends "language XX".
         if let lang = language, let tokenizer = tokenizer {
             let langPrefix = "language \(lang)"
             let langTokens = tokenizer.encode(langPrefix)
             inputIds.append(contentsOf: langTokens.map { Int32($0) })
         }
-        inputIds.append(Int32(asrTextId))
+        inputIds.append(Int32(T.asrTextTokenId))
 
         // Get text embeddings for all tokens
         let inputIdsTensor = MLXArray(inputIds).expandedDimensions(axis: 0)
@@ -772,36 +761,28 @@ public class Qwen3ASRModel {
         context: String?,
         tokenizer: Qwen3Tokenizer?
     ) -> (prefix: [Int32], suffix: [Int32]) {
-        let imStartId = Int32(151644)
-        let imEndId = Int32(151645)
-        let audioStartId = Int32(151669)
-        let audioEndId = Int32(151670)
-        let asrTextId = Int32(151704)
-        let newlineId = Int32(198)
-        let systemId = Int32(8948)
-        let userId = Int32(872)
-        let assistantId = Int32(77091)
+        let T = Qwen3ASRTokens.self
 
         // Prefix: everything before the audio_pad tokens.
         var prefix: [Int32] = []
-        prefix.append(contentsOf: [imStartId, systemId, newlineId])
+        prefix.append(contentsOf: [T.imStartTokenId, T.systemTokenId, T.newlineTokenId].map { Int32($0) })
         if let context = context, !context.isEmpty, let tokenizer = tokenizer {
             let contextTokens = tokenizer.encode(context)
             prefix.append(contentsOf: contextTokens.map { Int32($0) })
         }
-        prefix.append(contentsOf: [imEndId, newlineId])
-        prefix.append(contentsOf: [imStartId, userId, newlineId, audioStartId])
+        prefix.append(contentsOf: [T.imEndTokenId, T.newlineTokenId].map { Int32($0) })
+        prefix.append(contentsOf: [T.imStartTokenId, T.userTokenId, T.newlineTokenId, T.audioStartTokenId].map { Int32($0) })
 
         // Suffix: everything after the audio_pad tokens.
         var suffix: [Int32] = []
-        suffix.append(contentsOf: [audioEndId, imEndId, newlineId])
-        suffix.append(contentsOf: [imStartId, assistantId, newlineId])
+        suffix.append(contentsOf: [T.audioEndTokenId, T.imEndTokenId, T.newlineTokenId].map { Int32($0) })
+        suffix.append(contentsOf: [T.imStartTokenId, T.assistantTokenId, T.newlineTokenId].map { Int32($0) })
         if let lang = language, let tokenizer = tokenizer {
             let langPrefix = "language \(lang)"
             let langTokens = tokenizer.encode(langPrefix)
             suffix.append(contentsOf: langTokens.map { Int32($0) })
         }
-        suffix.append(asrTextId)
+        suffix.append(Int32(T.asrTextTokenId))
 
         return (prefix, suffix)
     }
@@ -829,15 +810,6 @@ public class Qwen3ASRModel {
         let afterAudio = inputEmbeds[0..., audioEndIndex..., 0...]
         inputEmbeds = concatenated([beforeAudio, audioEmbedsTyped, afterAudio], axis: 1)
         return inputEmbeds
-    }
-
-    /// Standard causal mask broadcast across the batch dimension.
-    static func buildBatchedCausalMask(seqLen: Int, dtype: DType) -> MLXArray {
-        let rows = MLXArray(0..<Int32(seqLen)).expandedDimensions(axis: 1)
-        let cols = MLXArray(0..<Int32(seqLen)).expandedDimensions(axis: 0)
-        return MLX.where(cols .> rows, MLXArray(Float(-1e9)), MLXArray(Float(0)))
-            .expandedDimensions(axes: [0, 1])
-            .asType(dtype)
     }
 
     static func decodeTokenBatch(

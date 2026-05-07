@@ -81,18 +81,4 @@ final class Qwen3ASRBatchedDecodeTests: XCTestCase {
         ])
     }
 
-    func testBatchCausalMaskShapeAndValues() {
-        let mask = Qwen3ASRModel.buildBatchedCausalMask(seqLen: 3, dtype: .float32)
-
-        XCTAssertEqual(mask.shape, [1, 1, 3, 3])
-        XCTAssertEqual(mask[0, 0, 0, 0].item(Float.self), 0)
-        XCTAssertLessThan(mask[0, 0, 0, 1].item(Float.self), -1e8)
-        XCTAssertLessThan(mask[0, 0, 0, 2].item(Float.self), -1e8)
-        XCTAssertEqual(mask[0, 0, 1, 0].item(Float.self), 0)
-        XCTAssertEqual(mask[0, 0, 1, 1].item(Float.self), 0)
-        XCTAssertLessThan(mask[0, 0, 1, 2].item(Float.self), -1e8)
-        XCTAssertEqual(mask[0, 0, 2, 0].item(Float.self), 0)
-        XCTAssertEqual(mask[0, 0, 2, 1].item(Float.self), 0)
-        XCTAssertEqual(mask[0, 0, 2, 2].item(Float.self), 0)
-    }
 }

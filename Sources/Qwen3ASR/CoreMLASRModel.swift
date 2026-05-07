@@ -103,32 +103,23 @@ public class CoreMLASRModel {
         // Reset decoder KV cache
         decoder.resetCache()
 
-        // Build chat template token sequence
-        let imStartId: Int32 = 151644
-        let imEndId: Int32 = 151645
-        let audioStartId: Int32 = 151669
-        let audioEndId: Int32 = 151670
-        let asrTextId: Int32 = 151704
-        let newlineId: Int32 = 198
-        let systemId: Int32 = 8948
-        let userId: Int32 = 872
-        let assistantId: Int32 = 77091
+        let T = Qwen3ASRTokens.self
 
         // <|im_start|>system\n<|im_end|>\n
-        var prefixTokens: [Int32] = [imStartId, systemId, newlineId, imEndId, newlineId]
+        var prefixTokens: [Int32] = [T.imStartTokenId, T.systemTokenId, T.newlineTokenId, T.imEndTokenId, T.newlineTokenId].map { Int32($0) }
         // <|im_start|>user\n<|audio_start|>
-        prefixTokens += [imStartId, userId, newlineId, audioStartId]
+        prefixTokens += [T.imStartTokenId, T.userTokenId, T.newlineTokenId, T.audioStartTokenId].map { Int32($0) }
 
         // <|audio_end|><|im_end|>\n<|im_start|>assistant\n
-        var suffixTokens: [Int32] = [audioEndId, imEndId, newlineId, imStartId, assistantId, newlineId]
+        var suffixTokens: [Int32] = [T.audioEndTokenId, T.imEndTokenId, T.newlineTokenId, T.imStartTokenId, T.assistantTokenId, T.newlineTokenId].map { Int32($0) }
 
-        // Language hint + <|asr_text|>
+        // Language hint + <asr_text>
         if let lang = language, let tokenizer = tokenizer {
             let langPrefix = "language \(lang)"
             let langTokens = tokenizer.encode(langPrefix)
             suffixTokens += langTokens.map { Int32($0) }
         }
-        suffixTokens.append(asrTextId)
+        suffixTokens.append(Int32(T.asrTextTokenId))
 
         // ── Prefill: process all prefix tokens ──
         var lastLogits: MLMultiArray?
@@ -160,7 +151,7 @@ public class CoreMLASRModel {
         generatedTokens.append(nextToken)
 
         for _ in 1..<maxTokens {
-            if nextToken == imEndId { break }
+            if nextToken == Int32(T.imEndTokenId) { break }
 
             let embedding = try decoder.embed(tokenId: nextToken)
             logits = try decoder.decoderStep(embedding: embedding)
@@ -214,31 +205,23 @@ public class CoreMLASRModel {
         decoder.resetCache()
 
         // 4. Build chat template token sequence (identical to transcribe())
-        let imStartId: Int32 = 151644
-        let imEndId: Int32 = 151645
-        let audioStartId: Int32 = 151669
-        let audioEndId: Int32 = 151670
-        let asrTextId: Int32 = 151704
-        let newlineId: Int32 = 198
-        let systemId: Int32 = 8948
-        let userId: Int32 = 872
-        let assistantId: Int32 = 77091
+        let T = Qwen3ASRTokens.self
 
         // <|im_start|>system\n<|im_end|>\n
-        var prefixTokens: [Int32] = [imStartId, systemId, newlineId, imEndId, newlineId]
+        var prefixTokens: [Int32] = [T.imStartTokenId, T.systemTokenId, T.newlineTokenId, T.imEndTokenId, T.newlineTokenId].map { Int32($0) }
         // <|im_start|>user\n<|audio_start|>
-        prefixTokens += [imStartId, userId, newlineId, audioStartId]
+        prefixTokens += [T.imStartTokenId, T.userTokenId, T.newlineTokenId, T.audioStartTokenId].map { Int32($0) }
 
         // <|audio_end|><|im_end|>\n<|im_start|>assistant\n
-        var suffixTokens: [Int32] = [audioEndId, imEndId, newlineId, imStartId, assistantId, newlineId]
+        var suffixTokens: [Int32] = [T.audioEndTokenId, T.imEndTokenId, T.newlineTokenId, T.imStartTokenId, T.assistantTokenId, T.newlineTokenId].map { Int32($0) }
 
-        // Language hint + <|asr_text|>
+        // Language hint + <asr_text>
         if let lang = language, let tokenizer = tokenizer {
             let langPrefix = "language \(lang)"
             let langTokens = tokenizer.encode(langPrefix)
             suffixTokens += langTokens.map { Int32($0) }
         }
-        suffixTokens.append(asrTextId)
+        suffixTokens.append(Int32(T.asrTextTokenId))
 
         // 5. Prefill: process all prefix tokens
         var lastLogits: MLMultiArray?
@@ -270,7 +253,7 @@ public class CoreMLASRModel {
         generatedTokens.append(nextToken)
 
         for _ in 1..<maxTokens {
-            if nextToken == imEndId { break }
+            if nextToken == Int32(T.imEndTokenId) { break }
 
             let embedding = try decoder.embed(tokenId: nextToken)
             logits = try decoder.decoderStep(embedding: embedding)
