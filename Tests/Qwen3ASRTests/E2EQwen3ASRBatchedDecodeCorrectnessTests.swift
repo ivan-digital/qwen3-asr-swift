@@ -38,4 +38,34 @@ final class E2EQwen3ASRBatchedDecodeCorrectnessTests: XCTestCase {
         XCTAssertEqual(batched, serial)
         XCTAssertEqual(Set(batched).count, 1, "Repeated chunks should produce identical transcriptions")
     }
+
+    /// Non-greedy decoding (repetition penalty, n-gram mask, temperature
+    /// sampling) needs CPU-side logits for each step, which the batched
+    /// decoder doesn't surface. `transcribeBatch` must therefore drop back
+    /// to serial per-chunk `transcribe`. This is the regression test for
+    /// that fall-back: with non-greedy options, batched output must equal
+    /// per-chunk serial output applying the same options. If anyone removes
+    /// the `isGreedyFastPath` guard, sampling would be silently bypassed
+    /// for batch callers and this test would catch it.
+    func testBatchFallsBackToSerialForNonGreedyOptions() async throws {
+        let model = try await Qwen3ASRModel.fromPretrained(modelId: Self.modelId)
+        let chunk = try loadSpeechChunk()
+        let audios = [chunk, chunk]
+        let nonGreedy = Qwen3DecodingOptions(
+            language: "en",
+            repetitionPenalty: 1.15,
+            noRepeatNgramSize: 3
+        )
+
+        let serial = audios.map {
+            model.transcribe(audio: $0, sampleRate: Self.targetSampleRate, options: nonGreedy)
+        }
+        let batched = model.transcribeBatch(
+            audios: audios,
+            sampleRate: Self.targetSampleRate,
+            options: nonGreedy
+        )
+
+        XCTAssertEqual(batched, serial)
+    }
 }
