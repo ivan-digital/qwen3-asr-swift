@@ -44,7 +44,7 @@ Audio (16kHz) + Text
 | Audio encoder | 24 layers, d_model=1024, 16 heads, FFN=4096, output→1024 |
 | Text decoder | 28 layers, hidden=1024, 16Q/8KV heads, headDim=128 (4-bit, 8-bit, or bf16) |
 | Classify head | Linear(1024, 5000), float16 (NOT tied to embeddings) |
-| Timestamp resolution | 80ms per class (5000 classes = 400s max) |
+| Timestamp resolution | 80ms per class (5000 classes = 400s addressable, ~270s reliable in practice — see *Long-audio handling* below) |
 
 ## Key Difference from ASR
 
@@ -136,6 +136,32 @@ Raw timestamps may not be monotonic. Fix via:
 3. Larger gaps: linear interpolation between LIS anchors
 4. Final pass: enforce non-decreasing order
 
+## Long-audio handling
+
+The classify head addresses 400 s in principle (5000 classes × 80 ms), but the trained reliable range on `Qwen3-ForcedAligner-0.6B` is **~270 s**. Past that, the model emits low / non-monotonic indices for the remaining words, and the LIS pass collapses them onto the last anchor — every trailing word ends up with the same timestamp.
+
+`Qwen3ForcedAligner.alignLong(...)` wraps `align()` to handle this:
+
+1. Run `align()` on the full audio.
+2. Detect a trailing **plateau** (≥ 5 consecutive words whose start times differ by < 0.1 s) — the LIS-clamp signature.
+3. If found: keep the reliable prefix, slice the remaining audio, re-align the remaining words with a time offset.
+4. Iterate until no plateau remains or the remainder is below 5 s.
+
+For audio under the 240 s bypass threshold this is a one-pass passthrough into `align()`. For longer audio the cost is one extra `align` pass per chunk; in practice the second chunk is short so the overhead is small (≤ ~0.5 s wall-clock on the 306 s TED-Ed test clip).
+
+The CLI (`audio align`) calls `alignLong` automatically and prints a one-line message when chunking kicks in:
+
+```
+Audio 306.2s saturated after word 690 (272.6s); chunking remaining 33.6s (pass 2)
+```
+
+Set `ALIGN_DEBUG=1` to dump raw vs corrected timestamp indices when investigating misaligned outputs.
+
+### Known limitations
+
+- **Audio with leading non-speech** (music intro, long silence): the model often stamps the first word at `~0 s` because the classifier head has no notion of "speech hasn't started yet". Workaround: trim leading non-speech before alignment, or pre-pass with a VAD.
+- **Single-language audio assumed**: the language hint applies to the whole alignment; no per-segment language switching.
+
 ## Performance (M2 Max, 64 GB)
 
 | Stage | Time | Notes |
@@ -195,13 +221,24 @@ Output format:
 ```swift
 let aligner = try await Qwen3ForcedAligner.fromPretrained()
 
+// Short-form audio (≤240s): single forward pass.
 let aligned = aligner.align(
     audio: audioSamples,
     text: "Can you guarantee that the replacement part will be shipped tomorrow?",
     sampleRate: 24000
 )
 
-for word in aligned {
+// Long-form audio: auto-chunks past the model's reliable range so trailing
+// words don't all collapse onto the last anchor's timestamp. Behaves identically
+// to `align()` for short audio.
+let alignedLong = aligner.alignLong(
+    audio: longAudioSamples,
+    text: longText,
+    sampleRate: 24000,
+    progressHandler: { print($0) }   // optional: notified when a chunk hand-off happens
+)
+
+for word in alignedLong {
     print("[\(word.startTime)s - \(word.endTime)s] \(word.text)")
 }
 ```

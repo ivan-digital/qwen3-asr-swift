@@ -431,4 +431,82 @@ final class ForcedAlignerTests: XCTestCase {
         print("  Audio duration: \(String(format: "%.1f", audioDuration))s")
         print("  RTF: \(String(format: "%.3f", bestMs / 1000.0 / audioDuration))")
     }
+
+    // MARK: - Trailing-plateau detection (alignLong chunking trigger)
+
+    private func makeWord(start: Float, end: Float) -> AlignedWord {
+        AlignedWord(text: "_", startTime: start, endTime: end)
+    }
+
+    func testNoPlateauOnHealthyAlignment() {
+        let aligned = (0..<20).map { i in
+            makeWord(start: Float(i) * 0.5, end: Float(i) * 0.5 + 0.4)
+        }
+        let p = Qwen3ForcedAligner.findTrailingPlateauStart(
+            aligned, tolerance: 0.1, minSize: 5
+        )
+        XCTAssertEqual(p, aligned.count, "Strictly increasing timestamps should not look like a plateau")
+    }
+
+    func testTrailingPlateauDetected() {
+        // 15 healthy + 10 stuck at 12.0 — exactly the LIS-clamp pattern.
+        var aligned = (0..<15).map { i in
+            makeWord(start: Float(i) * 0.5, end: Float(i) * 0.5 + 0.4)
+        }
+        for _ in 0..<10 {
+            aligned.append(makeWord(start: 12.0, end: 12.0))
+        }
+        let p = Qwen3ForcedAligner.findTrailingPlateauStart(
+            aligned, tolerance: 0.1, minSize: 5
+        )
+        XCTAssertEqual(p, 15, "Plateau should start at the first stuck word")
+    }
+
+    func testPlateauBelowMinSizeIgnored() {
+        // Only 3 stuck words at the tail — below the minSize threshold.
+        var aligned = (0..<10).map { i in
+            makeWord(start: Float(i) * 0.5, end: Float(i) * 0.5 + 0.4)
+        }
+        for _ in 0..<3 {
+            aligned.append(makeWord(start: 6.0, end: 6.0))
+        }
+        let p = Qwen3ForcedAligner.findTrailingPlateauStart(
+            aligned, tolerance: 0.1, minSize: 5
+        )
+        XCTAssertEqual(p, aligned.count, "A 3-word plateau should be ignored when minSize=5")
+    }
+
+    func testToleranceAcceptsTinyDrift() {
+        // Trailing words drift by 0.05s — below tolerance, should still
+        // count as a plateau.
+        var aligned = (0..<10).map { i in
+            makeWord(start: Float(i) * 0.5, end: Float(i) * 0.5 + 0.4)
+        }
+        for i in 0..<8 {
+            aligned.append(makeWord(start: 6.0 + 0.05 * Float(i), end: 6.0 + 0.05 * Float(i)))
+        }
+        let p = Qwen3ForcedAligner.findTrailingPlateauStart(
+            aligned, tolerance: 0.1, minSize: 5
+        )
+        XCTAssertEqual(p, 10, "Sub-tolerance drift should still register as plateau")
+    }
+
+    func testOffsetWordsByZeroNoOp() {
+        let aligned = [makeWord(start: 1.0, end: 1.5), makeWord(start: 2.0, end: 2.5)]
+        let offset = Qwen3ForcedAligner.offsetWords(aligned, by: 0)
+        XCTAssertEqual(offset.count, aligned.count)
+        for (a, b) in zip(aligned, offset) {
+            XCTAssertEqual(a.startTime, b.startTime)
+            XCTAssertEqual(a.endTime, b.endTime)
+        }
+    }
+
+    func testOffsetWordsAddsConstant() {
+        let aligned = [makeWord(start: 1.0, end: 1.5), makeWord(start: 2.0, end: 2.5)]
+        let offset = Qwen3ForcedAligner.offsetWords(aligned, by: 10)
+        XCTAssertEqual(offset[0].startTime, 11.0)
+        XCTAssertEqual(offset[0].endTime, 11.5)
+        XCTAssertEqual(offset[1].startTime, 12.0)
+        XCTAssertEqual(offset[1].endTime, 12.5)
+    }
 }

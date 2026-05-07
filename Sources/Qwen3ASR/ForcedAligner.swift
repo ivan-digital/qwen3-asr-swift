@@ -80,6 +80,141 @@ public class Qwen3ForcedAligner {
         self.config = cfg
     }
 
+    /// Align text to audio with automatic chunking for long inputs.
+    ///
+    /// The underlying classifier head emits a fixed-resolution timestamp
+    /// index (default `classifyNum=5000` × `0.08s` per slot = 400s
+    /// addressable range) but in practice the model's reliable range is
+    /// shorter (~270s on Qwen3-ForcedAligner-0.6B-4bit observed on TED-Ed
+    /// material). Past that, it produces low/non-monotonic indices that
+    /// LIS correction collapses into a flat plateau — every trailing word
+    /// shares the same timestamp.
+    ///
+    /// `alignLong` runs `align` on the full audio, detects the trailing
+    /// plateau, keeps the reliable prefix, then re-aligns the remaining
+    /// audio + remaining words and offsets timestamps. Iterates until no
+    /// plateau remains or the remaining work is below a minimum chunk size.
+    ///
+    /// For audio shorter than the threshold this is a one-pass call into
+    /// `align`. For longer audio it pays one extra align pass per chunk.
+    public func alignLong(
+        audio: [Float],
+        text: String,
+        sampleRate: Int = 16000,
+        language: String = "English",
+        progressHandler: ((String) -> Void)? = nil
+    ) -> [AlignedWord] {
+        // The model is reliable up to ~270s on the bundles we ship; we
+        // don't try to be too aggressive with the threshold so the
+        // single-pass case stays the common path. The plateau detector
+        // does the actual work — this is just a fast bypass when there's
+        // no risk of saturation.
+        let bypassThresholdSeconds: Float = 240
+        let minChunkSeconds: Float = 5
+        let plateauTolerance: Float = 0.1     // seconds; "same start time" if diff < this
+        let plateauMinWords = 5               // need ≥ N stuck words to call it a plateau
+
+        var allAligned: [AlignedWord] = []
+        var remainingAudio = audio
+        var remainingText = text
+        var offsetSec: Float = 0
+        var pass = 1
+
+        while !remainingAudio.isEmpty && !remainingText.isEmpty {
+            let durationSec = Float(remainingAudio.count) / Float(sampleRate)
+            let aligned = align(
+                audio: remainingAudio,
+                text: remainingText,
+                sampleRate: sampleRate,
+                language: language
+            )
+            if aligned.isEmpty { break }
+
+            // Skip plateau detection on small chunks — the model is reliable
+            // there, and detecting plateau on tiny outputs creates spurious
+            // splits.
+            if durationSec <= bypassThresholdSeconds || aligned.count < plateauMinWords * 2 {
+                allAligned.append(contentsOf: Self.offsetWords(aligned, by: offsetSec))
+                break
+            }
+
+            let plateauStart = Self.findTrailingPlateauStart(
+                aligned, tolerance: plateauTolerance, minSize: plateauMinWords
+            )
+            if plateauStart == aligned.count {
+                // No plateau — alignment looks healthy.
+                allAligned.append(contentsOf: Self.offsetWords(aligned, by: offsetSec))
+                break
+            }
+
+            // Take the reliable prefix; recurse on the remainder.
+            let reliable = aligned.prefix(plateauStart)
+            let splitTime = reliable.last!.endTime
+            allAligned.append(contentsOf: Self.offsetWords(Array(reliable), by: offsetSec))
+
+            let splitSample = Int(splitTime * Float(sampleRate))
+            guard splitSample < remainingAudio.count else { break }
+            let nextAudio = Array(remainingAudio[splitSample...])
+            let remainingDuration = Float(nextAudio.count) / Float(sampleRate)
+            if remainingDuration < minChunkSeconds { break }
+
+            // Pull the words from the remainder by name. We split on the
+            // same boundary `align` used (whitespace) so words line up.
+            let wordsAll = remainingText.split(separator: " ", omittingEmptySubsequences: true)
+            guard plateauStart < wordsAll.count else { break }
+            let nextText = wordsAll[plateauStart...].joined(separator: " ")
+
+            progressHandler?(
+                "Audio \(String(format: "%.1f", durationSec))s saturated after word \(plateauStart) "
+                + "(\(String(format: "%.1f", splitTime))s); chunking remaining \(String(format: "%.1f", remainingDuration))s "
+                + "(pass \(pass + 1))"
+            )
+
+            remainingAudio = nextAudio
+            remainingText = nextText
+            offsetSec += splitTime
+            pass += 1
+            if pass > 10 { break }  // belt-and-braces against pathological loops
+        }
+
+        return allAligned
+    }
+
+    static func offsetWords(_ words: [AlignedWord], by seconds: Float) -> [AlignedWord] {
+        guard seconds != 0 else { return words }
+        return words.map {
+            AlignedWord(text: $0.text, startTime: $0.startTime + seconds, endTime: $0.endTime + seconds)
+        }
+    }
+
+    /// Index of the first word in the trailing "stuck" plateau, or
+    /// `aligned.count` if no plateau is detected.
+    ///
+    /// A plateau is `≥ minSize` consecutive trailing words whose start
+    /// times differ by less than `tolerance`. This is the LIS-clamp
+    /// signature: the model produced low/garbage indices for those
+    /// positions and the monotonicity pass collapsed them onto the last
+    /// reliable anchor.
+    static func findTrailingPlateauStart(
+        _ aligned: [AlignedWord], tolerance: Float, minSize: Int
+    ) -> Int {
+        let n = aligned.count
+        guard n > minSize else { return n }
+        // Walk backward: when `aligned[i].startTime ≈ aligned[i-1].startTime`,
+        // both are in the plateau, so the plateau extends *to* index `i-1`.
+        // Stop at the first big jump.
+        var plateauStart = n
+        for i in (1..<n).reversed() {
+            let dt = abs(aligned[i].startTime - aligned[i - 1].startTime)
+            if dt < tolerance {
+                plateauStart = i - 1
+            } else {
+                break
+            }
+        }
+        return (n - plateauStart) >= minSize ? plateauStart : n
+    }
+
     /// Align text to audio, producing word-level timestamps.
     ///
     /// - Parameters:
@@ -162,6 +297,15 @@ public class Qwen3ForcedAligner {
 
         // 8. Apply LIS monotonicity correction
         let correctedIndices = TimestampCorrection.enforceMonotonicity(rawIndices)
+
+        // Optional raw/corrected dump for bug-triage of misaligned timestamps.
+        if ProcessInfo.processInfo.environment["ALIGN_DEBUG"] == "1" {
+            print("[align-debug] indices=\(rawIndices.count) numAudioTokens=\(numAudioTokens)")
+            print("[align-debug] first 10 raw:       \(Array(rawIndices.prefix(10)))")
+            print("[align-debug] first 10 corrected: \(Array(correctedIndices.prefix(10)))")
+            print("[align-debug] last 60 raw:       \(Array(rawIndices.suffix(60)))")
+            print("[align-debug] last 60 corrected: \(Array(correctedIndices.suffix(60)))")
+        }
 
         // 9. Convert to seconds and pair as (start, end)
         let segmentTime = config.timestampSegmentTime
