@@ -213,8 +213,10 @@ public final class HibikiDepformer: Module {
     public let cfg: HibikiDepformerConfig
 
     @ModuleInfo public var layers: [HibikiDepformerLayer]
-    /// Per-step input projection: temporal dim → depformer dim. One per step
-    /// (16 total for Zero-3B). Quantized when bits < 16.
+    /// Per-slice input projection: temporal dim → depformer dim. **Scheduled**
+    /// — only `numUniqueSlices` modules (9 for Zero-3B), indexed at each step
+    /// via `cfg.sliceIndex(forStep:)`. Upstream `forward_depformer` (lm.py
+    /// line 471-475): `in_index = schedule[depformer_cb_index]`.
     @ModuleInfo public var depformer_in: [Module]
     /// Text embedding for step 0 input token.
     @ModuleInfo public var depformer_text_emb: Embedding
@@ -233,8 +235,12 @@ public final class HibikiDepformer: Module {
         self._layers = ModuleInfo(wrappedValue:
             (0..<cfg.numLayers).map { _ in HibikiDepformerLayer(cfg: cfg) })
 
+        // Allocate `numUniqueSlices` (= 9 for Zero-3B) input projections,
+        // not `numSteps` (= 16). They will be indexed via the schedule at
+        // generation time. Allocating numSteps and indexing by k directly
+        // leaves slices 9..15 at random init (the real bug we fixed).
         var inProjs: [Module] = []
-        for _ in 0..<cfg.numSteps {
+        for _ in 0..<cfg.numUniqueSlices {
             inProjs.append(makeLinear(temporalDim, cfg.dim, bias: false,
                                       groupSize: cfg.groupSize, bits: cfg.bits))
         }
@@ -289,7 +295,9 @@ public final class HibikiDepformer: Module {
         let caches: [any KVCache] = (0..<cfg.numLayers).map { _ in KVCacheSimple() }
 
         for k in 0..<cfg.numSteps {
-            var input = applyLinear(depformer_in[k], temporalHidden)
+            // depformer_in is scheduled — index via the slice schedule.
+            let inSlice = cfg.sliceIndex(forStep: k)
+            var input = applyLinear(depformer_in[inSlice], temporalHidden)
 
             if k == 0 {
                 input = input + depformer_text_emb(prevToken.expandedDimensions(axis: 1))

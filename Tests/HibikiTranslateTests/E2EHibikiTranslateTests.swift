@@ -6,6 +6,7 @@ import AudioCommon
 import ParakeetASR
 import PersonaPlex
 import Qwen3TTS
+import MADLADTranslation
 @testable import HibikiTranslate
 
 /// E2E tests that download the Hibiki Zero-3B model from HuggingFace and
@@ -381,5 +382,118 @@ final class E2EHibikiTranslateTests: XCTestCase {
             XCTAssertTrue(anyKeywordHit,
                 "STRICT: at least one of 3 cases should produce ≥1 expected keyword")
         }
+    }
+
+    /// **Full English ↔ English loop** for human verification.
+    ///
+    /// You provide an English source sentence; we run:
+    ///
+    ///   EN text  → MADLAD     → FR text
+    ///            → Qwen3TTS   → FR audio (saved to /tmp/hibiki-loop/case_N_fr.wav)
+    ///            → Hibiki     → EN audio (saved to /tmp/hibiki-loop/case_N_en.wav)
+    ///            → Parakeet   → EN text  ← compared back to source
+    ///
+    /// Every text stage is printed so you can read the chain end-to-end.
+    /// Skip with `HIBIKI_E2E` unset.
+    func testEnglishLoopThroughFrench() async throws {
+        let hasEnv = ProcessInfo.processInfo.environment["HIBIKI_E2E"] != nil
+        try XCTSkipUnless(hasEnv, "Set HIBIKI_E2E=1 to run English↔English loop test")
+
+        // Five everyday English sentences across different topics.
+        let englishSources = [
+            "Hello, how are you today?",
+            "I really like red apples.",
+            "The cat sleeps on the couch.",
+            "Tomorrow we will go to the park.",
+            "Could you please pass the salt?",
+        ]
+
+        // 1. Load all four models — once.
+        print("[en-loop] loading MADLAD translator...")
+        let madlad = try await MADLADTranslator.fromPretrained()
+        print("[en-loop] loading Qwen3TTS...")
+        let tts = try await Qwen3TTSModel.fromPretrained()
+        print("[en-loop] loading Hibiki Zero-3B...")
+        let modelId = ProcessInfo.processInfo.environment["HIBIKI_MODEL_ID"]
+            ?? HibikiTranslateModel.defaultModelId
+        let hibiki = try await HibikiTranslateModel.fromPretrained(modelId: modelId)
+        print("[en-loop] loading Parakeet ASR...")
+        let asr = try await ParakeetASRModel.fromPretrained()
+
+        // SPM-48k decoder for inner-monologue.
+        let modelDir = try HuggingFaceDownloader.getCacheDirectory(for: modelId)
+        let spmPath = modelDir.appendingPathComponent("tokenizer_spm_48k_multi6_2.model").path
+        let spmDecoder = try? SentencePieceDecoder(modelPath: spmPath)
+
+        let outDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("hibiki-loop", isDirectory: true)
+        try? FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
+
+        struct Result {
+            let originalEN: String
+            let translatedFR: String
+            let innerMonologue: String
+            let parakeetEN: String
+            let frPath: URL
+            let enPath: URL
+        }
+        var results: [Result] = []
+
+        for (i, sourceEN) in englishSources.enumerated() {
+            print("\n[en-loop] === Case \(i + 1)/\(englishSources.count) ===")
+            print("[en-loop] EN source:           '\(sourceEN)'")
+
+            // 2. EN → FR via MADLAD.
+            let frText = try madlad.translate(sourceEN, to: "fr")
+            print("[en-loop] MADLAD EN→FR:        '\(frText)'")
+
+            // 3. FR text → FR audio via Qwen3TTS.
+            let frAudio = tts.synthesize(text: frText, language: "french", languageExplicit: true)
+            let frDur = Double(frAudio.count) / 24000.0
+            print("[en-loop] Qwen3TTS FR audio:   \(String(format: "%.2f", frDur))s")
+
+            // 4. FR audio → EN audio via Hibiki.
+            let (enAudio, textTokens) = hibiki.translate(
+                sourceAudio: frAudio, sourceLanguage: .fr, verbose: false
+            )
+            let enDur = Double(enAudio.count) / 24000.0
+            let rms = sqrt(enAudio.map { $0 * $0 }.reduce(0, +) / Float(enAudio.count))
+            print("[en-loop] Hibiki EN audio:     " +
+                  "\(String(format: "%.2f", enDur))s, RMS=\(String(format: "%.3f", rms)), " +
+                  "\(textTokens.count) text tokens")
+
+            let inner = spmDecoder?.decode(textTokens) ?? ""
+            print("[en-loop] Hibiki inner-thought: '\(inner)'")
+
+            // 5. EN audio → EN text via Parakeet.
+            let parakeetEN = asr.transcribe(audio: enAudio, sampleRate: 24000, language: nil)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            print("[en-loop] Parakeet EN:         '\(parakeetEN)'")
+
+            let frURL = outDir.appendingPathComponent("case\(i + 1)_fr.wav")
+            let enURL = outDir.appendingPathComponent("case\(i + 1)_en.wav")
+            try WAVWriter.write(samples: frAudio, sampleRate: 24000, to: frURL)
+            try WAVWriter.write(samples: enAudio, sampleRate: 24000, to: enURL)
+
+            results.append(Result(
+                originalEN: sourceEN, translatedFR: frText,
+                innerMonologue: inner, parakeetEN: parakeetEN,
+                frPath: frURL, enPath: enURL
+            ))
+        }
+
+        // 6. Final summary table — readable end-to-end.
+        print("\n[en-loop] ============== FINAL TABLE ==============")
+        for (i, r) in results.enumerated() {
+            print("[en-loop] \(i + 1).")
+            print("[en-loop]   EN  in:    '\(r.originalEN)'")
+            print("[en-loop]   FR  trans: '\(r.translatedFR)'")
+            print("[en-loop]   inner:     '\(r.innerMonologue)'")
+            print("[en-loop]   EN  out:   '\(r.parakeetEN)'")
+            print("[en-loop]   audio:     \(r.frPath.path)")
+            print("[en-loop]              \(r.enPath.path)")
+        }
+        print("[en-loop] =========================================")
+        print("[en-loop] You can listen to the audio files at /tmp/hibiki-loop/")
     }
 }
