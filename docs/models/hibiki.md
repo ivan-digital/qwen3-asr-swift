@@ -122,13 +122,19 @@ or `kyutai/hibiki-zero-3b-pytorch-bf16` and produces MLX-compatible safetensors:
 
 ## Known limitations
 
-- **Output quality on short FLEURS clips** — On the bundled `fleurs_fr.wav`
-  test sample (3.5 s), output audio is intelligible-sounding but Parakeet ASR
-  often returns short or empty transcripts. The pipeline is structurally
-  validated end-to-end (load → forward → translate → audio + tokens), but
-  translation quality on short out-of-distribution clips is uneven. Longer,
-  in-distribution speech is expected to perform better; this needs further
-  evaluation against Kyutai's Hibiki reference Python impl.
+- **Translation quality is broken — open bug.** A closed-loop round-trip test
+  (`testClosedLoopTTSToHibikiToASR`: known FR text → Qwen3TTS → FR audio →
+  Hibiki → EN audio → Parakeet ASR) produces 0/3 keyword hits on simple
+  in-distribution sentences. Decoding Hibiki's inner-monologue text tokens
+  (which the model emits at 12.5 Hz alongside the audio codes) reveals that
+  the temporal transformer is producing valid English subwords that are
+  **completely unrelated to the source content** — meaning the audio
+  embeddings aren't conditioning the LM as intended.
+  The structural pipeline (weight load, forward shape, durations, RTF) is
+  correct end-to-end. The bug is in the audio-conditioning path. Most likely
+  suspects: GQA KV-cache head broadcast layout, or a per-stream embedding
+  scaling upstream Moshi applies that this port is missing. Needs comparison
+  against Kyutai's `hibiki-rs` reference output to isolate further.
 - **`translateStream()` is single-chunk** — The streaming entry point currently
   wraps `translate()` and emits one final `AudioChunk`. True per-chunk Mimi
   streaming decode is a v2 follow-up.
