@@ -56,13 +56,28 @@ public extension HibikiTranslateModel {
             print("  Mimi encode: \(String(format: "%.2f", CFAbsoluteTimeGetCurrent() - encStart))s, frames: \(tSrc)")
         }
 
-        // 2. Initialize 33-stream token cache. Length covers all source frames
-        // plus the maximum delay so delay-2 streams can be written ahead.
+        // 2. Initialize 33-stream token cache.
+        //
+        // Critical: pre-fill with **initial tokens** (the LAST index in each
+        // embedding table — `textCard` for text, `card` for audio), NOT -1.
+        // Upstream Moshi's `_step` reads `state.initial[k]` for any position
+        // within the codebook's delay warm-up window. Those initial tokens
+        // have trained embeddings; using -1 (masked to zero) leaves the model
+        // running effectively unconditional during warm-up and badly
+        // misaligned for the rest of the sequence. (The previous bug here
+        // produced English subwords unrelated to the source content.)
         let totalLen = tSrc + maxDelay + 2
-        var tokenCache = [[Int32]](
-            repeating: [Int32](repeating: -1, count: totalLen), count: numStreams)
+        let textInit = Int32(cfg.temporal.textInitialTokenId)        // = textCard
+        let audioInit = Int32(cfg.temporal.initialTokenId)           // = card
+        var tokenCache: [[Int32]] = []
+        tokenCache.reserveCapacity(numStreams)
+        tokenCache.append([Int32](repeating: textInit, count: totalLen))
+        for _ in 1..<numStreams {
+            tokenCache.append([Int32](repeating: audioInit, count: totalLen))
+        }
 
-        // Pre-populate text stream with padding tokens.
+        // Pre-populate text stream with padding tokens for the source-covered
+        // window (the model emits SPM padding while audio is streaming).
         for t in 0..<tSrc {
             tokenCache[0][t + delays[0]] = Int32(cfg.temporal.textPaddingId)
         }
@@ -97,16 +112,17 @@ public extension HibikiTranslateModel {
         for step in 0..<tSrc {
             if Task.isCancelled { break }
 
-            // Read previous-step input for all 33 streams. Source streams
-            // 1..16 are pre-populated; target streams 17..32 are filled from
-            // the previous depformer output.
+            // Read previous-step input for all 33 streams. The cache was
+            // pre-filled with init tokens (textCard for text, card for audio),
+            // so out-of-range or warm-up reads return the trained initial-
+            // token embedding — same semantics as upstream `state.initial`.
             let readIdx = step - 1
-            let textTok = readIdx >= 0 ? tokenCache[0][readIdx] : Int32(cfg.temporal.textPaddingId)
+            let textTok = readIdx >= 0 ? tokenCache[0][readIdx] : textInit
             let textTokenArr = MLXArray([textTok]).reshaped([1, 1])
 
             var audioStreamTokens: [Int32] = []
             for stream in 1..<numStreams {
-                let tok = readIdx >= 0 ? tokenCache[stream][readIdx] : Int32(-1)
+                let tok = readIdx >= 0 ? tokenCache[stream][readIdx] : audioInit
                 audioStreamTokens.append(tok)
             }
             let audioTokens = MLXArray(audioStreamTokens)
