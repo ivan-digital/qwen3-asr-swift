@@ -268,8 +268,24 @@ final class E2EHibikiTranslateTests: XCTestCase {
         print("[hibiki-loop] loading Parakeet ASR...")
         let asr = try await ParakeetASRModel.fromPretrained()
 
+        // SPM-48k decoder for Hibiki's inner-monologue text. Cached alongside
+        // the model. Used to print the model's "thoughts" — what English the
+        // temporal+text path is producing — independently of the audio path.
+        let modelDir = try HuggingFaceDownloader.getCacheDirectory(for: modelId)
+        let spmPath = modelDir.appendingPathComponent("tokenizer_spm_48k_multi6_2.model").path
+        let spmDecoder: SentencePieceDecoder?
+        if FileManager.default.fileExists(atPath: spmPath) {
+            spmDecoder = try? SentencePieceDecoder(modelPath: spmPath)
+            if spmDecoder != nil {
+                print("[hibiki-loop] loaded SPM-48k decoder for inner-monologue")
+            }
+        } else {
+            spmDecoder = nil
+            print("[hibiki-loop] WARN: SPM-48k tokenizer not found at \(spmPath)")
+        }
+
         var anyKeywordHit = false
-        var allResults: [(Case, String)] = []
+        var allResults: [(Case, String, String)] = []   // (case, ASR transcript, inner monologue)
 
         for (idx, c) in cases.enumerated() {
             print("\n[hibiki-loop] === Case \(idx + 1)/\(cases.count) ===")
@@ -295,6 +311,14 @@ final class E2EHibikiTranslateTests: XCTestCase {
                   "RMS=\(String(format: "%.4f", rms)), " +
                   "\(textTokens.count) text tokens")
 
+            // 3a. Decode inner-monologue text tokens — what is the model
+            // "thinking" in English, regardless of audio quality?
+            let innerMonologue = spmDecoder?.decode(textTokens) ?? "<no SPM decoder>"
+            print("[hibiki-loop] Hibiki inner-monologue: '\(innerMonologue)'")
+            // Raw token IDs for diagnostics (first 20).
+            let rawIds = textTokens.prefix(20).map { String($0) }.joined(separator: ",")
+            print("[hibiki-loop] first 20 text token IDs: \(rawIds)")
+
             // Save for inspection.
             let outDir = FileManager.default.temporaryDirectory
                 .appendingPathComponent("hibiki-loop", isDirectory: true)
@@ -316,7 +340,7 @@ final class E2EHibikiTranslateTests: XCTestCase {
             print("[hibiki-loop] keyword hits: \(hits.isEmpty ? "[none]" : hits.joined(separator: ", "))")
             if !hits.isEmpty { anyKeywordHit = true }
 
-            allResults.append((c, transcript))
+            allResults.append((c, transcript, innerMonologue))
 
             // Per-case structural assertion: synchronous 1:1 from Hibiki.
             XCTAssertGreaterThan(enDur, frDur * 0.7, "1:1 sync: EN ≥ 0.7×FR")
@@ -325,14 +349,24 @@ final class E2EHibikiTranslateTests: XCTestCase {
 
         // Summary table.
         print("\n[hibiki-loop] ================ SUMMARY ================")
-        for (i, (c, transcript)) in allResults.enumerated() {
-            print("[hibiki-loop] \(i + 1). FR: \(c.frText)")
-            print("[hibiki-loop]    Expected EN: \(c.expectedEN)")
-            print("[hibiki-loop]    Got transcript: '\(transcript)'")
+        for (i, (c, transcript, monologue)) in allResults.enumerated() {
+            print("[hibiki-loop] \(i + 1). FR input:        \(c.frText)")
+            print("[hibiki-loop]    Reference EN:    \(c.expectedEN)")
+            print("[hibiki-loop]    Inner-monologue: '\(monologue)'")
+            print("[hibiki-loop]    ASR transcript:  '\(transcript)'")
             let h = c.keywords.filter { transcript.contains($0) }
-            print("[hibiki-loop]    Keyword hits: \(h.isEmpty ? "NONE" : h.joined(separator: ", "))")
+            let m = c.keywords.filter { monologue.lowercased().contains($0) }
+            print("[hibiki-loop]    Keyword hits — text: \(m.isEmpty ? "NONE" : m.joined(separator: ", "))")
+            print("[hibiki-loop]    Keyword hits — audio: \(h.isEmpty ? "NONE" : h.joined(separator: ", "))")
         }
         print("[hibiki-loop] ============================================")
+        print("[hibiki-loop]")
+        print("[hibiki-loop] Diagnostic interpretation:")
+        print("[hibiki-loop]   - text hits = inner-monologue (temporal+text path)")
+        print("[hibiki-loop]   - audio hits = ASR'd output (full pipeline incl. depformer + Mimi decode)")
+        print("[hibiki-loop]   - text OK + audio FAIL → audio path bug (depformer or Mimi decode)")
+        print("[hibiki-loop]   - both FAIL → temporal forward broken")
+        print("[hibiki-loop]   - both OK   → translation works")
 
         // Soft success criterion: at least one case across all 3 should produce
         // a recognizable English keyword. This is a low bar but a much stricter

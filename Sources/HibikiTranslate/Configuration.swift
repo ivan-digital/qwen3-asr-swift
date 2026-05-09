@@ -155,9 +155,18 @@ public struct HibikiTemporalConfig: Sendable {
 /// Positional encoding selector for the temporal transformer.
 ///
 /// - `rope`: standard interleaved RoPE (used by Hibiki 1B/2B and PersonaPlex/Moshi).
-///   Maps to `RoPE(traditional: true)` in mlx-swift.
 /// - `ropeConcat`: split-half RoPE (used by Hibiki Zero-3B). Real and imaginary
-///   halves are stored contiguously: `[r..., i...]`. Maps to `RoPE(traditional: false)`.
+///   halves are stored contiguously: `[r..., i...]`.
+///
+/// Mapping to mlx-swift's `RoPE(traditional:)`:
+/// - mlx-swift `traditional: true` rotates consecutive pairs `(r0, i0, r1, i1, ...)`.
+///   This corresponds to Kyutai's `apply_rope(interleave=True)`.
+/// - mlx-swift `traditional: false` (default) rotates with stride half — i.e. the
+///   "standard" GPT-NeoX / LLaMA style. This corresponds to Kyutai's `apply_rope(interleave=False)`.
+///
+/// Empirically, **PersonaPlex** uses `traditional: true` for `rope` so the
+/// `traditional` flag for plain `rope` here matches PersonaPlex. For `ropeConcat`
+/// (Kyutai `interleave=False`) we use `traditional: false`.
 public enum HibikiPositionalEmbedding: String, Sendable, Codable {
     case rope
     case ropeConcat = "rope_concat"
