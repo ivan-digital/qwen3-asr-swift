@@ -25,6 +25,11 @@ public struct TranscribeBatchCommand: ParsableCommand {
     @Option(name: .long, help: "Language hint (optional)")
     public var language: String?
 
+    @Option(
+        name: .long,
+        help: "[qwen3] Max files per group (default: 1). Experimental MLX batched decode requires QWEN3_ASR_EXPERIMENTAL_BATCH_DECODE=1.")
+    public var batchSize: Int = 1
+
     @Option(name: .long, help: "Audio file extensions to process (default: wav,flac,mp3)")
     public var extensions: String = "wav,flac,mp3"
 
@@ -74,52 +79,90 @@ public struct TranscribeBatchCommand: ParsableCommand {
             let warmupTime = CFAbsoluteTimeGetCurrent() - warmupStart
             print(String(format: "  Warmup: %.2fs", warmupTime))
 
-            // Transcribe all files
+            // Transcribe all files. The default Qwen3 batch path preserves
+            // serial row correctness while sharing one token CPU sync per
+            // decode step. The true MLX [B,1,H] decoder forward remains
+            // guarded by QWEN3_ASR_EXPERIMENTAL_BATCH_DECODE=1.
             var totalInference = 0.0
             var totalAudio = 0.0
             let batchStart = CFAbsoluteTimeGetCurrent()
 
-            for (idx, fileURL) in files.enumerated() {
-                let name = fileURL.deletingPathExtension().lastPathComponent
-                let pct = Double(idx + 1) / Double(files.count) * 100
+            let effectiveBatchSize = max(1, batchSize)
+            for start in stride(from: 0, to: files.count, by: effectiveBatchSize) {
+                let end = min(start + effectiveBatchSize, files.count)
+                let group = Array(files[start..<end])
 
-                do {
-                    let audio = try AudioFileLoader.load(
-                        url: fileURL, targetSampleRate: 24000)
-                    let duration = Double(audio.count) / 24000.0
+                var loaded: [(globalIndex: Int, url: URL, name: String, audio: [Float], duration: Double)] = []
+                for (offset, fileURL) in group.enumerated() {
+                    let globalIndex = start + offset
+                    let name = fileURL.deletingPathExtension().lastPathComponent
 
-                    let t0 = CFAbsoluteTimeGetCurrent()
-                    let result = asrModel.transcribe(
-                        audio: audio, sampleRate: 24000, language: language)
-                    let elapsed = CFAbsoluteTimeGetCurrent() - t0
-                    let rtf = elapsed / max(duration, 0.001)
+                    do {
+                        let audio = try AudioFileLoader.load(url: fileURL, targetSampleRate: 24000)
+                        let duration = Double(audio.count) / 24000.0
+                        loaded.append((globalIndex, fileURL, name, audio, duration))
+                    } catch {
+                        if jsonl {
+                            print("{\"file\":\"\(name)\",\"error\":\"\(error)\"}")
+                        } else {
+                            print("  [\(globalIndex + 1)/\(files.count)] \(name): ERROR - \(error)")
+                        }
+                    }
+                }
 
-                    totalInference += elapsed
-                    totalAudio += duration
+                guard !loaded.isEmpty else { continue }
 
-                    // Output
+                let audios = loaded.map(\.audio)
+                let audioDurations = loaded.map(\.duration)
+                let groupAudioDuration = audioDurations.reduce(0, +)
+
+                let t0 = CFAbsoluteTimeGetCurrent()
+                let results: [String]
+                if effectiveBatchSize > 1 && loaded.count > 1 {
+                    results = asrModel.transcribeBatch(
+                        audios: audios,
+                        sampleRate: 24000,
+                        language: language
+                    )
+                } else {
+                    results = audios.map {
+                        asrModel.transcribe(audio: $0, sampleRate: 24000, language: language)
+                    }
+                }
+                let elapsed = CFAbsoluteTimeGetCurrent() - t0
+
+                totalInference += elapsed
+                totalAudio += groupAudioDuration
+                let groupRTF = elapsed / max(groupAudioDuration, 0.001)
+
+                // Per-row `time` is the group elapsed split evenly across
+                // rows, not a real per-row measurement. The default
+                // `transcribeBatch` path runs decoder forwards serially so
+                // each row contributes ≈ equally per decode step; an even
+                // split is more honest than prorating by audio duration,
+                // which would over-credit longer chunks. Use `batch_time`
+                // when you need a true wall-clock measure.
+                let allocatedPerRow = elapsed / Double(loaded.count)
+                for (item, result) in zip(loaded, results) {
+                    let pct = Double(item.globalIndex + 1) / Double(files.count) * 100
+                    let itemRTF = allocatedPerRow / max(item.duration, 0.001)
+
                     if jsonl {
                         let escaped = result
                             .replacingOccurrences(of: "\\", with: "\\\\")
                             .replacingOccurrences(of: "\"", with: "\\\"")
-                        print("{\"file\":\"\(name)\",\"text\":\"\(escaped)\","
-                            + String(format: "\"time\":%.3f,\"rtf\":%.4f,\"duration\":%.2f}",
-                                     elapsed, rtf, duration))
+                        print("{\"file\":\"\(item.name)\",\"text\":\"\(escaped)\","
+                            + String(format: "\"time\":%.3f,\"rtf\":%.4f,\"duration\":%.2f,\"batch_time\":%.3f,\"batch_rtf\":%.4f,\"batch_size\":%d}",
+                                     allocatedPerRow, itemRTF, item.duration, elapsed, groupRTF, loaded.count))
                     } else {
-                        print(String(format: "  [%d/%d] (%.0f%%) %@: %@  (%.2fs, RTF=%.3f)",
-                                     idx + 1, files.count, pct, name, result, elapsed, rtf))
+                        print(String(format: "  [%d/%d] (%.0f%%) %@: %@  (%.2fs allocated, batch %.2fs, RTF=%.3f)",
+                                     item.globalIndex + 1, files.count, pct, item.name, result,
+                                     allocatedPerRow, elapsed, itemRTF))
                     }
 
-                    // Save transcript
                     if let outDir = outDir {
-                        let outFile = outDir.appendingPathComponent("\(name).txt")
+                        let outFile = outDir.appendingPathComponent("\(item.name).txt")
                         try result.write(to: outFile, atomically: true, encoding: .utf8)
-                    }
-                } catch {
-                    if jsonl {
-                        print("{\"file\":\"\(name)\",\"error\":\"\(error)\"}")
-                    } else {
-                        print("  [\(idx + 1)/\(files.count)] \(name): ERROR - \(error)")
                     }
                 }
             }
@@ -165,7 +208,7 @@ public struct TranscribeBatchCommand: ParsableCommand {
             var totalAudio = 0.0
 
             for (idx, fileURL) in files.enumerated() {
-                try autoreleasepool {
+                autoreleasepool {
                 let name = fileURL.deletingPathExtension().lastPathComponent
                 let pct = Double(idx + 1) / Double(files.count) * 100
 
