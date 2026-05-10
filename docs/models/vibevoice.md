@@ -49,11 +49,8 @@ will fail fast with a pointer to the only real workflow it can recommend:
 
 To synthesize with the smaller Realtime-0.5B path against a specific
 speaker, the only supported source is one of Microsoft's [pre-built
-`.pt` voice caches](https://github.com/microsoft/VibeVoice/tree/main/demo/voices/streaming_model).
-A converter that flattens those `.pt` files into the `.safetensors` layout
-this loader expects lives in the
-[speech-models](https://github.com/soniqo/speech-models) sibling repo
-under `models/vibevoice/export/`.
+`.pt` voice caches](https://github.com/microsoft/VibeVoice/tree/main/demo/voices/streaming_model),
+flattened into the `.safetensors` layout this loader expects.
 
 - **License**: MIT
 - **Output**: 24 kHz mono Float32 PCM
@@ -203,10 +200,9 @@ Internally `generate(...)`:
 | `microsoft/VibeVoice-1.5B` | BF16 | ~3 GB |
 | `aufklarer/VibeVoice-1.5B-MLX-INT4` | Qwen2 INT4 | ~1 GB |
 
-Quantization is produced by `models/vibevoice/export/convert.py` in
-`soniqo/speech-models` and uses MLX group-wise affine quantization (32-group,
-INT4/INT8). Embeddings, norms, acoustic-tokenizer convs, and the EOS
-classifier are kept in their source dtype.
+Quantization uses MLX group-wise affine quantization (32-group, INT4/INT8).
+Embeddings, norms, acoustic-tokenizer convs, and the EOS classifier are
+kept in their source dtype.
 
 ## Source files
 

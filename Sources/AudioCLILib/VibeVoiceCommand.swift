@@ -14,9 +14,11 @@ public struct VibeVoiceCommand: ParsableCommand {
             Streaming, voice-cache-driven path. Per Microsoft's model card the
             checkpoint is "intended for English speech only; other languages
             may produce unpredictable results." Voice identity comes from a
-            pre-built .safetensors cache (`--voice-cache`); see
-            scripts/convert_vibevoice_voice.py to import one of the bundled
-            Microsoft `.pt` voices.
+            pre-built .safetensors cache (`--voice-cache`). The Realtime-0.5B
+            checkpoint ships inference-only, so caches must be sourced from
+            Microsoft's bundled .pt voice files (flattened into the
+            .safetensors layout this loader expects); custom raw-audio
+            cloning is not supported on this path.
 
           • `--long-form` — VibeVoice-1.5B, ENGLISH + CHINESE.
             Single-shot 90-min capable path. Voice identity comes from a raw

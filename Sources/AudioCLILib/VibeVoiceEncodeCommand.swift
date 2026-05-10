@@ -16,17 +16,12 @@ public struct VibeVoiceEncodeCommand: ParsableCommand {
         IMPORTANT — checkpoint availability:
         Microsoft's `VibeVoice-Realtime-0.5B` is distributed inference-only
         and does not ship the acoustic encoder, so this command currently
-        fails fast with a pointer to two real workflows:
-
-          • To synthesize in a custom voice with the small Realtime-0.5B,
-            start from one of Microsoft's pre-built `.pt` voice caches and
-            convert via `scripts/convert_vibevoice_voice.py`.
-
-          • To clone an arbitrary speaker from raw audio in one shot, use
-            `audio vibevoice ... --long-form --reference-audio <wav>
-            --reference-transcript "..."` — that path runs the full
-            VibeVoice-1.5B pipeline (which does ship the encoder) and
-            inlines the encoding on every synthesis call.
+        fails fast and points at the only real workflow speech-swift can
+        run end-to-end on its own: clone an arbitrary speaker from raw
+        audio via `audio vibevoice ... --long-form --reference-audio <wav>
+        --reference-transcript "..."`. That path runs the full
+        VibeVoice-1.5B pipeline (which does ship the encoder) and inlines
+        the encoding on every synthesis call.
 
         Audio is resampled to 24 kHz mono internally. Provide the actual
         spoken text as the transcript for best speaker fidelity.
