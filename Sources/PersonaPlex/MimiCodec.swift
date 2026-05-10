@@ -104,7 +104,7 @@ public final class Mimi: Module {
 
 // MARK: - Mimi Weight Sanitization
 
-extension Mimi {
+public extension Mimi {
     func sanitize(weights: [String: MLXArray]) -> [String: MLXArray] {
         var out: [String: MLXArray] = [:]
 
