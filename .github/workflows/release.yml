@@ -40,15 +40,23 @@ jobs:
         with:
           files: dist/speech-macos-arm64.tar.gz
 
+      # Mint a short-lived installation token for soniqo/homebrew-tap via the
+      # `soniqo-release-bot` GitHub App. The token is auto-revoked when the job
+      # ends and is scoped to Contents: write on the tap only. App credentials
+      # live as repo secrets (RELEASE_BOT_APP_ID, RELEASE_BOT_PRIVATE_KEY).
+      - name: Mint Homebrew tap token
+        id: tap-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          owner: soniqo
+          repositories: homebrew-tap
+
       - name: Update Homebrew tap
         env:
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          HOMEBREW_TAP_TOKEN: ${{ steps.tap-token.outputs.token }}
         run: |
-          if [ -z "${HOMEBREW_TAP_TOKEN}" ]; then
-            echo "::warning::HOMEBREW_TAP_TOKEN secret is not set — skipping tap bump. Users on soniqo/tap won't pick up this release automatically." >&2
-            exit 0
-          fi
-
           SHA=$(shasum -a 256 dist/speech-macos-arm64.tar.gz | awk '{print $1}')
           TAG="${GITHUB_REF_NAME}"
           URL="https://github.com/${{ github.repository }}/releases/download/${TAG}/speech-macos-arm64.tar.gz"
@@ -59,8 +67,8 @@ jobs:
           sed -i '' "s|url \".*\"|url \"${URL}\"|" Formula/speech.rb
           sed -i '' "s|sha256 \".*\"|sha256 \"${SHA}\"|" Formula/speech.rb
 
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "soniqo-release-bot[bot]"
+          git config user.email "soniqo-release-bot[bot]@users.noreply.github.com"
           git add Formula/speech.rb
           git diff --cached --quiet || git commit -m "speech: update to ${TAG}"
           git push origin main
