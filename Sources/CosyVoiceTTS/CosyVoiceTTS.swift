@@ -251,14 +251,25 @@ public final class CosyVoiceTTSModel {
         )
         eval(fullMel)
 
-        // Slice off the prompt-region mel frames so HiFi-GAN only synthesizes
-        // the new content. Upstream does this after the flow forward pass too.
-        let mel: MLXArray
+        // Pass the FULL mel (prompt + generation) to HiFi-GAN. Slicing the mel
+        // here means HiFi-GAN's causal convolutions warm up against zero-padded
+        // boundaries, producing a click/transient ~10 mel frames into the
+        // generated audio (the convolutional receptive field). Instead we let
+        // HiFi-GAN render both regions continuously and trim the prompt-region
+        // audio AFTER, where the boundary is smooth.
+        let mel = fullMel
+        let promptAudioSamples: Int
         if let pf = promptFeat {
             let promptMelLen = pf.dim(2)
-            mel = fullMel[0..., 0..., promptMelLen...]
+            // mel-rate is 50 Hz, audio sample rate is 24 kHz → 480 samples/mel
+            promptAudioSamples = promptMelLen * (config.sampleRate / 50)
         } else {
-            mel = fullMel
+            promptAudioSamples = 0
+        }
+
+        // Optional debug dump of the mel that reaches HiFi-GAN.
+        if let dumpDir = ProcessInfo.processInfo.environment["COSY_DEBUG_DUMP_DIR"] {
+            CosyVoiceDebugDump.tryWrite(mel, name: "swift_hifigan_input_mel", in: dumpDir)
         }
 
         if verbose {
@@ -278,8 +289,16 @@ public final class CosyVoiceTTSModel {
             print(String(format: "  HiFi-GAN: %.0fms", (CFAbsoluteTimeGetCurrent() - t0) * 1000))
         }
 
-        // 5. Extract float samples
-        return audio.reshaped(-1).asArray(Float.self)
+        // 5. Extract float samples, trimming the prompt-region audio so the
+        //    caller only sees the synthesised content. The boundary inside
+        //    HiFi-GAN's continuous render is smoother than a pre-sliced mel,
+        //    so trimming here removes the slice-boundary click that appeared
+        //    ~10 mel frames into the audio in the old path.
+        var samples = audio.reshaped(-1).asArray(Float.self)
+        if promptAudioSamples > 0 && promptAudioSamples < samples.count {
+            samples = Array(samples[promptAudioSamples...])
+        }
+        return samples
     }
 
     /// Synthesize with streaming output.
