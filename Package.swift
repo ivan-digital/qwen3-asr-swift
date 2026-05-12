@@ -313,6 +313,7 @@ let package = Package(
                 "SpeechWakeWord",
                 "AudioCommon",
                 .product(name: "MLX", package: "mlx-swift"),
+                .product(name: "MLXRandom", package: "mlx-swift"),
                 .product(name: "ArgumentParser", package: "swift-argument-parser")
             ]
         ),

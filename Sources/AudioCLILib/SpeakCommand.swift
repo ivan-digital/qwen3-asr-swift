@@ -1,6 +1,7 @@
 import Foundation
 import AVFoundation
 import ArgumentParser
+import MLXRandom
 import Qwen3TTS
 import CosyVoiceTTS
 import Qwen3TTSCoreML
@@ -84,6 +85,9 @@ public struct SpeakCommand: ParsableCommand {
 
     @Option(name: .long, help: "[cosyvoice] Crossfade between turns in seconds (default 0)")
     public var crossfade: Float = 0.0
+
+    @Option(name: .long, help: "[cosyvoice] MLXRandom seed applied before each synthesis call. Fixes the flow-matching noise + Gumbel sampling + HiFiGAN init phase, so repeated calls with the same speaker embedding produce near-identical prosody and timbre across sections. Useful for long-form narration cut into chunks.")
+    public var seed: UInt64?
 
     @Flag(name: .long, help: "Show detailed timing info")
     public var verbose: Bool = false
@@ -458,6 +462,18 @@ public struct SpeakCommand: ParsableCommand {
             let defaultInstruction = cosyInstruct ?? "You are a helpful assistant."
 
             print("  Language: \(effectiveLanguage)")
+
+            // Seed every stochastic source in the pipeline (LLM Gumbel sampling,
+            // flow-matching initial noise, HiFiGAN init-phase + noise injections)
+            // BEFORE the first synthesis call. With a fixed seed, repeated CLI
+            // invocations on different scripts but the same speaker embedding
+            // produce near-identical prosody and timbre — necessary for long-form
+            // narration cut into per-section chunks where per-call diffusion
+            // variance otherwise drifts the voice between sections.
+            if let s = seed {
+                MLXRandom.seed(s)
+                print("  Seed: \(s) (deterministic flow + LLM + vocoder sampling)")
+            }
 
             let startTime = CFAbsoluteTimeGetCurrent()
 
