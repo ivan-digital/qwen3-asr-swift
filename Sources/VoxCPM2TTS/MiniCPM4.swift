@@ -243,13 +243,13 @@ public final class MiniCPMAttention: Module {
         let qDim = numHeads * headDim
         let kvDim = numKVHeads * headDim
 
-        self._qProj = ModuleInfo(wrappedValue: zeroLinear(config.hiddenSize, qDim, bias: false))
+        self._qProj = ModuleInfo(wrappedValue: zeroLinear(config.hiddenSize, qDim, bias: false), key: "q_proj")
         voxCPM2InitLog("Attention q_proj")
-        self._kProj = ModuleInfo(wrappedValue: zeroLinear(config.hiddenSize, kvDim, bias: false))
+        self._kProj = ModuleInfo(wrappedValue: zeroLinear(config.hiddenSize, kvDim, bias: false), key: "k_proj")
         voxCPM2InitLog("Attention k_proj")
-        self._vProj = ModuleInfo(wrappedValue: zeroLinear(config.hiddenSize, kvDim, bias: false))
+        self._vProj = ModuleInfo(wrappedValue: zeroLinear(config.hiddenSize, kvDim, bias: false), key: "v_proj")
         voxCPM2InitLog("Attention v_proj")
-        self._oProj = ModuleInfo(wrappedValue: zeroLinear(qDim, config.hiddenSize, bias: false))
+        self._oProj = ModuleInfo(wrappedValue: zeroLinear(qDim, config.hiddenSize, bias: false), key: "o_proj")
         voxCPM2InitLog("Attention o_proj")
 
         super.init()
@@ -327,9 +327,9 @@ public final class MiniCPMMLP: Module {
     @ModuleInfo(key: "down_proj") public var downProj: Linear
 
     public init(config: LMConfig) {
-        self._gateProj = ModuleInfo(wrappedValue: zeroLinear(config.hiddenSize, config.intermediateSize, bias: false))
-        self._upProj = ModuleInfo(wrappedValue: zeroLinear(config.hiddenSize, config.intermediateSize, bias: false))
-        self._downProj = ModuleInfo(wrappedValue: zeroLinear(config.intermediateSize, config.hiddenSize, bias: false))
+        self._gateProj = ModuleInfo(wrappedValue: zeroLinear(config.hiddenSize, config.intermediateSize, bias: false), key: "gate_proj")
+        self._upProj = ModuleInfo(wrappedValue: zeroLinear(config.hiddenSize, config.intermediateSize, bias: false), key: "up_proj")
+        self._downProj = ModuleInfo(wrappedValue: zeroLinear(config.intermediateSize, config.hiddenSize, bias: false), key: "down_proj")
         super.init()
     }
 
@@ -591,9 +591,9 @@ public final class VoxCPMLocDiTV2: Module {
         self.config = config
         self.inChannels = inChannels
 
-        self._inProj = ModuleInfo(wrappedValue: zeroLinear(inChannels, config.hiddenSize))
-        self._condProj = ModuleInfo(wrappedValue: zeroLinear(inChannels, config.hiddenSize))
-        self._outProj = ModuleInfo(wrappedValue: zeroLinear(config.hiddenSize, inChannels))
+        self._inProj = ModuleInfo(wrappedValue: zeroLinear(inChannels, config.hiddenSize), key: "in_proj")
+        self._condProj = ModuleInfo(wrappedValue: zeroLinear(inChannels, config.hiddenSize), key: "cond_proj")
+        self._outProj = ModuleInfo(wrappedValue: zeroLinear(config.hiddenSize, inChannels), key: "out_proj")
         self._decoder = ModuleInfo(wrappedValue: MiniCPMModel(config))
         self.timeEmbeddings = SinusoidalPosEmb(dim: config.hiddenSize)
         self._timeMlp = ModuleInfo(
