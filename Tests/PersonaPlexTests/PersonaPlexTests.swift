@@ -582,11 +582,8 @@ final class E2EPersonaPlexTests: XCTestCase {
     }
 
     override func setUpWithError() throws {
-        // Skip E2E tests unless env var is set or model is already loaded
-        if !Self.loaded {
-            let hasEnv = ProcessInfo.processInfo.environment["PERSONAPLEX_E2E"] != nil
-            try XCTSkipUnless(hasEnv, "Set PERSONAPLEX_E2E=1 to run PersonaPlex E2E tests")
-        }
+        // E2E tests download the 7B model (~3.5 GB at int4) on first run and
+        // cache it. CI filters this class out via the `--skip E2E` regex.
     }
 
     func testLoadModel() async throws {
@@ -808,13 +805,16 @@ final class E2EPersonaPlexTests: XCTestCase {
     func testRespondWithRealAudio() throws {
         let model = try self.model
 
-        // Load real test audio if available
-        let testAudioPath = ProcessInfo.processInfo.environment["PERSONAPLEX_TEST_AUDIO"]
-        guard let audioPath = testAudioPath else {
-            throw XCTSkip("Set PERSONAPLEX_TEST_AUDIO=/path/to/audio.wav to run real audio test")
+        // Prefer caller-supplied audio, else fall back to the bundled fixture.
+        let url: URL
+        if let envPath = ProcessInfo.processInfo.environment["PERSONAPLEX_TEST_AUDIO"] {
+            url = URL(fileURLWithPath: envPath)
+        } else if let bundled = Bundle.module.url(forResource: "test_audio", withExtension: "wav") {
+            url = bundled
+        } else {
+            throw XCTSkip("Bundled test_audio.wav missing and PERSONAPLEX_TEST_AUDIO unset")
         }
-
-        let url = URL(fileURLWithPath: audioPath)
+        let audioPath = url.path
         let audio = try AudioFileLoader.load(url: url, targetSampleRate: 24000)
         let inputDuration = Double(audio.count) / 24000.0
         print("Input audio: \(String(format: "%.2f", inputDuration))s (\(audio.count) samples)")
@@ -834,14 +834,20 @@ final class E2EPersonaPlexTests: XCTestCase {
         let rtf = elapsed / max(responseDuration, 0.001)
         print("Response: \(String(format: "%.2f", responseDuration))s, Time: \(String(format: "%.2f", elapsed))s, RTF: \(String(format: "%.2f", rtf))")
 
-        // Save response for manual inspection
-        let outputPath = audioPath.replacingOccurrences(of: ".wav", with: "_response.wav")
-        try WAVWriter.write(
-            samples: response,
-            sampleRate: 24000,
-            to: URL(fileURLWithPath: outputPath)
-        )
-        print("Saved response to \(outputPath)")
+        // Save response for manual inspection (next to the input if writable,
+        // else in the temp dir — the bundled fixture lives in a read-only bundle).
+        let inputDir = (audioPath as NSString).deletingLastPathComponent
+        let inputName = ((audioPath as NSString).lastPathComponent as NSString).deletingPathExtension
+        let candidate = URL(fileURLWithPath: inputDir).appendingPathComponent("\(inputName)_response.wav")
+        let outputURL: URL
+        if FileManager.default.isWritableFile(atPath: inputDir) {
+            outputURL = candidate
+        } else {
+            outputURL = URL(fileURLWithPath: NSTemporaryDirectory())
+                .appendingPathComponent("\(inputName)_response_\(UUID().uuidString).wav")
+        }
+        try WAVWriter.write(samples: response, sampleRate: 24000, to: outputURL)
+        print("Saved response to \(outputURL.path)")
     }
 
     func testMultipleVoices() throws {
@@ -1373,13 +1379,16 @@ final class E2EPersonaPlexTests: XCTestCase {
     func testRoundTripASR() async throws {
         let ppModel = try self.model
 
-        // Load real test audio
-        let testAudioPath = ProcessInfo.processInfo.environment["PERSONAPLEX_TEST_AUDIO"]
-        guard let audioPath = testAudioPath else {
-            throw XCTSkip("Set PERSONAPLEX_TEST_AUDIO=/path/to/audio.wav to run round-trip test")
+        // Prefer caller-supplied audio, else fall back to the bundled fixture.
+        let url: URL
+        if let envPath = ProcessInfo.processInfo.environment["PERSONAPLEX_TEST_AUDIO"] {
+            url = URL(fileURLWithPath: envPath)
+        } else if let bundled = Bundle.module.url(forResource: "test_audio", withExtension: "wav") {
+            url = bundled
+        } else {
+            throw XCTSkip("Bundled test_audio.wav missing and PERSONAPLEX_TEST_AUDIO unset")
         }
-
-        let url = URL(fileURLWithPath: audioPath)
+        let audioPath = url.path
         let userAudio = try AudioFileLoader.load(url: url, targetSampleRate: 24000)
         let inputDuration = Double(userAudio.count) / 24000.0
         print("Input audio: \(String(format: "%.2f", inputDuration))s")
@@ -1403,10 +1412,19 @@ final class E2EPersonaPlexTests: XCTestCase {
         let responseDuration = Double(response.count) / 24000.0
         print("Response: \(String(format: "%.2f", responseDuration))s (\(response.count) samples)")
 
-        // Save response for manual inspection
-        let outputPath = audioPath.replacingOccurrences(of: ".wav", with: "_roundtrip.wav")
-        try WAVWriter.write(samples: response, sampleRate: 24000, to: URL(fileURLWithPath: outputPath))
-        print("Saved response to \(outputPath)")
+        // Save response for manual inspection (temp dir handles read-only bundle paths)
+        let inputDir = (audioPath as NSString).deletingLastPathComponent
+        let inputName = ((audioPath as NSString).lastPathComponent as NSString).deletingPathExtension
+        let candidate = URL(fileURLWithPath: inputDir).appendingPathComponent("\(inputName)_roundtrip.wav")
+        let outURL: URL
+        if FileManager.default.isWritableFile(atPath: inputDir) {
+            outURL = candidate
+        } else {
+            outURL = URL(fileURLWithPath: NSTemporaryDirectory())
+                .appendingPathComponent("\(inputName)_roundtrip_\(UUID().uuidString).wav")
+        }
+        try WAVWriter.write(samples: response, sampleRate: 24000, to: outURL)
+        print("Saved response to \(outURL.path)")
 
         // Load ASR model and transcribe the response
         let asrModel = try await Qwen3ASRModel.fromPretrained()

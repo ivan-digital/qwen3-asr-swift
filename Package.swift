@@ -360,7 +360,10 @@ let package = Package(
         ),
         .testTarget(
             name: "PersonaPlexTests",
-            dependencies: ["PersonaPlex", "AudioCommon", "Qwen3ASR"]
+            dependencies: ["PersonaPlex", "AudioCommon", "Qwen3ASR"],
+            resources: [
+                .copy("Resources/test_audio.wav")
+            ]
         ),
         .testTarget(
             name: "Qwen3ASRTests",
@@ -459,6 +462,9 @@ let package = Package(
                 "NemotronStreamingASR",
                 "AudioCommon",
                 .product(name: "MLX", package: "mlx-swift"),
+            ],
+            resources: [
+                .copy("Resources/test_audio.wav")
             ]
         ),
         .testTarget(

@@ -349,20 +349,7 @@ final class VoxCPM2TTSConfigTests: XCTestCase {
 }
 
 final class VoxCPM2TTSLayerTests: XCTestCase {
-    private static var hasMLXMetallib: Bool {
-        let fm = FileManager.default
-        let candidates = [
-            Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent("mlx.metallib"),
-            Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent("Resources/mlx.metallib"),
-            Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent("default.metallib"),
-            Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent("Resources/default.metallib")
-        ].compactMap { $0 }
-
-        return candidates.contains { fm.fileExists(atPath: $0.path) }
-    }
-
     func testScalarQuantizationLayerInitializes() throws {
-        try XCTSkipUnless(Self.hasMLXMetallib, "MLX metallib not available in this test environment")
         // Linear.shape is `(outputFeatures, inputFeatures)`, so:
         //   in_proj  : inDim=2 → latentDim=4  → shape = (4, 2)
         //   out_proj : latentDim=4 → outDim=3 → shape = (3, 4)

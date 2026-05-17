@@ -261,11 +261,15 @@ final class E2EVibeVoiceTests: XCTestCase {
     func testGeneratesFromVoiceCacheProducesNonSilentAudio() async throws {
         let m = try model
 
-        // Voice cache is not bundled. Point the test at a cache file via
-        // VIBEVOICE_VOICE_CACHE=/path/to/name.safetensors.
+        // 0.5B Realtime is inference-only — its checkpoint omits the acoustic
+        // encoder, so we can't mint a cache from raw audio here. Caller must
+        // supply a pre-computed cache via VIBEVOICE_VOICE_CACHE. (The 1.5B
+        // round-trip suite below mints its own cache and exercises the
+        // synthesis path in CI.)
         guard let cachePath = ProcessInfo.processInfo.environment["VIBEVOICE_VOICE_CACHE"],
               FileManager.default.fileExists(atPath: cachePath) else {
-            throw XCTSkip("set VIBEVOICE_VOICE_CACHE=/path/to/voice.safetensors to run this test")
+            throw XCTSkip("set VIBEVOICE_VOICE_CACHE=/path/to/voice.safetensors to run this test"
+                          + " (0.5B Realtime cannot encode its own cache — use 1.5B for round-trips)")
         }
         try m.loadVoice(from: cachePath)
 
@@ -417,11 +421,18 @@ final class E2EVibeVoice1_5BTests: XCTestCase {
     /// content words. This is the real correctness check.
     func testEnglishRoundTripASR() async throws {
         let m = try model
-        guard let refPath = ProcessInfo.processInfo.environment["VIBEVOICE_REFERENCE_AUDIO"],
-              FileManager.default.fileExists(atPath: refPath) else {
-            throw XCTSkip("set VIBEVOICE_REFERENCE_AUDIO=/path/to/english_speech.wav to run ASR-verified test")
+        // Prefer env override (lets users pin a high-quality reference WAV),
+        // else fall back to the bundled fixture.
+        let refURL: URL
+        if let refPath = ProcessInfo.processInfo.environment["VIBEVOICE_REFERENCE_AUDIO"],
+           FileManager.default.fileExists(atPath: refPath) {
+            refURL = URL(fileURLWithPath: refPath)
+        } else if let bundled = Bundle.module.url(forResource: "test_audio", withExtension: "wav") {
+            refURL = bundled
+        } else {
+            throw XCTSkip("Bundled test_audio.wav missing and VIBEVOICE_REFERENCE_AUDIO unset")
         }
-        let refSamples = try AudioFileLoader.load(url: URL(fileURLWithPath: refPath), targetSampleRate: 24000)
+        let refSamples = try AudioFileLoader.load(url: refURL, targetSampleRate: 24000)
 
         // Use the unified-LM 1.5B model — the 0.5B-style API can't drive 1.5B.
         var cfg = VibeVoice15BTTSModel.Configuration()

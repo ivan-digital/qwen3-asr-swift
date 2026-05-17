@@ -55,12 +55,18 @@ final class E2ELocalMADLADTests: XCTestCase {
     // MARK: - Helpers
 
     private func loadOrSkip() async throws -> MADLADTranslator {
-        guard let path = ProcessInfo.processInfo.environment["MADLAD_LOCAL_DIR"], !path.isEmpty else {
-            throw XCTSkip("Set MADLAD_LOCAL_DIR to the converted variant directory")
+        // Local-directory override (used to validate freshly converted weights
+        // before publishing). When unset, fall back to the public HF model.
+        if let path = ProcessInfo.processInfo.environment["MADLAD_LOCAL_DIR"], !path.isEmpty {
+            let url = URL(fileURLWithPath: path)
+            let bits = path.contains("int8") ? 8 : 4
+            return try await MADLADTranslator.fromLocal(directory: url, bits: bits) { progress, status in
+                if Int(progress * 100) % 10 == 0 {
+                    print("[\(Int(progress * 100))%] \(status)")
+                }
+            }
         }
-        let url = URL(fileURLWithPath: path)
-        let bits = path.contains("int8") ? 8 : 4
-        return try await MADLADTranslator.fromLocal(directory: url, bits: bits) { progress, status in
+        return try await MADLADTranslator.fromPretrained { progress, status in
             if Int(progress * 100) % 10 == 0 {
                 print("[\(Int(progress * 100))%] \(status)")
             }

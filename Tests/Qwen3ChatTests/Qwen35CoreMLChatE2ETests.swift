@@ -55,12 +55,8 @@ final class E2EQwen35CoreMLChatTests: XCTestCase {
     /// Downloads the pre-compiled `.mlmodelc` bundle from HuggingFace and
     /// runs one generation. Verifies the post-migration download glob
     /// (`*.mlmodelc/**` only) actually resolves at runtime on the default
-    /// modelId. Gated on env to avoid multi-GB downloads on every test run.
+    /// modelId. CI filters this class out via the `--skip E2E` regex.
     func testHubFromPretrained() async throws {
-        guard ProcessInfo.processInfo.environment["RUN_HUB_E2E"] == "1" else {
-            throw XCTSkip("Set RUN_HUB_E2E=1 to exercise the HuggingFace download path")
-        }
-
         let model = try await Qwen35CoreMLChat.fromPretrained(
             computeUnits: .cpuAndGPU
         )

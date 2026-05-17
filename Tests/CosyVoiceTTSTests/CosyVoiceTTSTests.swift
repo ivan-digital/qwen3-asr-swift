@@ -122,20 +122,46 @@ final class CosyVoiceTTSConfigTests: XCTestCase {
     }
 }
 
-// MARK: - Weight Loading Tests (require converted safetensors)
+// MARK: - Weights Discovery
+//
+// Tests below need a directory containing CosyVoice3 safetensors + tokenizer
+// files. Resolution order:
+//   1. $COSYVOICE_WEIGHTS — for testing against locally-converted weights
+//      before publishing to HuggingFace.
+//   2. Else: the HuggingFace cache, auto-downloading the default model ID
+//      on first run.
+// CI's `--skip E2E` filter excludes these classes via the E2E prefix.
+private enum CosyVoiceTestWeights {
+    static let modelId = "aufklarer/CosyVoice3-0.5B-MLX-4bit"
+    static let files = [
+        "llm.safetensors", "flow.safetensors", "hifigan.safetensors",
+        "vocab.json", "merges.txt", "tokenizer_config.json", "config.json",
+    ]
 
-final class CosyVoiceWeightLoadingTests: XCTestCase {
-
-    // Run with: COSYVOICE_WEIGHTS=/path/to/cosyvoice3-mlx-4bit swift test --filter CosyVoiceWeightLoadingTests
-    static let weightsDir: String? = ProcessInfo.processInfo.environment["COSYVOICE_WEIGHTS"]
-
-    override func setUpWithError() throws {
-        try XCTSkipUnless(Self.weightsDir != nil, "Set COSYVOICE_WEIGHTS=/path/to/cosyvoice3-mlx-4bit")
+    static func resolve() async throws -> URL {
+        if let path = ProcessInfo.processInfo.environment["COSYVOICE_WEIGHTS"],
+           !path.isEmpty {
+            return URL(fileURLWithPath: path)
+        }
+        let dir = try HuggingFaceDownloader.getCacheDirectory(for: modelId)
+        let allPresent = files.allSatisfy {
+            FileManager.default.fileExists(atPath: dir.appendingPathComponent($0).path)
+        }
+        if !allPresent {
+            try await HuggingFaceDownloader.downloadWeights(
+                modelId: modelId, to: dir, additionalFiles: files)
+        }
+        return dir
     }
+}
 
-    func testLoadHiFiGAN() throws {
-        let dir = Self.weightsDir!
-        let url = URL(fileURLWithPath: dir).appendingPathComponent("hifigan.safetensors")
+// MARK: - Weight Loading Tests (download safetensors if not present)
+
+final class E2ECosyVoiceWeightLoadingTests: XCTestCase {
+
+    func testLoadHiFiGAN() async throws {
+        let dir = try await CosyVoiceTestWeights.resolve()
+        let url = dir.appendingPathComponent("hifigan.safetensors")
         let config = CosyVoiceHiFiGANConfig()
         let hifigan = HiFiGANGenerator(config: config)
 
@@ -144,18 +170,18 @@ final class CosyVoiceWeightLoadingTests: XCTestCase {
         print("HiFi-GAN weights loaded successfully")
     }
 
-    func testLoadFlow() throws {
-        let dir = Self.weightsDir!
-        let url = URL(fileURLWithPath: dir).appendingPathComponent("flow.safetensors")
+    func testLoadFlow() async throws {
+        let dir = try await CosyVoiceTestWeights.resolve()
+        let url = dir.appendingPathComponent("flow.safetensors")
         let flow = CosyVoiceFlowModel(config: CosyVoiceFlowConfig())
 
         try CosyVoiceWeightLoader.loadFlow(flow, from: url)
         print("Flow weights loaded successfully")
     }
 
-    func testLoadLLM() throws {
-        let dir = Self.weightsDir!
-        let url = URL(fileURLWithPath: dir).appendingPathComponent("llm.safetensors")
+    func testLoadLLM() async throws {
+        let dir = try await CosyVoiceTestWeights.resolve()
+        let url = dir.appendingPathComponent("llm.safetensors")
         let llm = CosyVoiceLLM(config: CosyVoiceLLMConfig())
 
         try CosyVoiceWeightLoader.loadLLM(llm, from: url)
@@ -163,24 +189,14 @@ final class CosyVoiceWeightLoadingTests: XCTestCase {
     }
 }
 
-// MARK: - Tokenizer Tests (require tokenizer files in weights dir)
+// MARK: - Tokenizer Tests (download tokenizer files if not present)
 
-final class CosyVoiceTokenizerTests: XCTestCase {
+final class E2ECosyVoiceTokenizerTests: XCTestCase {
 
-    static let weightsDir: String? = ProcessInfo.processInfo.environment["COSYVOICE_WEIGHTS"]
-
-    override func setUpWithError() throws {
-        try XCTSkipUnless(Self.weightsDir != nil, "Set COSYVOICE_WEIGHTS=/path/to/cosyvoice3-mlx-4bit")
-        let vocabPath = URL(fileURLWithPath: Self.weightsDir!).appendingPathComponent("vocab.json").path
-        try XCTSkipUnless(
-            FileManager.default.fileExists(atPath: vocabPath),
-            "vocab.json not found in COSYVOICE_WEIGHTS dir")
-    }
-
-    func testTokenizerLoads() throws {
+    func testTokenizerLoads() async throws {
+        let dir = try await CosyVoiceTestWeights.resolve()
         let tokenizer = Qwen3Tokenizer()
-        let vocabURL = URL(fileURLWithPath: Self.weightsDir!).appendingPathComponent("vocab.json")
-        try tokenizer.load(from: vocabURL)
+        try tokenizer.load(from: dir.appendingPathComponent("vocab.json"))
 
         // Basic sanity: should have loaded a large vocabulary
         let helloId = tokenizer.encode("Hello")
@@ -188,10 +204,10 @@ final class CosyVoiceTokenizerTests: XCTestCase {
         print("'Hello' -> \(helloId)")
     }
 
-    func testTokenizerEncodesEnglish() throws {
+    func testTokenizerEncodesEnglish() async throws {
+        let dir = try await CosyVoiceTestWeights.resolve()
         let tokenizer = Qwen3Tokenizer()
-        let vocabURL = URL(fileURLWithPath: Self.weightsDir!).appendingPathComponent("vocab.json")
-        try tokenizer.load(from: vocabURL)
+        try tokenizer.load(from: dir.appendingPathComponent("vocab.json"))
 
         let tokens = tokenizer.encode("Hello, how are you?")
         XCTAssertFalse(tokens.isEmpty)
@@ -203,20 +219,20 @@ final class CosyVoiceTokenizerTests: XCTestCase {
         XCTAssertTrue(decoded.contains("you"), "Decoded should contain 'you', got: \(decoded)")
     }
 
-    func testTokenizerEncodesChinese() throws {
+    func testTokenizerEncodesChinese() async throws {
+        let dir = try await CosyVoiceTestWeights.resolve()
         let tokenizer = Qwen3Tokenizer()
-        let vocabURL = URL(fileURLWithPath: Self.weightsDir!).appendingPathComponent("vocab.json")
-        try tokenizer.load(from: vocabURL)
+        try tokenizer.load(from: dir.appendingPathComponent("vocab.json"))
 
         let tokens = tokenizer.encode("你好世界")
         XCTAssertFalse(tokens.isEmpty)
         print("'你好世界' -> \(tokens) (\(tokens.count) tokens)")
     }
 
-    func testTokenizerEncodesGerman() throws {
+    func testTokenizerEncodesGerman() async throws {
+        let dir = try await CosyVoiceTestWeights.resolve()
         let tokenizer = Qwen3Tokenizer()
-        let vocabURL = URL(fileURLWithPath: Self.weightsDir!).appendingPathComponent("vocab.json")
-        try tokenizer.load(from: vocabURL)
+        try tokenizer.load(from: dir.appendingPathComponent("vocab.json"))
 
         let tokens = tokenizer.encode("Guten Tag, wie geht es Ihnen?")
         XCTAssertFalse(tokens.isEmpty)
@@ -226,10 +242,10 @@ final class CosyVoiceTokenizerTests: XCTestCase {
         XCTAssertTrue(decoded.contains("Guten"), "Decoded should contain 'Guten', got: \(decoded)")
     }
 
-    func testTokenizerRoundTrip() throws {
+    func testTokenizerRoundTrip() async throws {
+        let dir = try await CosyVoiceTestWeights.resolve()
         let tokenizer = Qwen3Tokenizer()
-        let vocabURL = URL(fileURLWithPath: Self.weightsDir!).appendingPathComponent("vocab.json")
-        try tokenizer.load(from: vocabURL)
+        try tokenizer.load(from: dir.appendingPathComponent("vocab.json"))
 
         let texts = [
             "Hello world",
@@ -248,23 +264,16 @@ final class CosyVoiceTokenizerTests: XCTestCase {
     }
 }
 
-// MARK: - Forward Pass Tests (require converted safetensors)
+// MARK: - Forward Pass Tests (download safetensors if not present)
 
-final class CosyVoiceForwardPassTests: XCTestCase {
+final class E2ECosyVoiceForwardPassTests: XCTestCase {
 
-    // Run with: COSYVOICE_WEIGHTS=./cosyvoice3-mlx-4bit swift test --filter CosyVoiceForwardPassTests
-    static let weightsDir: String? = ProcessInfo.processInfo.environment["COSYVOICE_WEIGHTS"]
-
-    override func setUpWithError() throws {
-        try XCTSkipUnless(Self.weightsDir != nil, "Set COSYVOICE_WEIGHTS=/path/to/cosyvoice3-mlx-4bit")
-    }
-
-    func testHiFiGANForward() throws {
-        let dir = Self.weightsDir!
+    func testHiFiGANForward() async throws {
+        let dir = try await CosyVoiceTestWeights.resolve()
         let config = CosyVoiceHiFiGANConfig()
         let hifigan = HiFiGANGenerator(config: config)
         try CosyVoiceWeightLoader.loadHiFiGAN(
-            hifigan, from: URL(fileURLWithPath: dir).appendingPathComponent("hifigan.safetensors"))
+            hifigan, from: dir.appendingPathComponent("hifigan.safetensors"))
 
         // Dummy mel: [1, 80, 20] (20 mel frames = ~0.4s at 50 Hz)
         let mel = MLXRandom.normal([1, 80, 20])
@@ -277,11 +286,11 @@ final class CosyVoiceForwardPassTests: XCTestCase {
         XCTAssertGreaterThan(samples, 0, "Should produce audio samples")
     }
 
-    func testFlowForward() throws {
-        let dir = Self.weightsDir!
+    func testFlowForward() async throws {
+        let dir = try await CosyVoiceTestWeights.resolve()
         let flow = CosyVoiceFlowModel(config: CosyVoiceFlowConfig())
         try CosyVoiceWeightLoader.loadFlow(
-            flow, from: URL(fileURLWithPath: dir).appendingPathComponent("flow.safetensors"))
+            flow, from: dir.appendingPathComponent("flow.safetensors"))
 
         // Dummy speech tokens: [1, 10] (10 tokens = 0.4s at 25 Hz)
         let tokens = MLXArray([0, 100, 200, 300, 400, 500, 1000, 2000, 3000, 4000]).expandedDimensions(axis: 0)
@@ -297,12 +306,12 @@ final class CosyVoiceForwardPassTests: XCTestCase {
         XCTAssertEqual(mel.dim(2), 20, "Should have 20 mel frames (10 tokens * 2)")
     }
 
-    func testLLMPrefill() throws {
-        let dir = Self.weightsDir!
+    func testLLMPrefill() async throws {
+        let dir = try await CosyVoiceTestWeights.resolve()
         let llmConfig = CosyVoiceLLMConfig()
         let llm = CosyVoiceLLM(config: llmConfig)
         try CosyVoiceWeightLoader.loadLLM(
-            llm, from: URL(fileURLWithPath: dir).appendingPathComponent("llm.safetensors"))
+            llm, from: dir.appendingPathComponent("llm.safetensors"))
 
         // Build prefix: [sos, text_tokens..., task_id]
         let textTokens: [Int32] = [9707, 1917]  // "Hello world" approx token IDs
@@ -329,11 +338,11 @@ final class CosyVoiceForwardPassTests: XCTestCase {
         XCTAssertEqual(cache.count, llmConfig.numLayers, "Should have cache for all \(llmConfig.numLayers) layers")
     }
 
-    func testLLMGenerate5Tokens() throws {
-        let dir = Self.weightsDir!
+    func testLLMGenerate5Tokens() async throws {
+        let dir = try await CosyVoiceTestWeights.resolve()
         let llm = CosyVoiceLLM(config: CosyVoiceLLMConfig())
         try CosyVoiceWeightLoader.loadLLM(
-            llm, from: URL(fileURLWithPath: dir).appendingPathComponent("llm.safetensors"))
+            llm, from: dir.appendingPathComponent("llm.safetensors"))
 
         // Generate just 5 tokens to verify the loop works
         let textTokens: [Int32] = [9707, 1917]  // approximate "Hello world"
@@ -349,29 +358,28 @@ final class CosyVoiceForwardPassTests: XCTestCase {
             XCTAssertLessThan(token, Int32(6561), "Token should be < 6561 (speech token range)")
         }
     }
-    func testFullPipelineE2E() throws {
-        let dir = Self.weightsDir!
+    func testFullPipelineE2E() async throws {
+        let dir = try await CosyVoiceTestWeights.resolve()
         let config = CosyVoiceConfig.default
 
         // 1. Load all three models
         let llm = CosyVoiceLLM(config: config.llm)
         try CosyVoiceWeightLoader.loadLLM(
-            llm, from: URL(fileURLWithPath: dir).appendingPathComponent("llm.safetensors"))
+            llm, from: dir.appendingPathComponent("llm.safetensors"))
 
         let flow = CosyVoiceFlowModel(config: config.flow)
         try CosyVoiceWeightLoader.loadFlow(
-            flow, from: URL(fileURLWithPath: dir).appendingPathComponent("flow.safetensors"))
+            flow, from: dir.appendingPathComponent("flow.safetensors"))
 
         let hifigan = HiFiGANGenerator(config: config.hifigan)
         try CosyVoiceWeightLoader.loadHiFiGAN(
-            hifigan, from: URL(fileURLWithPath: dir).appendingPathComponent("hifigan.safetensors"))
+            hifigan, from: dir.appendingPathComponent("hifigan.safetensors"))
 
         print("All models loaded")
 
         // 2. Tokenize text with real BPE tokenizer
         let tokenizer = Qwen3Tokenizer()
-        let vocabURL = URL(fileURLWithPath: dir).appendingPathComponent("vocab.json")
-        try tokenizer.load(from: vocabURL)
+        try tokenizer.load(from: dir.appendingPathComponent("vocab.json"))
         let textTokens = tokenizer.encode("Hello world").map { Int32($0) }
         print("Tokenized 'Hello world' -> \(textTokens)")
 
@@ -539,8 +547,15 @@ final class E2ECosyVoiceTTSTests: XCTestCase {
         let samples = model.synthesize(text: longText)
 
         let duration = Double(samples.count) / 24000.0
-        // Max 500 tokens at 25 Hz = 20s, plus some buffer
-        XCTAssertLessThan(duration, 25.0, "Should not exceed safety limit")
+
+        // Dynamic cap (CosyVoiceTTS.synthesize): max(200, contentTokens * 10)
+        // tokens at 25 Hz speech-token rate. We allow a 25 % buffer for
+        // mel-frame padding and HiFi-GAN tail.
+        let contentTokens = model.tokenizer.encode(longText).count
+        let scaledMaxTokens = max(200, contentTokens * 10)
+        let upperBound = Double(scaledMaxTokens) / 25.0 * 1.25
+        XCTAssertLessThan(duration, upperBound,
+                          "Safety cap should bound output to ~\(upperBound)s, got \(duration)s")
     }
 
     /// Probe: do the pretrained weights respond to speaker embeddings?

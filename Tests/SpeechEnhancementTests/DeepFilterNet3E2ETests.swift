@@ -11,13 +11,9 @@ import XCTest
 final class DeepFilterNet3E2ETests: XCTestCase {
 
     /// Verify the migration to `.mlmodelc/**` globs actually resolves at
-    /// runtime against the published HuggingFace repo. Gated on env to avoid
-    /// multi-MB downloads on every unit-test run.
+    /// runtime against the published HuggingFace repo. CI filters this class
+    /// out via the `--skip E2E` regex.
     func testHubFromPretrained() async throws {
-        guard ProcessInfo.processInfo.environment["RUN_HUB_E2E"] == "1" else {
-            throw XCTSkip("Set RUN_HUB_E2E=1 to exercise the HuggingFace download path")
-        }
-
         let enhancer = try await SpeechEnhancer.fromPretrained()
 
         // One-second 48 kHz silence -> enhance should return the same length.
