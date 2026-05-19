@@ -217,6 +217,48 @@ final class TranscribeCommandTests: XCTestCase {
     }
 }
 
+// MARK: - TranscribeBatchCommand
+
+final class TranscribeBatchCommandTests: XCTestCase {
+
+    func testParsesInputDirectory() throws {
+        let cmd = try AudioCLI.parseAsRoot(["transcribe-batch", "/tmp/audio"])
+        let batch = try XCTUnwrap(cmd as? TranscribeBatchCommand)
+        XCTAssertEqual(batch.inputDir, "/tmp/audio")
+    }
+
+    func testDefaultBatchSizeIsOne() throws {
+        let cmd = try AudioCLI.parseAsRoot(["transcribe-batch", "/tmp/audio"])
+        let batch = try XCTUnwrap(cmd as? TranscribeBatchCommand)
+        XCTAssertEqual(batch.batchSize, 1)
+    }
+
+    func testParsesBatchSize() throws {
+        let cmd = try AudioCLI.parseAsRoot([
+            "transcribe-batch", "/tmp/audio", "--batch-size", "4"
+        ])
+        let batch = try XCTUnwrap(cmd as? TranscribeBatchCommand)
+        XCTAssertEqual(batch.batchSize, 4)
+    }
+
+    func testParsesQwen3Options() throws {
+        let cmd = try AudioCLI.parseAsRoot([
+            "transcribe-batch", "/tmp/audio",
+            "--engine", "qwen3",
+            "--model", "1.7B-8bit",
+            "--language", "en",
+            "--extensions", "wav,m4a",
+            "--jsonl"
+        ])
+        let batch = try XCTUnwrap(cmd as? TranscribeBatchCommand)
+        XCTAssertEqual(batch.engine, "qwen3")
+        XCTAssertEqual(batch.model, "1.7B-8bit")
+        XCTAssertEqual(batch.language, "en")
+        XCTAssertEqual(batch.extensions, "wav,m4a")
+        XCTAssertTrue(batch.jsonl)
+    }
+}
+
 // MARK: - AlignCommand
 
 final class AlignCommandTests: XCTestCase {

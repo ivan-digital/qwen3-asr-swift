@@ -35,6 +35,7 @@ Converts raw audio to a mel spectrogram `[128, T]` using Accelerate framework.
 - **Prefill** (seqLen > 1): all prompt tokens in one forward pass
 - **Decode** (seqLen = 1): SDPA uses optimized T_q=1 Metal kernel
 - **Greedy fast path** (default options): decode loop is double-buffered via `MLX.asyncEval` — step N+1's forward pass is queued *before* step N's token syncs to CPU, so host-side EOS check and append overlap with GPU work. Bit-identical to the legacy loop (snapshot-tested); ~5 % faster on long-form audio (1.7B-8bit, 71 s clip)
+- **Batched greedy decode** (`transcribeBatch` / `audio transcribe-batch --batch-size N`): the default batch path keeps per-row decoder forwards serial for correctness, but syncs the whole `[B, 1]` token tensor once per decode step instead of doing B scalar `.item()` calls. On repeated 10s chunks with the 0.6B 4-bit model, batch size 6 improved aggregate inference time from 3.95s to 3.55s for 24 chunks (+11.3%). The true `[B,1,H]` MLX decoder forward remains gated behind `QWEN3_ASR_EXPERIMENTAL_BATCH_DECODE=1` until row-level bit-exactness is resolved.
 
 ## Decoder Options
 
@@ -68,6 +69,53 @@ let text = model.transcribe(
 
 The legacy overload `transcribe(audio:sampleRate:language:maxTokens:context:)`
 remains available and forwards into the new path with default options.
+
+## Batched Chunk Decode
+
+`transcribeBatch(audios:sampleRate:language:maxTokens:context:options:)`
+adds a throughput-oriented API for offline ASR workloads that already split
+long recordings into fixed-duration chunks:
+
+```swift
+let texts = model.transcribeBatch(
+    audios: chunks,
+    sampleRate: 24000,
+    language: "en"
+)
+```
+
+By default this API preserves the same per-chunk greedy semantics as
+`transcribe(audio:)`, while sharing one CPU token synchronization across the
+batch at each decode step. The experimental MLX decoder batch can be enabled
+with `QWEN3_ASR_EXPERIMENTAL_BATCH_DECODE=1` while developing the true
+batched-GEMM scheduler, but it must be benchmarked against repeated identical
+chunks before being treated as production-safe. Non-greedy decoding options
+always fall back to the existing per-chunk path because they pull logits to CPU
+for sampling/repetition logic.
+
+The current experimental true-batch path batches only equal-length encoder
+outputs. Mixed-duration inputs are grouped by encoder sequence length, decoded
+bucket by bucket, and returned in the caller's original order. This matches
+fixed-duration chunking and avoids silently leaving padding keys in the KV
+cache during decode.
+
+CLI usage:
+
+```bash
+audio transcribe-batch ./chunks --engine qwen3 --model 1.7B-8bit --batch-size 4
+```
+
+Experimental batched decoder run:
+
+```bash
+QWEN3_ASR_EXPERIMENTAL_BATCH_DECODE=1 \
+  audio transcribe-batch ./chunks --engine qwen3 --model 1.7B-8bit --batch-size 4
+```
+
+For mixed speech pipelines, batch Qwen3-ASR within MLX rather than trying to
+run multiple MLX models concurrently in one process. MLX uses a single GPU
+dispatch queue; CoreML-backed models can run on the Neural Engine in parallel,
+but this Qwen3-ASR decoder optimization is specifically an MLX/GPU path.
 
 ## Performance
 
